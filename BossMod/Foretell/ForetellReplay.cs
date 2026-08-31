@@ -77,9 +77,11 @@ public sealed partial class ForetellEngine
         var liveInPull = _inPull;
         var liveLastCombat = _lastCombatSignal;
         var liveEvidence = _lastEvidence;
+        var liveLearning = _cfg.EnableLearning;
 
         try
         {
+            _cfg.EnableLearning = true; // sandbox must exercise learning even if live learning is disabled
             _store = new();
             _classifier = new(_store.ML);
             _episodes = [];
@@ -125,6 +127,7 @@ public sealed partial class ForetellEngine
         }
         finally
         {
+            _cfg.EnableLearning = liveLearning;
             _store = liveStore;
             _classifier = liveClassifier;
             _session = liveSession;

@@ -10,10 +10,14 @@ public sealed partial class ForetellEngine
 
         FinalizeDue(observation.At);
         _session.Observe(observation);
-        var encounter = Encounter(observation.TerritoryID);
-        encounter.LastSeen = DateTime.UtcNow;
-        encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;
-        UpdateSourceMemory(encounter, observation);
+        var encounter = _store.Encounters.GetValueOrDefault(observation.TerritoryID);
+        if (_cfg.EnableLearning)
+        {
+            encounter ??= Encounter(observation.TerritoryID);
+            encounter.LastSeen = DateTime.UtcNow;
+            encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;
+            UpdateSourceMemory(encounter, observation);
+        }
         Record(observation, replaying);
 
         if (observation.Kind == ObservationKind.PositionSample)
@@ -26,7 +30,12 @@ public sealed partial class ForetellEngine
             TouchPull(encounter, observation);
 
         if (IsTimelineSignal(observation))
-            LearnSignalTimeline(encounter, observation);
+        {
+            if (_cfg.EnableLearning && encounter != null)
+                LearnSignalTimeline(encounter, observation);
+            else
+                TrackSignalState(observation);
+        }
 
         var correlated = CorrelateObservation(observation);
         if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))
@@ -60,13 +69,14 @@ public sealed partial class ForetellEngine
         if (observation.Kind == ObservationKind.DeathChanged && observation.Flag) ++source.Deaths;
     }
 
-    private void TouchPull(EncounterMemory encounter, ForetellObservation observation)
+    private void TouchPull(EncounterMemory? encounter, ForetellObservation observation)
     {
         if (!_inPull || (observation.At - _lastCombatSignal).TotalSeconds > 30)
         {
             _inPull = true;
             ++_session.Pulls;
-            ++encounter.Pulls;
+            if (_cfg.EnableLearning && encounter != null)
+                ++encounter.Pulls;
             _session.Phase = 0;
             _previousSignal = "";
         }
@@ -121,6 +131,17 @@ public sealed partial class ForetellEngine
             LearnLegacyTimeline(observation.PrimaryID, observation.At);
     }
 
+    private void TrackSignalState(ForetellObservation observation)
+    {
+        _previousSignal = SignalKey(observation);
+        _previousSignalTime = observation.At;
+        if (observation.Kind == ObservationKind.CastStart && observation.PrimaryID != 0)
+        {
+            _previousAction = observation.PrimaryID;
+            _previousActionTime = observation.At;
+        }
+    }
+
     private void LearnLegacyTimeline(uint action, DateTime now)
     {
         if (_previousAction != 0 && _previousAction != action)
@@ -138,7 +159,7 @@ public sealed partial class ForetellEngine
         _previousActionTime = now;
     }
 
-    private void StartEpisode(ForetellObservation trigger, EncounterMemory encounter)
+    private void StartEpisode(ForetellObservation trigger, EncounterMemory? encounter)
     {
         if (_episodes.Values.Any(e => !e.Finalized && e.Trigger.ActorID == trigger.ActorID && e.Trigger.Kind == trigger.Kind &&
             e.Trigger.PrimaryID == trigger.PrimaryID && Math.Abs((e.Trigger.At - trigger.At).TotalSeconds) < .6))
@@ -162,7 +183,7 @@ public sealed partial class ForetellEngine
         episode.AddEvidence(trigger.Kind);
         _episodes[episode.ID] = episode;
 
-        if (trigger.Kind == ObservationKind.CastStart && encounter.Mechanics.TryGetValue(episode.SignalKey, out var learned)
+        if (trigger.Kind == ObservationKind.CastStart && encounter != null && encounter.Mechanics.TryGetValue(episode.SignalKey, out var learned)
             && learned.Geometry != GeometryKind.Unknown)
         {
             var target = new Vector2(trigger.TargetX, trigger.TargetZ);
@@ -293,6 +314,12 @@ public sealed partial class ForetellEngine
         if (episode.Finalized) return;
         episode.Finalized = true;
         ++_session.MechanicsFinalized;
+
+        if (!_cfg.EnableLearning)
+        {
+            _lastEvidence = $"{episode.SignalKey}: outcome observed; adaptive learning is disabled";
+            return;
+        }
 
         var encounter = Encounter(episode.Trigger.TerritoryID);
         var key = episode.SignalKey;
