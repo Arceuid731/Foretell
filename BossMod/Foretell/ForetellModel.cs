@@ -3,7 +3,24 @@ using System.Text.Json.Serialization;
 namespace BossMod.Foretell;
 
 public enum GeometryKind { Unknown, Circle, Donut, Cone, Rectangle }
-public enum MechanicKind { Unknown, GroundAOE, Raidwide, Tankbuster, Stack, Spread, Tower, Knockback, Gaze, Tether, Proximity }
+public enum MechanicKind
+{
+    Unknown, GroundAOE, Raidwide, Tankbuster, Stack, Spread, Tower, Knockback, Gaze, Tether, Proximity,
+    Debuff, TargetedAOE, LineStack, ForcedMovement, Environment, Transition
+}
+
+public enum ObservationKind
+{
+    Unknown,
+    ActorAdded, ActorRemoved, TargetableChanged, DeathChanged, RenderFlagsChanged, EventStateChanged, ModelStateChanged,
+    CastStart, CastFinish, ActionResolved,
+    Icon, VFX, TetherStart, TetherEnd, StatusGain, StatusLose,
+    EventObjectState, EventObjectAnimation, ActionTimelineEvent, ActionTimelineSync, NpcYell,
+    MapEffect, LegacyMapEffect, DirectorUpdate,
+    PositionSample, Displacement
+}
+
+public enum SourceKind { Unknown, Player, Pet, Enemy, EventObject, Environment }
 
 public sealed class LearnedMechanic
 {
@@ -20,6 +37,42 @@ public sealed class LearnedMechanic
     [JsonIgnore] public float Confidence => Math.Clamp((Score * .72f) + (1f - MathF.Exp(-Observations / 4f)) * .28f, 0, 1);
 }
 
+public sealed class ContextualMechanic
+{
+    public string Key { get; set; } = "";
+    public uint TerritoryID { get; set; }
+    public uint SourceOID { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public SourceKind SourceKind { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public ObservationKind TriggerKind { get; set; }
+    public uint TriggerID { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public GeometryKind Geometry { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public MechanicKind Kind { get; set; }
+    public float P1 { get; set; }
+    public float P2 { get; set; }
+    public float Score { get; set; }
+    public int Observations { get; set; }
+    public int Confirmations { get; set; }
+    public int AffectedSamples { get; set; }
+    public int StatusSamples { get; set; }
+    public int MovementSamples { get; set; }
+    public int DeathSamples { get; set; }
+    public int AmbiguousSamples { get; set; }
+    public double MeanLeadSeconds { get; set; }
+    public DateTime FirstSeen { get; set; }
+    public DateTime LastSeen { get; set; }
+    public Dictionary<ObservationKind, int> Evidence { get; set; } = [];
+    [JsonIgnore] public float Confidence
+    {
+        get
+        {
+            var repetition = 1f - MathF.Exp(-Observations / 4f);
+            var agreement = Observations == 0 ? 0 : Confirmations / (float)Observations;
+            var ambiguityPenalty = 1f / (1f + AmbiguousSamples * .12f);
+            return Math.Clamp((Score * .48f + repetition * .30f + agreement * .22f) * ambiguityPenalty, 0, 1);
+        }
+    }
+}
+
 public sealed class TimelineEdge
 {
     public uint From { get; set; }
@@ -28,6 +81,65 @@ public sealed class TimelineEdge
     public double MeanDelay { get; set; }
     public double M2 { get; set; }
     [JsonIgnore] public double StdDev => Count > 1 ? Math.Sqrt(M2 / (Count - 1)) : 0;
+}
+
+public sealed class SignalTimelineEdge
+{
+    public string From { get; set; } = "";
+    public string To { get; set; } = "";
+    public int Phase { get; set; }
+    public int Count { get; set; }
+    public double MeanDelay { get; set; }
+    public double M2 { get; set; }
+    [JsonIgnore] public double StdDev => Count > 1 ? Math.Sqrt(M2 / (Count - 1)) : 0;
+    [JsonIgnore] public float Stability => Count < 2 ? 0 : Math.Clamp(1f - (float)(StdDev / Math.Max(.5, MeanDelay)), 0, 1);
+}
+
+public sealed class SourceMemory
+{
+    public uint OID { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public SourceKind Kind { get; set; }
+    public int Observations { get; set; }
+    public int Casts { get; set; }
+    public int Signals { get; set; }
+    public int Deaths { get; set; }
+    public DateTime FirstSeen { get; set; }
+    public DateTime LastSeen { get; set; }
+}
+
+public sealed class PhaseMemory
+{
+    public int Phase { get; set; }
+    public int Seen { get; set; }
+    public Dictionary<string, int> Signals { get; set; } = [];
+}
+
+public sealed class SessionSummary
+{
+    public string SessionID { get; set; } = "";
+    public uint TerritoryID { get; set; }
+    public DateTime Started { get; set; }
+    public DateTime Ended { get; set; }
+    public int Pulls { get; set; }
+    public int Observations { get; set; }
+    public int MechanicsFinalized { get; set; }
+    public int NewMechanics { get; set; }
+    public int AmbiguousMechanics { get; set; }
+    public string ReplayFile { get; set; } = "";
+}
+
+public sealed class EncounterMemory
+{
+    public uint TerritoryID { get; set; }
+    public int Sessions { get; set; }
+    public int Pulls { get; set; }
+    public DateTime FirstSeen { get; set; }
+    public DateTime LastSeen { get; set; }
+    public Dictionary<ObservationKind, long> ObservationCounts { get; set; } = [];
+    public Dictionary<uint, SourceMemory> Sources { get; set; } = [];
+    public Dictionary<string, ContextualMechanic> Mechanics { get; set; } = [];
+    public Dictionary<string, SignalTimelineEdge> Timeline { get; set; } = [];
+    public Dictionary<int, PhaseMemory> Phases { get; set; } = [];
 }
 
 public sealed class MLState
@@ -40,10 +152,50 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 1;
+    public int Schema { get; set; } = 2;
+    // Compatibility/global fallback learned by the original V1 pipeline.
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
+    // Contextual memory used by the adaptive engine.
+    public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
+    public List<SessionSummary> Sessions { get; set; } = [];
     public MLState ML { get; set; } = new();
+}
+
+public sealed class ForetellObservation
+{
+    public long Sequence { get; set; }
+    public DateTime At { get; set; }
+    public uint TerritoryID { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public ObservationKind Kind { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public SourceKind SourceKind { get; set; }
+    public ulong ActorID { get; set; }
+    public uint ActorOID { get; set; }
+    public ulong TargetID { get; set; }
+    public uint PrimaryID { get; set; }
+    public uint SecondaryID { get; set; }
+    public float X { get; set; }
+    public float Z { get; set; }
+    public float TargetX { get; set; }
+    public float TargetZ { get; set; }
+    public float Rotation { get; set; }
+    public float Value1 { get; set; }
+    public float Value2 { get; set; }
+    public bool Flag { get; set; }
+    public string Detail { get; set; } = "";
+}
+
+public sealed class ReplayReport
+{
+    public string File { get; set; } = "";
+    public int Lines { get; set; }
+    public int Parsed { get; set; }
+    public int Rejected { get; set; }
+    public int Territories { get; set; }
+    public Dictionary<ObservationKind, int> Counts { get; set; } = [];
+    public DateTime First { get; set; }
+    public DateTime Last { get; set; }
+    public string Status { get; set; } = "Not run";
 }
 
 public readonly record struct ActivePrediction(
