@@ -1,0 +1,110 @@
+name: Release Foretell
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'release.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: foretell-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Read release configuration
+        shell: pwsh
+        run: |
+          $cfg = Get-Content .\release.json -Raw | ConvertFrom-Json
+          if (-not $cfg.version) { throw 'release.json must contain version' }
+          $version = [string]$cfg.version
+          $tag = "v$version"
+          $assembly = if ($version.Split('.').Count -eq 3) { "$version.0" } else { $version }
+          "FORETELL_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "FORETELL_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "FORETELL_ASSEMBLY_VERSION=$assembly" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Refuse duplicate tag
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          if (git tag --list $env:FORETELL_TAG) { throw "Tag $env:FORETELL_TAG already exists" }
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download Dalamud
+        shell: pwsh
+        run: |
+          $dest = "$env:AppData\XIVLauncher\addon\Hooks\dev"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
+          Expand-Archive -Force latest.zip -DestinationPath $dest
+
+      - name: Restore
+        run: dotnet restore BossMod/BossModReborn.csproj
+
+      - name: Build release
+        shell: pwsh
+        run: |
+          dotnet build --no-restore -c Release BossMod/BossModReborn.csproj `
+            -p:AssemblyVersion=$env:FORETELL_ASSEMBLY_VERSION `
+            -p:FileVersion=$env:FORETELL_ASSEMBLY_VERSION `
+            -p:PackageVersion=$env:FORETELL_ASSEMBLY_VERSION `
+            -p:InformationalVersion=$env:FORETELL_ASSEMBLY_VERSION `
+            --output .\build
+
+      - name: Package plugin
+        shell: pwsh
+        run: |
+          if (-not (Test-Path .\build\Foretell.dll)) { throw 'Foretell.dll missing after build' }
+          Get-ChildItem .\build\* -Exclude Foretell.*,DefaultRotationPresets.json,RebornPresets.json,PInvoke.User32.dll | Remove-Item -Force -Recurse
+          Get-ChildItem .\build\Foretell.zip -ErrorAction SilentlyContinue | Remove-Item -Force
+          Compress-Archive -Path .\build\* -DestinationPath .\Foretell.zip -Force
+          Get-FileHash .\Foretell.zip -Algorithm SHA256 | Format-List
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $notes = @"
+          Foretell $env:FORETELL_VERSION
+
+          Adaptive encounter learning release with contextual multi-signal inference, persistent per-territory/source memory, confidence/ambiguity tracking, Replay Lab, diagnostics export, and the Foretell Inspector cockpit.
+
+          Recommended first run: use Observe, then Compare, then Hybrid after reviewing learned mechanics.
+          "@
+          gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
+
+      - name: Update Dalamud repository manifest
+        shell: pwsh
+        run: |
+          $download = "https://github.com/${{ github.repository }}/releases/download/$env:FORETELL_TAG/Foretell.zip"
+          $manifest = Get-Content .\BossMod\Foretell.json -Raw | ConvertFrom-Json
+          $manifest | Add-Member -NotePropertyName AssemblyVersion -NotePropertyValue $env:FORETELL_ASSEMBLY_VERSION -Force
+          $manifest | Add-Member -NotePropertyName DownloadLinkInstall -NotePropertyValue $download -Force
+          $manifest | Add-Member -NotePropertyName DownloadLinkUpdate -NotePropertyValue $download -Force
+          $manifest | Add-Member -NotePropertyName DownloadLinkTesting -NotePropertyValue $download -Force
+          $manifest | ConvertTo-Json -Depth 10 -AsArray | Set-Content .\repo.json -Encoding utf8
+
+          git config user.name 'Foretell Release Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add repo.json
+          if (-not (git diff --cached --quiet)) {
+            git commit -m "Publish Foretell $env:FORETELL_TAG repository manifest"
+            git push origin HEAD:main
+          }
