@@ -13,7 +13,7 @@ public enum ObservationKind
 {
     Unknown,
     ActorAdded, ActorRemoved, TargetableChanged, DeathChanged, RenderFlagsChanged, EventStateChanged, ModelStateChanged,
-    CastStart, CastFinish, ActionResolved,
+    CastStart, CastFinish, ActionResolved, AffectedTarget,
     Icon, VFX, TetherStart, TetherEnd, StatusGain, StatusLose,
     EventObjectState, EventObjectAnimation, ActionTimelineEvent, ActionTimelineSync, NpcYell,
     MapEffect, LegacyMapEffect, DirectorUpdate,
