@@ -4,9 +4,9 @@
     <Authors></Authors>
     <Company></Company>
     <Version>0.0.0.0</Version>
-    <Description>Boss mod.</Description>
+    <Description>Foretell adaptive encounter intelligence.</Description>
     <Copyright></Copyright>
-    <PackageProjectUrl></PackageProjectUrl>
+    <PackageProjectUrl>https://github.com/Arceuid731/Foretell</PackageProjectUrl>
   </PropertyGroup>
 
 <PropertyGroup>
@@ -125,7 +125,7 @@
 
   <Target Name="CleanupOutput" AfterTargets="Build" BeforeTargets="DalamudPackage">
     <ItemGroup>
-      <_ExtraOutputFiles Include="$(OutputPath)*" Exclude="$(OutputPath)BossModReborn.*;$(OutputPath)DefaultRotationPresets.json;$(OutputPath)RebornPresets.json;$(OutputPath)PInvoke.User32.dll" />
+      <_ExtraOutputFiles Include="$(OutputPath)*" Exclude="$(OutputPath)Foretell.*;$(OutputPath)DefaultRotationPresets.json;$(OutputPath)RebornPresets.json;$(OutputPath)PInvoke.User32.dll" />
     </ItemGroup>
     <Delete Files="@(_ExtraOutputFiles)" />
   </Target>
