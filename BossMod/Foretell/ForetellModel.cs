@@ -39,10 +39,8 @@ public sealed class LearnedMechanic
 
 public sealed class MechanicSamplePoint
 {
-    // Coordinates normalized to the source's facing at trigger time.
     public float Side { get; set; }
     public float Forward { get; set; }
-    // Coordinates relative to the ground/target location of the trigger.
     public float TargetDX { get; set; }
     public float TargetDZ { get; set; }
     public bool Affected { get; set; }
@@ -121,7 +119,7 @@ public sealed class SourceMemory
 
 public sealed class PhaseMemory
 {
-    public int Phase { get; set;; }
+    public int Phase { get; set; }
     public int Seen { get; set; }
     public Dictionary<string, int> Signals { get; set; } = [];
 }
