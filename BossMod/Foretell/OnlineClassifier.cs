@@ -3,13 +3,13 @@ namespace BossMod.Foretell;
 public sealed class OnlineClassifier
 {
     public const int FeatureCount = 10;
-    public const int ClassCount = 11;
+    public const int ClassCount = 18;
     private readonly MLState _state;
 
     public OnlineClassifier(MLState state)
     {
         _state = state;
-        if (state.FeatureCount != FeatureCount || state.ClassCount != ClassCount || state.Weights.Length != ClassCount)
+        if (state.FeatureCount != FeatureCount || state.ClassCount != ClassCount || state.Weights.Length != ClassCount || state.Weights.Any(w => w.Length != FeatureCount + 1))
         {
             state.FeatureCount = FeatureCount;
             state.ClassCount = ClassCount;
