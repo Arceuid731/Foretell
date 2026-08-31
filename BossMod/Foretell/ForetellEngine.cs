@@ -1,4 +1,3 @@
-using System.Collections;
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
@@ -31,7 +30,6 @@ public sealed partial class ForetellEngine : IDisposable
     private Dictionary<long, ActivePrediction> _predictions = [];
     private Queue<ForetellObservation> _recentSignals = new();
 
-    // Kept for the compatibility timeline and lightweight overlay prediction.
     private uint _previousAction;
     private DateTime _previousActionTime;
     private string _previousSignal = "";
@@ -66,6 +64,7 @@ public sealed partial class ForetellEngine : IDisposable
         _session = NewSession(_territory);
         StartEncounterSession(_territory);
         SyncReplayWriter();
+        InstallForetellCommand();
 
         _subscriptions = new(
             _ws.Actors.Added.Subscribe(OnActorAdded),
@@ -135,6 +134,24 @@ public sealed partial class ForetellEngine : IDisposable
 
     public void ToggleInspector() => _inspectorOpen = !_inspectorOpen;
     public void OpenInspector() => _inspectorOpen = true;
+
+    private void InstallForetellCommand()
+    {
+        try
+        {
+            Service.CommandManager.RemoveHandler("/foretell");
+            Service.CommandManager.AddHandler("/foretell", new Dalamud.Game.Command.CommandInfo((_, args) =>
+            {
+                var split = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (!HandleCommand(split))
+                    Service.ChatGui.Print("Foretell: /foretell [inspect|stats|replay|export|save]");
+            }) { HelpMessage = "Open Foretell Inspector or run Foretell learning/replay commands" });
+        }
+        catch (Exception e)
+        {
+            Service.Log($"[Foretell] Failed to install /foretell command: {e.Message}");
+        }
+    }
 
     private void ChangeTerritory(uint territory)
     {
@@ -249,13 +266,18 @@ public sealed partial class ForetellEngine : IDisposable
         _store.Encounters ??= [];
         _store.Sessions ??= [];
         _store.ML ??= new();
-        foreach (var e in _store.Encounters.Values)
+        foreach (var encounter in _store.Encounters.Values)
         {
-            e.ObservationCounts ??= [];
-            e.Sources ??= [];
-            e.Mechanics ??= [];
-            e.Timeline ??= [];
-            e.Phases ??= [];
+            encounter.ObservationCounts ??= [];
+            encounter.Sources ??= [];
+            encounter.Mechanics ??= [];
+            encounter.Timeline ??= [];
+            encounter.Phases ??= [];
+            foreach (var mechanic in encounter.Mechanics.Values)
+            {
+                mechanic.Evidence ??= [];
+                mechanic.Samples ??= [];
+            }
         }
     }
 
