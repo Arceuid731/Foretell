@@ -1,0 +1,221 @@
+﻿using BossMod.GNB;
+using FFXIVClientStructs.FFXIV.Client.Game.Gauge;
+using static BossMod.AIHints;
+
+namespace BossMod.Autorotation.akechi;
+
+public sealed class AkechiGNBPvP(RotationModuleManager manager, Actor player) : AkechiTools<AID, TraitID>(manager, player)
+{
+    public enum Track { Targeting, RoleActions, LimitBreak, TerminalTrigger, Corundum, RoughDivide, Zone, GnashingFang, FatedCircle }
+    public enum TargetingStrategy { Auto, FocusTargetsTarget, Manual }
+    public enum RoleActionStrategy { Forbid, Rampage, Rampart, FullSwing }
+    public enum LBStrategy { Allow, Forbid }
+    public enum TriggerStrategy { Five, Four, Three, Two, One, Forbid }
+    public enum CorundumStrategy { Auto, Two, Three, Four, Eighty, Seventy, Sixty, Fifty, Fourty, Thirty, Forbid }
+    public enum DivideStrategy { Auto, AutoMelee, Forbid }
+    public enum ZoneStrategy { Buff, HalfHPP, BuffOrHalfHPP, BuffAndHalfHPP, ASAP, Forbid }
+    public enum CommonStrategy { Buff, ASAP, Forbid }
+
+    public static RotationModuleDefinition Definition()
+    {
+        var res = new RotationModuleDefinition("Akechi GNB (PvP)", "PvP Rotation Module", "PvP", "Akechi", RotationModuleQuality.Basic, BitMask.Build((int)Class.GNB), 100, 30, PvP: PvPCompatibility.PvPOnly);
+        res.Define(Track.Targeting).As<TargetingStrategy>("Targeting", "", 300)
+            .AddOption(TargetingStrategy.Auto, "Automatically select best target")
+            .AddOption(TargetingStrategy.FocusTargetsTarget, "Automatically target your current Focus Target's target - if no Focus Target or if Focus Target is hostile, then automatically select best target")
+            .AddOption(TargetingStrategy.Manual, "Manually select target");
+
+        res.Define(Track.RoleActions).As<RoleActionStrategy>("Role Actions", "", 300)
+            .AddOption(RoleActionStrategy.Forbid, "Do not use any role actions")
+            .AddOption(RoleActionStrategy.Rampage, "Use Rampage when available and targets are nearby")
+            .AddOption(RoleActionStrategy.Rampart, "Use Rampart when available")
+            .AddOption(RoleActionStrategy.FullSwing, "Use Full Swing when available")
+            .AddAssociatedActions(AID.RampagePvP, AID.RampartPvP, AID.FullSwingPvP);
+
+        res.Define(Track.LimitBreak).As<LBStrategy>("Limit Break", "", 300)
+            .AddOption(LBStrategy.Allow, "Allow use of Limit Break (Relentless Rush) automatically when nearby enemies")
+            .AddOption(LBStrategy.Forbid, "Forbid use of Limit Break (Relentless Rush) entirely");
+
+        res.Define(Track.TerminalTrigger).As<TriggerStrategy>("Terminal Trigger", "", 300)
+            .AddOption(TriggerStrategy.Five, "Use when 5 stacks of Relentless Shrapnel are available on target")
+            .AddOption(TriggerStrategy.Four, "Use when 4+ stacks of Relentless Shrapnel are available on target")
+            .AddOption(TriggerStrategy.Three, "Use when 3+ stacks of Relentless Shrapnel are available on target")
+            .AddOption(TriggerStrategy.Two, "Use when 2+ stacks of Relentless Shrapnel are available on target")
+            .AddOption(TriggerStrategy.One, "Use when 1+ stacks of Relentless Shrapnel is available on target")
+            .AddOption(TriggerStrategy.Forbid, "Let Terminal Trigger happen automatically at the end of its duration")
+            .AddAssociatedActions(AID.TerminalTriggerPvP);
+
+        res.Define(Track.Corundum).As<CorundumStrategy>("Heart of Corundum", "", 300)
+            .AddOption(CorundumStrategy.Auto, "Use automatically when HP is below 80% or two or more enemies are targeting you")
+            .AddOption(CorundumStrategy.Two, "Use when HP is not full and two or more enemies are targeting you")
+            .AddOption(CorundumStrategy.Three, "Use when HP is not full and three or more enemies are targeting you")
+            .AddOption(CorundumStrategy.Four, "Use when HP is not full and four or more enemies are targeting you")
+            .AddOption(CorundumStrategy.Eighty, "Use when HP is at or below 80%")
+            .AddOption(CorundumStrategy.Seventy, "Use when HP is at or below 70%")
+            .AddOption(CorundumStrategy.Sixty, "Use when HP is at or below 60%")
+            .AddOption(CorundumStrategy.Fifty, "Use when HP is at or below 50%")
+            .AddOption(CorundumStrategy.Fourty, "Use when HP is at or below 40%")
+            .AddOption(CorundumStrategy.Thirty, "Use when HP is at or below 30%")
+            .AddOption(CorundumStrategy.Forbid, "Forbid use of Heart of Corundum entirely")
+            .AddAssociatedActions(AID.HeartOfCorundumPvP);
+
+        res.Define(Track.RoughDivide).As<DivideStrategy>("Rough Divide", "", 300)
+            .AddOption(DivideStrategy.Auto, "Use automatically when No Mercy buff is not active")
+            .AddOption(DivideStrategy.AutoMelee, "Use only when in Melee range of target and when No Mercy buff is not active")
+            .AddOption(DivideStrategy.Forbid, "Forbid use of Rough Divide entirely")
+            .AddAssociatedActions(AID.RoughDividePvP);
+
+        res.Define(Track.Zone).As<ZoneStrategy>("Blasting Zone", "", 300)
+            .AddOption(ZoneStrategy.Buff, "Use only when under No Mercy buff regardless target HP%")
+            .AddOption(ZoneStrategy.HalfHPP, "Use when target is less than 50% HP regardless of No Mercy buff")
+            .AddOption(ZoneStrategy.BuffOrHalfHPP, "Use when under No Mercy buff or target is less than 50% HP")
+            .AddOption(ZoneStrategy.BuffAndHalfHPP, "Use when under No Mercy buff and target is less than 50% HP")
+            .AddOption(ZoneStrategy.ASAP, "Use ASAP regardless of No Mercy buff or target HP%")
+            .AddOption(ZoneStrategy.Forbid, "Forbid use of Blasting Zone entirely")
+            .AddAssociatedActions(AID.BlastingZonePvP);
+
+        res.Define(Track.GnashingFang).As<CommonStrategy>("Gnashing Fang", "", 300)
+            .AddOption(CommonStrategy.Buff, "Use ASAP when under No Mercy buff")
+            .AddOption(CommonStrategy.ASAP, "Use ASAP regardless of No Mercy buff")
+            .AddOption(CommonStrategy.Forbid, "Forbid use of Gnashing Fang entirely")
+            .AddAssociatedActions(AID.GnashingFangPvP);
+
+        res.Define(Track.FatedCircle).As<CommonStrategy>("Fated Circle", "", 300)
+            .AddOption(CommonStrategy.Buff, "Use ASAP when under No Mercy buff")
+            .AddOption(CommonStrategy.ASAP, "Use ASAP regardless of No Mercy buff")
+            .AddOption(CommonStrategy.Forbid, "Forbid use of Fated Circle entirely")
+            .AddAssociatedActions(AID.FatedCirclePvP);
+
+        return res;
+    }
+
+    private void ExecuteCommons(AID action, StrategyValues.OptionRef track, Actor? primaryTarget)
+    {
+        if (ActionReady(action) && track.As<CommonStrategy>() switch
+        {
+            CommonStrategy.Buff => HasStatus(SID.NoMercy),
+            CommonStrategy.ASAP => true,
+            _ => false
+        })
+            QueueGCD(action, primaryTarget, GCDPriority.High);
+    }
+
+    public override void Execution(StrategyValues strategy, Enemy? primaryTarget)
+    {
+        if (Player.IsDeadOrDestroyed || Player.MountId != 0 || Player.FindStatus(ClassShared.SID.GuardPvP) != null)
+            return;
+
+        var strat = strategy.Option(Track.Targeting).As<TargetingStrategy>();
+        var auto = strat == TargetingStrategy.Auto;
+        var focus = strat == TargetingStrategy.FocusTargetsTarget;
+        var mainTarget = primaryTarget?.Actor;
+        var gauge = World.Client.GetGauge<GunbreakerGauge>();
+        var GunStep = gauge.AmmoComboStep;
+        var hasNM = HasStatus(SID.NoMercyPvP);
+        var targetsOk = Hints.NumPriorityTargetsInAOECircle(Player.Position, 6) > 0;
+        var rangeOk = Player.DistanceToHitbox(mainTarget) <= 5.99f;
+
+        if (auto)
+        {
+            GetPvPTarget(5, false);
+        }
+        if (focus)
+        {
+            GetPvPTarget(5, true);
+        }
+
+        if (ActionReady(AID.HeartOfCorundumPvP) && strategy.Option(Track.Corundum).As<CorundumStrategy>() switch
+        {
+            CorundumStrategy.Auto => (Player.PendingHPRatio is <= 0.8f and not 0.0f && EnemiesTargetingPlayer >= 2) || Player.PendingHPRatio is < 0.5f and not 0.0f,
+            CorundumStrategy.Two => Player.PendingHPRatio is < 1.0f and not 0.0f && EnemiesTargetingPlayer >= 2,
+            CorundumStrategy.Three => Player.PendingHPRatio is < 1.0f and not 0.0f && EnemiesTargetingPlayer >= 3,
+            CorundumStrategy.Four => Player.PendingHPRatio is < 1.0f and not 0.0f && EnemiesTargetingPlayer >= 4,
+            CorundumStrategy.Eighty => Player.PendingHPRatio is <= 0.8f and not 0.0f,
+            CorundumStrategy.Seventy => Player.PendingHPRatio is <= 0.7f and not 0.0f,
+            CorundumStrategy.Sixty => Player.PendingHPRatio is <= 0.6f and not 0.0f,
+            CorundumStrategy.Fifty => Player.PendingHPRatio is <= 0.5f and not 0.0f,
+            CorundumStrategy.Fourty => Player.PendingHPRatio is <= 0.4f and not 0.0f,
+            CorundumStrategy.Thirty => Player.PendingHPRatio is <= 0.3f and not 0.0f,
+            _ => false
+        })
+            QueueGCD(AID.HeartOfCorundumPvP, Player, GCDPriority.Max);
+
+        var (roleCondition, roleAction, roleTarget) = strategy.Option(Track.RoleActions).As<RoleActionStrategy>() switch
+        {
+            RoleActionStrategy.Rampage => (HasStatus(SID.RampageEquippedPvP) && ActionReady(AID.RampagePvP) && Hints.PriorityTargets.Any(h => h.Actor.IsDeadOrDestroyed && !h.Actor.IsFriendlyNPC && !h.Actor.IsAlly && h.Actor.DistanceToHitbox(Player) <= 10) && In10y(mainTarget), AID.RampagePvP, Player),
+            RoleActionStrategy.Rampart => (HasStatus(SID.RampartEquippedPvP) && ActionReady(AID.RampartPvP) && ((Player.PendingHPRatio is < 1.0f and not 0.0f && EnemiesTargetingPlayer >= 2) || Player.PendingHPRatio is < 0.5f and not 0.0f), AID.RampartPvP, Player),
+            RoleActionStrategy.FullSwing => (HasStatus(SID.FullSwingEquippedPvP) && ActionReady(AID.FullSwingPvP) && In5y(mainTarget), AID.FullSwingPvP, mainTarget),
+            _ => (false, AID.None, null)
+        };
+        if (roleCondition)
+            QueueGCD(roleAction, roleTarget, GCDPriority.VeryHigh + 1);
+
+        if (World.Party.LimitBreakLevel >= 1 && rangeOk && targetsOk && strategy.Option(Track.LimitBreak).As<LBStrategy>() == LBStrategy.Allow)
+            QueueGCD(AID.RelentlessRushPvP, Player, GCDPriority.VeryHigh + 1);
+
+        var stacks = Stacks(SID.RelentlessShrapnelPvP, on: mainTarget);
+        if (HasStatus(SID.RelentlessRushPvP) && rangeOk && targetsOk && strategy.Option(Track.TerminalTrigger).As<TriggerStrategy>() switch
+        {
+            TriggerStrategy.Five => stacks >= 5,
+            TriggerStrategy.Four => stacks >= 4,
+            TriggerStrategy.Three => stacks >= 3,
+            TriggerStrategy.Two => stacks >= 2,
+            TriggerStrategy.One => stacks >= 1,
+            _ => false
+        })
+            QueueGCD(AID.TerminalTriggerPvP, Player, GCDPriority.VeryHigh);
+
+        if (Cooldown(AID.RoughDividePvP) < 14.6f && strategy.Option(Track.RoughDivide).As<DivideStrategy>() switch
+        {
+            DivideStrategy.Auto => !hasNM,
+            DivideStrategy.AutoMelee => !hasNM && In5y(mainTarget),
+            _ => false
+        })
+            QueueOGCD(AID.RoughDividePvP, mainTarget, Cooldown(AID.RoughDividePvP) < 0.6f ? OGCDPriority.High + 2001 : OGCDPriority.High);
+
+        if (In5y(mainTarget) && HasLOS(mainTarget))
+        {
+            ExecuteCommons(AID.GnashingFangPvP, strategy.Option(Track.GnashingFang), mainTarget);
+            ExecuteCommons(AID.FatedCirclePvP, strategy.Option(Track.GnashingFang), mainTarget);
+
+            if (ActionReady(AID.BlastingZonePvP) && strategy.Option(Track.Zone).As<ZoneStrategy>() switch
+            {
+                ZoneStrategy.Buff => hasNM,
+                ZoneStrategy.HalfHPP => mainTarget?.PendingHPRatio < 0.5f,
+                ZoneStrategy.BuffOrHalfHPP => hasNM || mainTarget?.PendingHPRatio < 0.5f,
+                ZoneStrategy.BuffAndHalfHPP => hasNM && mainTarget?.PendingHPRatio < 0.5f,
+                ZoneStrategy.ASAP => true,
+                _ => false
+            })
+                QueueOGCD(AID.BlastingZonePvP, mainTarget, OGCDPriority.High - 1);
+
+            var (gunCondition, gunAction, gunPriority) = gauge.AmmoComboStep switch
+            {
+                0 => (GunStep == 0, ComboLastMove switch
+                {
+                    AID.SolidBarrelPvP => AID.BurstStrikePvP,
+                    AID.BrutalShellPvP => AID.SolidBarrelPvP,
+                    AID.KeenEdgePvP => AID.BrutalShellPvP,
+                    _ => AID.KeenEdgePvP,
+                }, GCDPriority.Low),
+                1 => (GunStep == 1, AID.SavageClawPvP, GCDPriority.BelowAverage),
+                2 => (GunStep == 2, AID.WickedTalonPvP, GCDPriority.BelowAverage),
+                _ => (false, AID.None, GCDPriority.None)
+            };
+            if (gunCondition)
+                QueueGCD(gunAction, mainTarget, gunPriority);
+
+            foreach (var (status, action) in new[]
+            {
+                (SID.ReadyToRazePvP,  AID.FatedBrandPvP),
+                (SID.ReadyToBlastPvP, AID.HypervelocityPvP),
+                (SID.ReadyToRipPvP,   AID.JugularRipPvP),
+                (SID.ReadyToTearPvP,  AID.AbdomenTearPvP),
+                (SID.ReadyToGougePvP, AID.EyeGougePvP),
+            })
+            {
+                if (HasStatus(status))
+                    QueueOGCD(action, mainTarget, ChangePriority(highPrio: (int)OGCDPriority.High, convert: true));
+            }
+        }
+    }
+}

@@ -1,0 +1,144 @@
+Texture2D<float> ArenaSdf : register(t1);
+Texture2D<float> CustomSdf : register(t2);
+SamplerState SdfSampler : register(s1);
+static const float SdfMipGradScale = 0.70710678f; // 2^-0.5 => -0.5 LOD bias
+static const float OutlineCoverageScale = 1.5f;
+static const float ShadowCoverageScale = 1.75f;
+
+cbuffer ArenaSdfConstants : register(b1)
+{
+    float4 ArenaUvRow0;
+    float4 ArenaUvRow1;
+};
+
+cbuffer CustomSdfConstants : register(b2)
+{
+    float4 CustomUvRow0;
+    float4 CustomUvRow1;
+};
+
+struct PS_INPUT
+{
+    float4 pos       : SV_POSITION;
+    float2 localPx   : TEXCOORD0;
+    float2 direction : TEXCOORD1;
+    float4 params    : TEXCOORD2;
+    float2 widthsPx  : TEXCOORD3;
+    float2 extra     : TEXCOORD4;
+    float4 col       : COLOR0;
+    float4 shadowCol : COLOR1;
+};
+
+float extendOutside(float sampledPx, float2 uv, float4 row0, float4 row1)
+{
+    float2 clampedUv = saturate(uv);
+    float2 outsideUv = uv - clampedUv;
+    float gradU = max(length(row0.xy), 1e-7f);
+    float gradV = max(length(row1.xy), 1e-7f);
+    float2 outsidePxAxes = float2(outsideUv.x / gradU, outsideUv.y / gradV);
+    return sampledPx + length(outsidePxAxes);
+}
+
+float arenaSdPx(float2 framebufferPx)
+{
+    float3 hp = float3(framebufferPx, 1.0f);
+    float2 uv = float2(dot(hp, ArenaUvRow0.xyz), dot(hp, ArenaUvRow1.xyz));
+    float sampledPx = ArenaSdf.SampleGrad(SdfSampler, saturate(uv), float2(ArenaUvRow0.x, ArenaUvRow1.x) * SdfMipGradScale, float2(ArenaUvRow0.y, ArenaUvRow1.y) * SdfMipGradScale).r * ArenaUvRow1.w;
+    return extendOutside(sampledPx, uv, ArenaUvRow0, ArenaUvRow1);
+}
+
+float customSdPx(float2 framebufferPx)
+{
+    float3 hp = float3(framebufferPx, 1.0f);
+    float2 uv = float2(dot(hp, CustomUvRow0.xyz), dot(hp, CustomUvRow1.xyz));
+    float sampledPx = CustomSdf.SampleGrad(SdfSampler, saturate(uv), float2(CustomUvRow0.x, CustomUvRow1.x) * SdfMipGradScale, float2(CustomUvRow0.y, CustomUvRow1.y) * SdfMipGradScale).r * CustomUvRow1.w;
+    return extendOutside(sampledPx, uv, CustomUvRow0, CustomUvRow1);
+}
+
+float positiveSquare(float x)
+{
+    x = max(x, 0.0f);
+    return x * x;
+}
+
+float halfPlaneCoverage(float edgeDistance, float2 gradient, float coverageScale)
+{
+    // Exact box-filter coverage of a locally straight boundary over the unit pixel square.
+    // Keep only gradient direction: the distance fields are already expressed in framebuffer
+    // pixels, and ignoring derivative magnitude avoids the corner inflation of raw fwidth().
+    float gl = length(gradient);
+    if (gl <= 1e-5f)
+        return edgeDistance <= 0.0f ? 1.0f : 0.0f;
+
+    float2 n = abs(gradient / gl);
+    float a = max(n.x, n.y) * coverageScale;
+    float b = min(n.x, n.y) * coverageScale;
+
+    // Axis-aligned limit of the convolution below.
+    if (b <= 1e-4f)
+        return saturate(0.5f - edgeDistance / max(a, 1e-5f));
+
+    // Projection of a uniform pixel square onto the edge normal is the convolution of
+    // two uniforms of widths a and b. Its exact CDF gives the covered pixel area.
+    float h = 0.5f * (a + b);
+    float q = h - edgeDistance;
+    float area = positiveSquare(q)
+               - positiveSquare(q - a)
+               - positiveSquare(q - b)
+               + positiveSquare(q - a - b);
+    return saturate(area / (2.0f * a * b));
+}
+
+float bandCoverage(float signedDistance, float halfWidth, float2 gradient, float coverageScale)
+{
+    // Area between the two locally parallel boundaries d=-w and d=+w. Keeping the signed
+    // distance avoids the abs() cusp at the centerline and is smoother under rotation.
+    return saturate(halfPlaneCoverage(signedDistance - halfWidth, gradient, coverageScale)
+                  - halfPlaneCoverage(signedDistance + halfWidth, gradient, coverageScale));
+}
+
+float clippedSdAt(float2 framebufferPx)
+{
+    return max(customSdPx(framebufferPx), arenaSdPx(framebufferPx));
+}
+
+float4 composeExclusiveHalo(float4 shadowCol, float shadowCoverage, float4 col, float colorCoverage)
+{
+    // The shadow is a coverage ring around the colored stroke, not another opaque stroke
+    // underneath it. Partition coverage so black cannot leak through partially covered
+    // colored AA pixels; that leak exaggerates temporal aliasing on high-contrast outlines.
+    float exclusiveShadow = shadowCoverage * (1.0f - colorCoverage);
+    float sa = shadowCol.a * exclusiveShadow;
+    float ca = col.a * colorCoverage;
+    float a = ca + sa;
+    if (a <= 1e-5f)
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float3 rgb = (col.rgb * ca + shadowCol.rgb * sa) / a;
+    return float4(rgb, a);
+}
+
+float4 main(PS_INPUT i) : SV_Target
+{
+    float2 p = i.pos.xy;
+#ifdef CLIP_EDGE_ONLY
+    float arenaSd = arenaSdPx(p);
+    float replayBand = max(i.widthsPx.y + 2.5f, 4.0f);
+    if (abs(arenaSd) > replayBand)
+        discard;
+#endif
+
+    float clippedSd = clippedSdAt(p);
+    if (abs(clippedSd) > i.widthsPx.y + 1.25f)
+        discard;
+
+    // Sample the complete Boolean field at symmetric half-pixel offsets. This makes the
+    // estimated edge normal continuous instead of depending on pixel-quad derivatives.
+    float2 g = float2(
+        clippedSdAt(p + float2(0.5f, 0.0f)) - clippedSdAt(p - float2(0.5f, 0.0f)),
+        clippedSdAt(p + float2(0.0f, 0.5f)) - clippedSdAt(p - float2(0.0f, 0.5f)));
+    float c = bandCoverage(clippedSd, i.widthsPx.x, g, OutlineCoverageScale);
+    float s = bandCoverage(clippedSd, i.widthsPx.y, g, ShadowCoverageScale);
+    float4 o = composeExclusiveHalo(i.shadowCol, s, i.col, c);
+    clip(o.a - 0.001f);
+    return o;
+}

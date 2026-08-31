@@ -1,0 +1,31 @@
+[
+  {
+    "Author": "Arceuid731; based on FFXIV-CombatReborn/BossmodReborn",
+    "Name": "Foretell",
+    "InternalName": "Foretell",
+    "RepoUrl": "https://github.com/Arceuid731/Foretell",
+    "Description": "Adaptive encounter intelligence built on BossMod Reborn. Learns mechanics locally and renders predictive world/radar/text guidance while preserving BMR.",
+    "ApplicableVersion": "any",
+    "Tags": [
+      "combat",
+      "boss",
+      "dodge",
+      "mechanics",
+      "pve",
+      "raids",
+      "trials"
+    ],
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "LoadPriority": 0,
+    "IsTestingExclusive": false,
+    "Punchline": "Adaptive encounter intelligence: observe, learn, predict.",
+    "AcceptsFeedback": true,
+    "AssemblyVersion": "0.1.0.0",
+    "DownloadLinkInstall": "https://github.com/Arceuid731/Foretell/releases/download/v0.1.0/Foretell.zip",
+    "DownloadLinkUpdate": "https://github.com/Arceuid731/Foretell/releases/download/v0.1.0/Foretell.zip",
+    "DownloadLinkTesting": "https://github.com/Arceuid731/Foretell/releases/download/v0.1.0/Foretell.zip"
+  }
+]
