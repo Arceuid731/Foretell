@@ -6,6 +6,7 @@ public sealed partial class ForetellEngine
 {
     public void Draw()
     {
+        DrawInspector();
         if (_cfg.Mode is ForetellMode.Legacy or ForetellMode.Observe) return;
         var confidenceCut = _cfg.VisualConfidence / 100f;
         var displayed = 0;
@@ -19,7 +20,7 @@ public sealed partial class ForetellEngine
         if (_cfg.SafePositionSuggestions) DrawSafeSuggestion();
     }
 
-    private static uint Danger(float confidence) => confidence >= .99f ? 0xFF3030FFu : confidence >= .95f ? 0xFF40A0FFu : 0xFF40D0FFu;
+    private uint Danger(float confidence) => confidence >= _cfg.SafeConfidence / 100f ? 0xFF3030FFu : confidence >= _cfg.WarningConfidence / 100f ? 0xFF40A0FFu : 0xFF40D0FFu;
 
     private void DrawWorld(ActivePrediction p)
     {
@@ -88,16 +89,30 @@ public sealed partial class ForetellEngine
             draw.AddText(new(viewport.X * .5f - 170, y), Danger(active.Confidence), $"FORETELL  {active.Kind} / {active.Geometry}  {remain:F1}s  {active.Confidence:P0}");
             y += 22;
         }
-        var next = PredictNext();
+        var next = PredictNextContextual();
         if (next != null)
-            draw.AddText(new(viewport.X * .5f - 170, y), 0xFFE0E0E0u, $"Likely next: AID {next.To}  ~{next.MeanDelay:F1}s  ({next.Count}x)");
-        draw.AddText(new(20, viewport.Y - 35), 0xFFB0B0B0u, $"Foretell learned {_store.Mechanics.Count} actions | ML updates {_store.ML.Updates} | {_lastEvidence}");
+            draw.AddText(new(viewport.X * .5f - 170, y), 0xFFE0E0E0u, $"Likely next: {next.To}  ~{next.MeanDelay:F1}s  ({next.Count}x, {next.Stability:P0} stable)");
+        else
+        {
+            var legacyNext = PredictNext();
+            if (legacyNext != null)
+                draw.AddText(new(viewport.X * .5f - 170, y), 0xFFE0E0E0u, $"Likely next: AID {legacyNext.To}  ~{legacyNext.MeanDelay:F1}s  ({legacyNext.Count}x)");
+        }
+        var contextualCount = _store.Encounters.GetValueOrDefault(_territory)?.Mechanics.Count ?? 0;
+        draw.AddText(new(20, viewport.Y - 35), 0xFFB0B0B0u, $"Foretell T{_territory}: {contextualCount} contextual mechanics | {_session.Observations:N0} obs | ML {_store.ML.Updates} | {_lastEvidence}");
     }
 
     private TimelineEdge? PredictNext()
     {
         if (_previousAction == 0) return null;
         return _store.Timeline.Values.Where(e => e.From == _previousAction && e.Count >= 2).OrderByDescending(e => e.Count).FirstOrDefault();
+    }
+
+    private SignalTimelineEdge? PredictNextContextual()
+    {
+        if (string.IsNullOrEmpty(_previousSignal) || !_store.Encounters.TryGetValue(_territory, out var encounter)) return null;
+        return encounter.Timeline.Values.Where(e => e.Phase == _session.Phase && e.From == _previousSignal && e.Count >= 2)
+            .OrderByDescending(e => e.Stability).ThenByDescending(e => e.Count).FirstOrDefault();
     }
 
     private void DrawRadar()
@@ -113,7 +128,7 @@ public sealed partial class ForetellEngine
         var draw = ImGui.GetForegroundDrawList();
         draw.AddCircle(center, radius, 0xAAE0E0E0u, 64, 1.5f);
         draw.AddCircleFilled(center, 4, 0xFFFFFFFFu);
-        var scale = radius / Math.Max(1, _cfg.RadarWorldRadius);
+        var scale = radius / MathF.Max(1, _cfg.RadarWorldRadius);
         foreach (var p in _predictions.Values)
         {
             if (p.Confidence < _cfg.VisualConfidence / 100f) continue;
