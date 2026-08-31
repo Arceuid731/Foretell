@@ -37,6 +37,17 @@ public sealed class LearnedMechanic
     [JsonIgnore] public float Confidence => Math.Clamp((Score * .72f) + (1f - MathF.Exp(-Observations / 4f)) * .28f, 0, 1);
 }
 
+public sealed class MechanicSamplePoint
+{
+    // Coordinates normalized to the source's facing at trigger time.
+    public float Side { get; set; }
+    public float Forward { get; set; }
+    // Coordinates relative to the ground/target location of the trigger.
+    public float TargetDX { get; set; }
+    public float TargetDZ { get; set; }
+    public bool Affected { get; set; }
+}
+
 public sealed class ContextualMechanic
 {
     public string Key { get; set; } = "";
@@ -61,6 +72,7 @@ public sealed class ContextualMechanic
     public DateTime FirstSeen { get; set; }
     public DateTime LastSeen { get; set; }
     public Dictionary<ObservationKind, int> Evidence { get; set; } = [];
+    public List<MechanicSamplePoint> Samples { get; set; } = [];
     [JsonIgnore] public float Confidence
     {
         get
@@ -109,7 +121,7 @@ public sealed class SourceMemory
 
 public sealed class PhaseMemory
 {
-    public int Phase { get; set; }
+    public int Phase { get; set;; }
     public int Seen { get; set; }
     public Dictionary<string, int> Signals { get; set; } = [];
 }
@@ -153,10 +165,8 @@ public sealed class MLState
 public sealed class ForetellStore
 {
     public int Schema { get; set; } = 2;
-    // Compatibility/global fallback learned by the original V1 pipeline.
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
-    // Contextual memory used by the adaptive engine.
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
     public List<SessionSummary> Sessions { get; set; } = [];
     public MLState ML { get; set; } = new();
@@ -192,6 +202,8 @@ public sealed class ReplayReport
     public int Parsed { get; set; }
     public int Rejected { get; set; }
     public int Territories { get; set; }
+    public int RediscoveredMechanics { get; set; }
+    public int AmbiguousMechanics { get; set; }
     public Dictionary<ObservationKind, int> Counts { get; set; } = [];
     public DateTime First { get; set; }
     public DateTime Last { get; set; }
