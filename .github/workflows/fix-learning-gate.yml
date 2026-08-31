@@ -1,0 +1,187 @@
+name: Fix Foretell Learning Gate
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'learning-gate-fix.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply learning gate fix
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('BossMod/Foretell/ForetellLearning.cs')
+          s = p.read_text(encoding='utf-8')
+
+          old = '''        _session.Observe(observation);
+          var encounter = Encounter(observation.TerritoryID);
+          encounter.LastSeen = DateTime.UtcNow;
+          encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;
+          UpdateSourceMemory(encounter, observation);
+          Record(observation, replaying);
+          '''
+          new = '''        _session.Observe(observation);
+          var encounter = _store.Encounters.GetValueOrDefault(observation.TerritoryID);
+          if (_cfg.EnableLearning)
+          {
+              encounter ??= Encounter(observation.TerritoryID);
+              encounter.LastSeen = DateTime.UtcNow;
+              encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;
+              UpdateSourceMemory(encounter, observation);
+          }
+          Record(observation, replaying);
+          '''
+          assert old in s, 'ProcessObservation memory block not found'
+          s = s.replace(old, new, 1)
+
+          old = '''        if (IsCombatSignal(observation))
+              TouchPull(encounter, observation);
+
+          if (IsTimelineSignal(observation))
+              LearnSignalTimeline(encounter, observation);
+
+          var correlated = CorrelateObservation(observation);
+          if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))
+              StartEpisode(observation, encounter);
+          '''
+          new = '''        if (IsCombatSignal(observation))
+              TouchPull(encounter, observation);
+
+          if (IsTimelineSignal(observation))
+          {
+              if (_cfg.EnableLearning && encounter != null)
+                  LearnSignalTimeline(encounter, observation);
+              else
+                  TrackSignalState(observation);
+          }
+
+          var correlated = CorrelateObservation(observation);
+          if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))
+              StartEpisode(observation, encounter);
+          '''
+          assert old in s, 'timeline block not found'
+          s = s.replace(old, new, 1)
+
+          old = '''    private void TouchPull(EncounterMemory encounter, ForetellObservation observation)
+          {
+              if (!_inPull || (observation.At - _lastCombatSignal).TotalSeconds > 30)
+              {
+                  _inPull = true;
+                  ++_session.Pulls;
+                  ++encounter.Pulls;
+                  _session.Phase = 0;
+                  _previousSignal = "";
+              }
+              _lastCombatSignal = observation.At;
+          }
+          '''
+          new = '''    private void TouchPull(EncounterMemory? encounter, ForetellObservation observation)
+          {
+              if (!_inPull || (observation.At - _lastCombatSignal).TotalSeconds > 30)
+              {
+                  _inPull = true;
+                  ++_session.Pulls;
+                  if (_cfg.EnableLearning && encounter != null)
+                      ++encounter.Pulls;
+                  _session.Phase = 0;
+                  _previousSignal = "";
+              }
+              _lastCombatSignal = observation.At;
+          }
+          '''
+          assert old in s, 'TouchPull block not found'
+          s = s.replace(old, new, 1)
+
+          anchor = '''    private void LearnLegacyTimeline(uint action, DateTime now)
+          '''
+          helper = '''    private void TrackSignalState(ForetellObservation observation)
+          {
+              _previousSignal = SignalKey(observation);
+              _previousSignalTime = observation.At;
+              if (observation.Kind == ObservationKind.CastStart && observation.PrimaryID != 0)
+              {
+                  _previousAction = observation.PrimaryID;
+                  _previousActionTime = observation.At;
+              }
+          }
+
+          '''
+          assert anchor in s, 'legacy timeline anchor not found'
+          s = s.replace(anchor, helper + anchor, 1)
+
+          s = s.replace('private void StartEpisode(ForetellObservation trigger, EncounterMemory encounter)',
+                        'private void StartEpisode(ForetellObservation trigger, EncounterMemory? encounter)', 1)
+          s = s.replace('if (trigger.Kind == ObservationKind.CastStart && encounter.Mechanics.TryGetValue(episode.SignalKey, out var learned)',
+                        'if (trigger.Kind == ObservationKind.CastStart && encounter != null && encounter.Mechanics.TryGetValue(episode.SignalKey, out var learned)', 1)
+
+          old = '''        episode.Finalized = true;
+              ++_session.MechanicsFinalized;
+
+              var encounter = Encounter(episode.Trigger.TerritoryID);
+          '''
+          new = '''        episode.Finalized = true;
+              ++_session.MechanicsFinalized;
+
+              if (!_cfg.EnableLearning)
+              {
+                  _lastEvidence = $"{episode.SignalKey}: outcome observed; adaptive learning is disabled";
+                  return;
+              }
+
+              var encounter = Encounter(episode.Trigger.TerritoryID);
+          '''
+          assert old in s, 'FinalizeEpisode gate anchor not found'
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+
+          p = Path('BossMod/Foretell/ForetellReplay.cs')
+          s = p.read_text(encoding='utf-8')
+          old = '''        var liveEvidence = _lastEvidence;
+
+              try
+              {
+                  _store = new();
+          '''
+          new = '''        var liveEvidence = _lastEvidence;
+              var liveLearning = _cfg.EnableLearning;
+
+              try
+              {
+                  _cfg.EnableLearning = true; // Replay Lab always exercises the learner, independent of the live toggle.
+                  _store = new();
+          '''
+          assert old in s, 'Replay learning save anchor not found'
+          s = s.replace(old, new, 1)
+          old = '''        finally
+              {
+                  _store = liveStore;
+          '''
+          new = '''        finally
+              {
+                  _cfg.EnableLearning = liveLearning;
+                  _store = liveStore;
+          '''
+          assert old in s, 'Replay learning restore anchor not found'
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          git config user.name 'Foretell Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add BossMod/Foretell/ForetellLearning.cs BossMod/Foretell/ForetellReplay.cs
+          git commit -m 'Make adaptive learning toggle truly read-only'
+          git pull --rebase origin main
+          git push origin HEAD:main
