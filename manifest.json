@@ -1,9 +1,9 @@
 {
-  "Author": "The Combat Reborn Team",
-  "Name": "BossMod Reborn",
-  "InternalName": "BossModReborn",
-  "RepoUrl": "https://github.com/FFXIV-CombatReborn/BossmodReborn",
-  "Description": "A bunch of utilities to simplify boss mechanics",
+  "Author": "Arceuid731; based on FFXIV-CombatReborn/BossmodReborn",
+  "Name": "Foretell",
+  "InternalName": "Foretell",
+  "RepoUrl": "https://github.com/Arceuid731/Foretell",
+  "Description": "Adaptive encounter intelligence built on BossMod Reborn. Learns mechanics locally and renders predictive world/radar/text guidance while preserving BMR.",
   "ApplicableVersion": "any",
   "Tags": [
     "combat",
@@ -20,12 +20,6 @@
   "CanUnloadAsync": false,
   "LoadPriority": 0,
   "IsTestingExclusive": false,
-  "IconUrl": "https://raw.githubusercontent.com/FFXIV-CombatReborn/RebornAssets/main/IconAssets/BMR_Icon.png",
-  "Punchline": "Don't fail at raid mechanics anymore",
-  "AcceptsFeedback": true,
-  "ImageUrls": [
-    "https://raw.githubusercontent.com/FFXIV-CombatReborn/BossmodReborn/master/Data/image1.png",
-    "https://raw.githubusercontent.com/FFXIV-CombatReborn/BossmodReborn/master/Data/image2.png",
-    "https://raw.githubusercontent.com/FFXIV-CombatReborn/BossmodReborn/master/Data/image3.png"
-  ]
+  "Punchline": "Adaptive encounter intelligence: observe, learn, predict.",
+  "AcceptsFeedback": true
 }
