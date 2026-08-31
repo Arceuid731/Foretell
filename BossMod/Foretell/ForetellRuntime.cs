@@ -9,6 +9,7 @@ internal sealed class MechanicEpisode
     public double LeadSeconds { get; set; }
     public Dictionary<ulong, Vector2> ParticipantPositions { get; } = [];
     public Dictionary<ulong, uint> ParticipantRoles { get; } = [];
+    public Dictionary<ulong, string> ParticipantRoleNames { get; } = [];
     public HashSet<ulong> AffectedTargets { get; } = [];
     public HashSet<ulong> StatusTargets { get; } = [];
     public HashSet<ulong> TetherTargets { get; } = [];
@@ -29,6 +30,7 @@ internal sealed class ParticipantTrack
     public DateTime At { get; set; }
     public Vector2 Position { get; set; }
     public uint Role { get; set; }
+    public string RoleName { get; set; } = "";
 }
 
 internal sealed class LiveSessionStats
