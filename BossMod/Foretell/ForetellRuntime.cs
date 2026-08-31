@@ -8,10 +8,12 @@ internal sealed class MechanicEpisode
     public DateTime FinalizeAt { get; set; }
     public double LeadSeconds { get; set; }
     public Dictionary<ulong, Vector2> ParticipantPositions { get; } = [];
+    public Dictionary<ulong, uint> ParticipantRoles { get; } = [];
     public HashSet<ulong> AffectedTargets { get; } = [];
     public HashSet<ulong> StatusTargets { get; } = [];
     public HashSet<ulong> TetherTargets { get; } = [];
     public HashSet<ulong> MovementTargets { get; } = [];
+    public Dictionary<ulong, float> MovementDistances { get; } = [];
     public HashSet<ulong> DeathTargets { get; } = [];
     public Dictionary<ObservationKind, int> Evidence { get; } = [];
     public bool Finalized { get; set; }
@@ -26,6 +28,7 @@ internal sealed class ParticipantTrack
 {
     public DateTime At { get; set; }
     public Vector2 Position { get; set; }
+    public uint Role { get; set; }
 }
 
 internal sealed class LiveSessionStats
