@@ -22,6 +22,14 @@ public sealed class BossModuleMainWindow : UIWindow
 
     public override void PreOpenCheck()
     {
+        // In pure Foretell mode keep legacy BMR modules running as a compatibility/sensor baseline,
+        // but suppress their presentation. Compare/Hybrid intentionally keep both presentations visible.
+        if (Service.Config.Get<Foretell.ForetellConfig>().Mode == Foretell.ForetellMode.Foretell)
+        {
+            IsOpen = false;
+            return;
+        }
+
         var showZoneModule = ShowZoneModule();
         IsOpen = BossModuleManager.Config.Enable && (_mgr.LoadedModules.Count > 0 || showZoneModule);
         ShowCloseButton = _mgr.ActiveModule != null && !showZoneModule;
@@ -37,7 +45,7 @@ public sealed class BossModuleMainWindow : UIWindow
             Flags |= ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoInputs;
         }
 
-        ForceMainWindow = BossModuleManager.Config.TrishaMode; // NoBackground flag without ForceMainWindow works incorrectly for whatever reason
+        ForceMainWindow = BossModuleManager.Config.TrishaMode;
 
         if (BossModuleManager.Config.ShowWorldArrows && _mgr.ActiveModule != null && _mgr.WorldState.Party[PartyState.PlayerSlot] is var pc && pc != null)
         {
@@ -66,8 +74,10 @@ public sealed class BossModuleMainWindow : UIWindow
     {
         if (!IsOpen)
         {
-            // user pressed close button - deactivate current module and show module list instead
-            // show module list instead of boss module
+            // Pure Foretell mode deliberately keeps this window closed; don't turn that into a manual active-module override.
+            if (Service.Config.Get<Foretell.ForetellConfig>().Mode == Foretell.ForetellMode.Foretell)
+                return;
+
             Service.Log("[BMM] Bossmod window closed by user, showing module list instead...");
             _mgr.ActiveModule = null;
             IsOpen = true;
