@@ -21,159 +21,52 @@ jobs:
         run: |
           from pathlib import Path
 
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise RuntimeError(f'{label} not found')
+              return text.replace(old, new, 1)
+
           p = Path('BossMod/Foretell/ForetellLearning.cs')
           s = p.read_text(encoding='utf-8')
 
-          old = '''        _session.Observe(observation);
-          var encounter = Encounter(observation.TerritoryID);
-          encounter.LastSeen = DateTime.UtcNow;
-          encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;
-          UpdateSourceMemory(encounter, observation);
-          Record(observation, replaying);
-          '''
-          new = '''        _session.Observe(observation);
-          var encounter = _store.Encounters.GetValueOrDefault(observation.TerritoryID);
-          if (_cfg.EnableLearning)
-          {
-              encounter ??= Encounter(observation.TerritoryID);
-              encounter.LastSeen = DateTime.UtcNow;
-              encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;
-              UpdateSourceMemory(encounter, observation);
-          }
-          Record(observation, replaying);
-          '''
-          assert old in s, 'ProcessObservation memory block not found'
-          s = s.replace(old, new, 1)
+          old = "        _session.Observe(observation);\n        var encounter = Encounter(observation.TerritoryID);\n        encounter.LastSeen = DateTime.UtcNow;\n        encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;\n        UpdateSourceMemory(encounter, observation);\n        Record(observation, replaying);\n"
+          new = "        _session.Observe(observation);\n        var encounter = _store.Encounters.GetValueOrDefault(observation.TerritoryID);\n        if (_cfg.EnableLearning)\n        {\n            encounter ??= Encounter(observation.TerritoryID);\n            encounter.LastSeen = DateTime.UtcNow;\n            encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;\n            UpdateSourceMemory(encounter, observation);\n        }\n        Record(observation, replaying);\n"
+          s = replace_once(s, old, new, 'ProcessObservation memory block')
 
-          old = '''        if (IsCombatSignal(observation))
-              TouchPull(encounter, observation);
+          old = "        if (IsCombatSignal(observation))\n            TouchPull(encounter, observation);\n\n        if (IsTimelineSignal(observation))\n            LearnSignalTimeline(encounter, observation);\n\n        var correlated = CorrelateObservation(observation);\n        if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))\n            StartEpisode(observation, encounter);\n"
+          new = "        if (IsCombatSignal(observation))\n            TouchPull(encounter, observation);\n\n        if (IsTimelineSignal(observation))\n        {\n            if (_cfg.EnableLearning && encounter != null)\n                LearnSignalTimeline(encounter, observation);\n            else\n                TrackSignalState(observation);\n        }\n\n        var correlated = CorrelateObservation(observation);\n        if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))\n            StartEpisode(observation, encounter);\n"
+          s = replace_once(s, old, new, 'timeline block')
 
-          if (IsTimelineSignal(observation))
-              LearnSignalTimeline(encounter, observation);
+          old = "    private void TouchPull(EncounterMemory encounter, ForetellObservation observation)\n    {\n        if (!_inPull || (observation.At - _lastCombatSignal).TotalSeconds > 30)\n        {\n            _inPull = true;\n            ++_session.Pulls;\n            ++encounter.Pulls;\n            _session.Phase = 0;\n            _previousSignal = \"\";\n        }\n        _lastCombatSignal = observation.At;\n    }\n"
+          new = "    private void TouchPull(EncounterMemory? encounter, ForetellObservation observation)\n    {\n        if (!_inPull || (observation.At - _lastCombatSignal).TotalSeconds > 30)\n        {\n            _inPull = true;\n            ++_session.Pulls;\n            if (_cfg.EnableLearning && encounter != null)\n                ++encounter.Pulls;\n            _session.Phase = 0;\n            _previousSignal = \"\";\n        }\n        _lastCombatSignal = observation.At;\n    }\n"
+          s = replace_once(s, old, new, 'TouchPull block')
 
-          var correlated = CorrelateObservation(observation);
-          if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))
-              StartEpisode(observation, encounter);
-          '''
-          new = '''        if (IsCombatSignal(observation))
-              TouchPull(encounter, observation);
+          anchor = "    private void LearnLegacyTimeline(uint action, DateTime now)\n"
+          helper = "    private void TrackSignalState(ForetellObservation observation)\n    {\n        _previousSignal = SignalKey(observation);\n        _previousSignalTime = observation.At;\n        if (observation.Kind == ObservationKind.CastStart && observation.PrimaryID != 0)\n        {\n            _previousAction = observation.PrimaryID;\n            _previousActionTime = observation.At;\n        }\n    }\n\n"
+          s = replace_once(s, anchor, helper + anchor, 'legacy timeline anchor')
 
-          if (IsTimelineSignal(observation))
-          {
-              if (_cfg.EnableLearning && encounter != null)
-                  LearnSignalTimeline(encounter, observation);
-              else
-                  TrackSignalState(observation);
-          }
+          s = replace_once(s,
+              'private void StartEpisode(ForetellObservation trigger, EncounterMemory encounter)',
+              'private void StartEpisode(ForetellObservation trigger, EncounterMemory? encounter)',
+              'StartEpisode signature')
+          s = replace_once(s,
+              'if (trigger.Kind == ObservationKind.CastStart && encounter.Mechanics.TryGetValue(episode.SignalKey, out var learned)',
+              'if (trigger.Kind == ObservationKind.CastStart && encounter != null && encounter.Mechanics.TryGetValue(episode.SignalKey, out var learned)',
+              'StartEpisode lookup')
 
-          var correlated = CorrelateObservation(observation);
-          if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))
-              StartEpisode(observation, encounter);
-          '''
-          assert old in s, 'timeline block not found'
-          s = s.replace(old, new, 1)
-
-          old = '''    private void TouchPull(EncounterMemory encounter, ForetellObservation observation)
-          {
-              if (!_inPull || (observation.At - _lastCombatSignal).TotalSeconds > 30)
-              {
-                  _inPull = true;
-                  ++_session.Pulls;
-                  ++encounter.Pulls;
-                  _session.Phase = 0;
-                  _previousSignal = "";
-              }
-              _lastCombatSignal = observation.At;
-          }
-          '''
-          new = '''    private void TouchPull(EncounterMemory? encounter, ForetellObservation observation)
-          {
-              if (!_inPull || (observation.At - _lastCombatSignal).TotalSeconds > 30)
-              {
-                  _inPull = true;
-                  ++_session.Pulls;
-                  if (_cfg.EnableLearning && encounter != null)
-                      ++encounter.Pulls;
-                  _session.Phase = 0;
-                  _previousSignal = "";
-              }
-              _lastCombatSignal = observation.At;
-          }
-          '''
-          assert old in s, 'TouchPull block not found'
-          s = s.replace(old, new, 1)
-
-          anchor = '''    private void LearnLegacyTimeline(uint action, DateTime now)
-          '''
-          helper = '''    private void TrackSignalState(ForetellObservation observation)
-          {
-              _previousSignal = SignalKey(observation);
-              _previousSignalTime = observation.At;
-              if (observation.Kind == ObservationKind.CastStart && observation.PrimaryID != 0)
-              {
-                  _previousAction = observation.PrimaryID;
-                  _previousActionTime = observation.At;
-              }
-          }
-
-          '''
-          assert anchor in s, 'legacy timeline anchor not found'
-          s = s.replace(anchor, helper + anchor, 1)
-
-          s = s.replace('private void StartEpisode(ForetellObservation trigger, EncounterMemory encounter)',
-                        'private void StartEpisode(ForetellObservation trigger, EncounterMemory? encounter)', 1)
-          s = s.replace('if (trigger.Kind == ObservationKind.CastStart && encounter.Mechanics.TryGetValue(episode.SignalKey, out var learned)',
-                        'if (trigger.Kind == ObservationKind.CastStart && encounter != null && encounter.Mechanics.TryGetValue(episode.SignalKey, out var learned)', 1)
-
-          old = '''        episode.Finalized = true;
-              ++_session.MechanicsFinalized;
-
-              var encounter = Encounter(episode.Trigger.TerritoryID);
-          '''
-          new = '''        episode.Finalized = true;
-              ++_session.MechanicsFinalized;
-
-              if (!_cfg.EnableLearning)
-              {
-                  _lastEvidence = $"{episode.SignalKey}: outcome observed; adaptive learning is disabled";
-                  return;
-              }
-
-              var encounter = Encounter(episode.Trigger.TerritoryID);
-          '''
-          assert old in s, 'FinalizeEpisode gate anchor not found'
-          s = s.replace(old, new, 1)
+          old = "        episode.Finalized = true;\n        ++_session.MechanicsFinalized;\n\n        var encounter = Encounter(episode.Trigger.TerritoryID);\n"
+          new = "        episode.Finalized = true;\n        ++_session.MechanicsFinalized;\n\n        if (!_cfg.EnableLearning)\n        {\n            _lastEvidence = $\"{episode.SignalKey}: outcome observed; adaptive learning is disabled\";\n            return;\n        }\n\n        var encounter = Encounter(episode.Trigger.TerritoryID);\n"
+          s = replace_once(s, old, new, 'FinalizeEpisode gate')
           p.write_text(s, encoding='utf-8')
 
           p = Path('BossMod/Foretell/ForetellReplay.cs')
           s = p.read_text(encoding='utf-8')
-          old = '''        var liveEvidence = _lastEvidence;
-
-              try
-              {
-                  _store = new();
-          '''
-          new = '''        var liveEvidence = _lastEvidence;
-              var liveLearning = _cfg.EnableLearning;
-
-              try
-              {
-                  _cfg.EnableLearning = true; // Replay Lab always exercises the learner, independent of the live toggle.
-                  _store = new();
-          '''
-          assert old in s, 'Replay learning save anchor not found'
-          s = s.replace(old, new, 1)
-          old = '''        finally
-              {
-                  _store = liveStore;
-          '''
-          new = '''        finally
-              {
-                  _cfg.EnableLearning = liveLearning;
-                  _store = liveStore;
-          '''
-          assert old in s, 'Replay learning restore anchor not found'
-          s = s.replace(old, new, 1)
+          old = "        var liveEvidence = _lastEvidence;\n\n        try\n        {\n            _store = new();\n"
+          new = "        var liveEvidence = _lastEvidence;\n        var liveLearning = _cfg.EnableLearning;\n\n        try\n        {\n            _cfg.EnableLearning = true; // sandbox must exercise learning even if live learning is disabled\n            _store = new();\n"
+          s = replace_once(s, old, new, 'Replay save learning state')
+          old = "        finally\n        {\n            _store = liveStore;\n"
+          new = "        finally\n        {\n            _cfg.EnableLearning = liveLearning;\n            _store = liveStore;\n"
+          s = replace_once(s, old, new, 'Replay restore learning state')
           p.write_text(s, encoding='utf-8')
 
       - name: Commit fix
