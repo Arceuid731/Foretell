@@ -28,6 +28,7 @@ public sealed partial class ForetellEngine : IDisposable
     private Dictionary<long, MechanicEpisode> _episodes = [];
     private Dictionary<ulong, ParticipantTrack> _tracks = [];
     private Dictionary<long, ActivePrediction> _predictions = [];
+    private Dictionary<uint, long> _effectSequenceEpisodes = [];
     private Queue<ForetellObservation> _recentSignals = new();
 
     private uint _previousAction;
@@ -88,6 +89,7 @@ public sealed partial class ForetellEngine : IDisposable
             _ws.Actors.IconAppeared.Subscribe(OnIcon),
             _ws.Actors.VFXAppeared.Subscribe(OnVFX),
             _ws.Actors.CastEvent.Subscribe(OnCastEvent),
+            _ws.Actors.EffectResult.Subscribe(OnEffectResult),
             _ws.Actors.EventObjectStateChange.Subscribe(OnEventObjectState),
             _ws.Actors.EventObjectAnimation.Subscribe(OnEventObjectAnimation),
             _ws.Actors.PlayActionTimelineEvent.Subscribe(OnActionTimelineEvent),
@@ -170,6 +172,7 @@ public sealed partial class ForetellEngine : IDisposable
         _tracks.Clear();
         ResetDataFabric();
         _predictions.Clear();
+        _effectSequenceEpisodes.Clear();
         _recentSignals.Clear();
         _previousAction = 0;
         _previousSignal = "";

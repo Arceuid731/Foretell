@@ -27,3 +27,5 @@ BMR/Splatoon encounter-authored answers remain forbidden. Generic BMR primitives
 This raw-telemetry contract is build-validated in CI before release and is the acceptance boundary for Data Fabric changes.
 
 ActionEffect handling is typed rather than reflection-only: all valid target effects retain Type, Param0..4, Value, derived damage/element fields and the exact original 8-byte effect record. Raw ActorControl retains command, p1..p8, target and replay flag; SystemLog retains every argument without the generic collection sampling cap.
+
+EffectResult is consumed as a first-class semantic stream and correlated back to the originating ActionEffect by the native global action sequence; the generic WorldOperation copy is explicitly de-duplicated. This gives downstream hit/status confirmation an exact causal edge instead of relying only on time proximity.

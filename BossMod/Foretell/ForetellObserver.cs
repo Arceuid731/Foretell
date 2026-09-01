@@ -47,6 +47,7 @@ public sealed partial class ForetellEngine
         {
             seen.Add(target.ID);
             var affected = Observation(ObservationKind.AffectedTarget, actor, action, target: target.ID);
+            affected.Numeric["action.globalSequence"] = ev.GlobalSequence;
             var effects = target.Effects.ValidEffects();
             affected.Numeric["actionEffect.count"] = effects.Length;
             for (var i = 0; i < effects.Length; ++i)
@@ -76,7 +77,19 @@ public sealed partial class ForetellEngine
         }
 
         if (ev.MainTargetID != 0 && !seen.Contains(ev.MainTargetID))
-            ProcessObservation(Observation(ObservationKind.AffectedTarget, actor, action, target: ev.MainTargetID, detail: "main-target-only"));
+        {
+            var affected = Observation(ObservationKind.AffectedTarget, actor, action, target: ev.MainTargetID, detail: "main-target-only");
+            affected.Numeric["action.globalSequence"] = ev.GlobalSequence;
+            ProcessObservation(affected);
+        }
+    }
+
+    private void OnEffectResult(Actor target, uint sequence, int targetIndex)
+    {
+        var obs = Observation(ObservationKind.EffectResult, primary: sequence, secondary: (uint)Math.Max(0, targetIndex), target: target.InstanceID, detail: "effect-result");
+        obs.Numeric["effectResult.sequence"] = sequence;
+        obs.Numeric["effectResult.targetIndex"] = targetIndex;
+        ProcessObservation(obs);
     }
 
     private void OnTargetableChanged(Actor actor)
@@ -201,6 +214,11 @@ public sealed partial class ForetellEngine
         if (op is NetworkState.OpServerIPC)
         {
             RegisterCapability("worldop.ServerIPC", op.GetType(), "ServerIPC", false, true, "duplicate of Foretell unconditional raw server IPC tap");
+            return;
+        }
+        if (op is ActorState.OpEffectResult)
+        {
+            RegisterCapability("worldop.EffectResult", op.GetType(), "EffectResult", false, true, "duplicate of Foretell semantic EffectResult stream");
             return;
         }
 

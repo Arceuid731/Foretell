@@ -220,6 +220,18 @@ public sealed partial class ForetellEngine
 
         switch (observation.Kind)
         {
+            case ObservationKind.ActionResolved:
+                if (observation.Numeric.TryGetValue("action.globalSequence", out var sequenceValue) && sequenceValue > 0 && sequenceValue <= uint.MaxValue)
+                {
+                    var sequence = (uint)sequenceValue;
+                    _effectSequenceEpisodes[sequence] = episode.ID;
+                    if (_effectSequenceEpisodes.Count > 4096)
+                    {
+                        foreach (var stale in _effectSequenceEpisodes.Where(kv => !_episodes.ContainsKey(kv.Value)).Select(kv => kv.Key).ToArray())
+                            _effectSequenceEpisodes.Remove(stale);
+                    }
+                }
+                break;
             case ObservationKind.AffectedTarget:
                 if (observation.TargetID != 0) episode.AffectedTargets.Add(observation.TargetID);
                 break;
@@ -251,6 +263,11 @@ public sealed partial class ForetellEngine
 
     private MechanicEpisode? BestEpisode(ForetellObservation observation)
     {
+        if (observation.Kind == ObservationKind.EffectResult && observation.PrimaryID != 0
+            && _effectSequenceEpisodes.TryGetValue(observation.PrimaryID, out var exactID)
+            && _episodes.TryGetValue(exactID, out var exact) && !exact.Finalized)
+            return exact;
+
         MechanicEpisode? best = null;
         var bestScore = double.MaxValue;
         foreach (var episode in _episodes.Values)
@@ -310,7 +327,11 @@ public sealed partial class ForetellEngine
         foreach (var episode in _episodes.Values.Where(e => !e.Finalized && e.FinalizeAt <= now).ToArray())
             FinalizeEpisode(episode);
         foreach (var id in _episodes.Where(kv => kv.Value.Finalized && kv.Value.FinalizeAt.AddSeconds(20) < now).Select(kv => kv.Key).ToArray())
+        {
             _episodes.Remove(id);
+            foreach (var sequence in _effectSequenceEpisodes.Where(kv => kv.Value == id).Select(kv => kv.Key).ToArray())
+                _effectSequenceEpisodes.Remove(sequence);
+        }
     }
 
     private void FinalizeEpisode(MechanicEpisode episode)
