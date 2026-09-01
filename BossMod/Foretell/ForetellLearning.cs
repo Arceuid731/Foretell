@@ -40,6 +40,8 @@ public sealed partial class ForetellEngine
         var correlated = CorrelateObservation(observation);
         if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))
             StartEpisode(observation, encounter);
+        if (observation.Kind == ObservationKind.CastStart)
+            ApplyActionMetadataPrior(observation);
 
         _recentSignals.Enqueue(observation);
         TrimRecentSignals(observation.At.AddSeconds(-8));
@@ -447,6 +449,9 @@ public sealed partial class ForetellEngine
         for (var length = 8f; length <= 50f; length += 4f)
             for (var halfWidth = 1.5f; halfWidth <= 12f; halfWidth += 1.5f)
                 Try(GeometryKind.Rectangle, length, halfWidth, p => p.Forward >= 0 && p.Forward <= length && MathF.Abs(p.Side) <= halfWidth);
+                Try(GeometryKind.Cross, length, halfWidth, p =>
+                    (MathF.Abs(p.Side) <= halfWidth && MathF.Abs(p.Forward) <= length) ||
+                    (MathF.Abs(p.Forward) <= halfWidth && MathF.Abs(p.Side) <= length));
 
         return best.Score >= .58f ? best : null;
     }

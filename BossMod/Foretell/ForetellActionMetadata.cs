@@ -121,15 +121,9 @@ public sealed partial class ForetellEngine
                         why = "CastType dynamic line + current target distance + XAxisModifier";
                     }
                     break;
-                case 10: // donut; EffectRange gives outer radius, X axis is useful only when it forms a sane inner radius
-                    if (effectRange > 0 && xAxis > 0 && xAxis < effectRange)
-                    {
-                        geometry = GeometryKind.Donut;
-                        p1 = xAxis;
-                        p2 = effectRange;
-                        confidence = .82f;
-                        why = "CastType donut + EffectRange + XAxisModifier candidate inner radius";
-                    }
+                case 10: // donut family; inner radius is not safely derivable from verified Action fields alone
+                    confidence = .60f;
+                    why = "CastType identifies donut family; inner radius requires Omen/outcome evidence before drawing";
                     break;
                 case 11: // cross: two perpendicular lines
                     if (effectRange > 0 && xAxis > 0)
@@ -221,7 +215,6 @@ public sealed partial class ForetellEngine
                 mechanic.Kind = mechanic.Kind == MechanicKind.Unknown ? MechanicKind.GroundAOE : mechanic.Kind;
                 mechanic.P1 = p.P1;
                 mechanic.P2 = p.P2;
-                mechanic.Score = Math.Max(mechanic.Score, p.Confidence);
             }
         }
 

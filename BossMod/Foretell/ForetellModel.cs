@@ -103,15 +103,35 @@ public sealed class ContextualMechanic
         get
         {
             var empirical = EmpiricalConfidence;
-            if (PriorConfidence <= 0) return empirical;
-            if (Observations == 0) return PriorConfidence;
+  if (PriorConfidence <= 0) return empirical;
+  if (Observations == 0) return PriorConfidence;
 
-            // Independent-ish evidence fusion: the metadata gives a useful first-cast prior, while repeated outcomes
-            // rapidly dominate. Conflicting evidence is already penalized through EmpiricalConfidence.
-            var fused = 1f - (1f - PriorConfidence) * (1f - empirical);
-            if (AmbiguousSamples > 0)
-                fused *= 1f / (1f + AmbiguousSamples * .08f);
-            return Math.Clamp(fused, 0, .999f);
+  var effectivePrior = PriorConfidence;
+  if (PriorGeometry != GeometryKind.Unknown && Geometry != GeometryKind.Unknown)
+  {
+      if (PriorGeometry != Geometry)
+      {
+          // Observed geometry-family disagreement means this Action sheet row is not describing the
+          // correlated encounter effect accurately enough to dominate the learner.
+          effectivePrior *= .20f;
+      }
+      else if (PriorP1 > 0 && P1 > 0)
+      {
+          var drift1 = MathF.Abs(P1 - PriorP1) / MathF.Max(1, PriorP1);
+          var drift2 = PriorP2 > 0 && P2 > 0 ? MathF.Abs(P2 - PriorP2) / MathF.Max(1, PriorP2) : 0;
+          var drift = MathF.Max(drift1, drift2);
+          if (drift > .15f)
+              effectivePrior *= Math.Clamp(1f - drift, .25f, .85f);
+      }
+  }
+
+  // Useful client metadata can make ordinary telegraphs useful on the first cast; repeated outcomes then
+  // confirm, refine, or overrule it. A prior can accelerate confidence but can never reach the 99% safe gate alone.
+  effectivePrior = Math.Min(effectivePrior, .98f);
+  var fused = 1f - (1f - effectivePrior) * (1f - empirical);
+  if (AmbiguousSamples > 0)
+      fused *= 1f / (1f + AmbiguousSamples * .08f);
+  return Math.Clamp(fused, 0, .999f);
         }
     }
 }

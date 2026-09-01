@@ -248,6 +248,7 @@ public sealed partial class ForetellEngine
         ImGui.TextUnformatted($"TERRITORY {_inspectorTerritory} SUMMARY");
         ImGui.TextUnformatted($"{encounter.Sessions} sessions | {encounter.Pulls} detected pulls | {encounter.Sources.Count} observed sources | {encounter.Mechanics.Count} mechanic candidates");
         ImGui.TextUnformatted($"Confidence gates: {visual} visualizable (>= {_cfg.VisualConfidence:F0}%) | {warnings} warning-grade (>= {_cfg.WarningConfidence:F0}%) | {safe} safe-guidance-grade (>= {_cfg.SafeConfidence:F0}%) | {ambiguous} with conflicting evidence");
+        ImGui.TextUnformatted("Overlay/radar colors encode reliability: cyan = early/visual -> yellow = learned -> orange = high -> red = safe-guidance-grade. They do NOT encode damage severity.");
         ImGui.TextUnformatted($"ML updates: {_store.ML.Updates:N0} | current predictions: {_predictions.Count} | active candidates awaiting outcome: {_episodes.Values.Count(e => !e.Finalized)}");
         ImGui.TextUnformatted($"Last inference: {_lastEvidence}");
         ImGui.Separator();
@@ -300,6 +301,12 @@ public sealed partial class ForetellEngine
             ImGui.TextUnformatted($"Outcome evidence: affected={mechanic.AffectedSamples} | status={mechanic.StatusSamples} | movement={mechanic.MovementSamples} | deaths={mechanic.DeathSamples}");
             ImGui.TextUnformatted($"Average warning lead/cast: {mechanic.MeanLeadSeconds:F2}s | retained geometry samples: {mechanic.Samples?.Count ?? 0}");
             ImGui.TextUnformatted($"Source: OID {mechanic.SourceOID:X8} ({mechanic.SourceKind}) | trigger: {mechanic.TriggerKind} ID {mechanic.TriggerID:X}");
+  if (mechanic.PriorConfidence > 0 || mechanic.PriorCastType != 0)
+  {
+      ImGui.TextUnformatted($"Client-data prior: {mechanic.PriorGeometry} {mechanic.PriorConfidence:P0} | CastType={mechanic.PriorCastType} | EffectRange={mechanic.PriorEffectRange} | XAxis={mechanic.PriorXAxisModifier} | TargetArea={mechanic.PriorTargetArea}");
+      ImGui.TextUnformatted($"Omen: {mechanic.PriorOmenID}:{mechanic.PriorOmen}");
+      ImGui.TextWrapped($"Prior rationale: {mechanic.PriorEvidence}");
+  }
             ImGui.TextUnformatted($"First seen: {mechanic.FirstSeen:u} | last seen: {mechanic.LastSeen:u}");
             ImGui.TextUnformatted("Signals used: " + (mechanic.Evidence.Count == 0 ? "none" : string.Join(", ", mechanic.Evidence.OrderByDescending(e => e.Value).Select(e => $"{e.Key} x{e.Value}"))));
             ImGui.TextUnformatted($"Internal key: {mechanic.Key}");

@@ -260,7 +260,7 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void NormalizeStore()
     {
-        _store.Schema = Math.Max(_store.Schema, 2);
+        _store.Schema = Math.Max(_store.Schema, 3);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];

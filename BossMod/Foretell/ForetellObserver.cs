@@ -21,7 +21,6 @@ public sealed partial class ForetellEngine
         obs.TargetZ = spell.LocXZ.Z;
         obs.Rotation = spell.Rotation.Rad;
         ProcessObservation(obs);
-        ApplyActionMetadataPrior(obs);
     }
 
     private void OnCastFinished(Actor actor)
