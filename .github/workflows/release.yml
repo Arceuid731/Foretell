@@ -87,17 +87,17 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Performance and interface hotfix.
+          Open-world performance and cockpit UI hotfix.
 
-          Data Fabric no longer performs its generic reflection sweep as one synchronous half-second spike on the FFXIV framework thread. The 21 independent runtime roots are emitted as rolling GenericFeature observations, one root per 250 ms slice, and generic actor reflection advances one actor per slice. Completeness is preserved over each sweep without letting party, actor or service collections monopolize a frame.
+          The generic Data Fabric safety budget now counts every visited node instead of only scalar leaves. Complex FATE, object and service collections can no longer bypass the guard. Each reflective root has a hard 1 ms live traversal deadline, collection continuation is retained across rolling passes, collection implementation internals are no longer reflected after their contents, and getters exceeding 2 ms are quarantined for later dedicated typed ingestion.
 
-          Time-sensitive native Character data remains sampled at 2 Hz per actor, including both tether slots and progress, timelines, model and transformation state. The actor table is now divided into two alternating 250 ms slices so this cadence no longer means reading every actor on the same frame. Native environment and camera state remain at 2 Hz.
+          Normalized BMR Actor state now uses a bounded typed extractor instead of recursive reflection, including identity, position, HP/MP, targeting, model, cast, statuses, incoming ActionEffect payloads and pending EffectResult-linked state. Native Character sampling rejects non-character actor types before ObjectTable lookup, avoiding the large open-world EventObject/gathering-object search cost. Raw IPC, semantic WorldState events and direct native hooks remain independent of the generic scanner.
 
-          Full runtime dictionaries are no longer duplicated into every semantic observation. Rich payload observations are enriched exactly once instead of being reflected a second time inside the learner. Raw server/client IPC, ActorControl, ActionEffect, sequence-linked EffectResult, VFX paths and all existing semantic/native sensors remain intact.
+          The Foretell cockpit has been redesigned around compact metrics, tables and collapsible help instead of large text walls. It now has its own Settings tab for learning, rendering, confidence gates and radar configuration. ForetellConfig is explicitly excluded from the legacy BMR Settings tree.
 
-          Foretell now owns a dedicated interface entry point: the Dalamud main/config buttons and /foretell open the Foretell cockpit and its tabs. The legacy BossMod Reborn configuration remains available separately through /bmr; BMR itself is preserved for later cleanup.
+          The mini radar is now a persistent ImGui window. Enable "Unlock radar to move it" in Foretell > Settings, drag its title bar, then lock it again. Its normalized position survives resolution and viewport changes, and a reset button restores the top-right default.
 
-          Foretell still starts from zero encounter knowledge. Hand-authored BossModule, state-machine, component, layout and preset answers remain excluded; only encounter-agnostic raw, semantic, native and metadata evidence feeds learning.
+          CI continues to enforce the zero-knowledge telemetry boundary: no hand-authored BossModule, state-machine, component, layout or preset answers are imported.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
