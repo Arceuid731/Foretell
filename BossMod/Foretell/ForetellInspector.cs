@@ -301,12 +301,12 @@ public sealed partial class ForetellEngine
             ImGui.TextUnformatted($"Outcome evidence: affected={mechanic.AffectedSamples} | status={mechanic.StatusSamples} | movement={mechanic.MovementSamples} | deaths={mechanic.DeathSamples}");
             ImGui.TextUnformatted($"Average warning lead/cast: {mechanic.MeanLeadSeconds:F2}s | retained geometry samples: {mechanic.Samples?.Count ?? 0}");
             ImGui.TextUnformatted($"Source: OID {mechanic.SourceOID:X8} ({mechanic.SourceKind}) | trigger: {mechanic.TriggerKind} ID {mechanic.TriggerID:X}");
-  if (mechanic.PriorConfidence > 0 || mechanic.PriorCastType != 0)
-  {
-      ImGui.TextUnformatted($"Client-data prior: {mechanic.PriorGeometry} {mechanic.PriorConfidence:P0} | CastType={mechanic.PriorCastType} | EffectRange={mechanic.PriorEffectRange} | XAxis={mechanic.PriorXAxisModifier} | TargetArea={mechanic.PriorTargetArea}");
-      ImGui.TextUnformatted($"Omen: {mechanic.PriorOmenID}:{mechanic.PriorOmen}");
-      ImGui.TextWrapped($"Prior rationale: {mechanic.PriorEvidence}");
-  }
+            if (mechanic.PriorConfidence > 0 || mechanic.PriorCastType != 0)
+            {
+                ImGui.TextUnformatted($"Client-data prior: {mechanic.PriorGeometry} {mechanic.PriorConfidence:P0} | CastType={mechanic.PriorCastType} | EffectRange={mechanic.PriorEffectRange} | XAxis={mechanic.PriorXAxisModifier} | TargetArea={mechanic.PriorTargetArea}");
+                ImGui.TextUnformatted($"Omen: {mechanic.PriorOmenID}:{mechanic.PriorOmen}");
+                ImGui.TextWrapped($"Prior rationale: {mechanic.PriorEvidence}");
+            }
             ImGui.TextUnformatted($"First seen: {mechanic.FirstSeen:u} | last seen: {mechanic.LastSeen:u}");
             ImGui.TextUnformatted("Signals used: " + (mechanic.Evidence.Count == 0 ? "none" : string.Join(", ", mechanic.Evidence.OrderByDescending(e => e.Value).Select(e => $"{e.Key} x{e.Value}"))));
             ImGui.TextUnformatted($"Internal key: {mechanic.Key}");
@@ -319,6 +319,7 @@ public sealed partial class ForetellEngine
         GeometryKind.Donut => $"inner {mechanic.P1:F1} / outer {mechanic.P2:F1} yalms",
         GeometryKind.Cone => $"range {mechanic.P1:F1} yalms / half-angle {mechanic.P2 * 180 / MathF.PI:F1} degrees",
         GeometryKind.Rectangle => $"length {mechanic.P1:F1} yalms / half-width {mechanic.P2:F1} yalms",
+        GeometryKind.Cross => $"four arms {mechanic.P1:F1} yalms / half-width {mechanic.P2:F1} yalms",
         _ => "geometry not confidently identified yet"
     };
 
@@ -411,10 +412,12 @@ public sealed partial class ForetellEngine
         ImGui.TextUnformatted($"{_cfg.VisualConfidence:F0}% to {_cfg.WarningConfidence:F0}%: may be visualized as a learned hypothesis, not treated as reliable warning guidance.");
         ImGui.TextUnformatted($"{_cfg.WarningConfidence:F0}% to {_cfg.SafeConfidence:F0}%: high-confidence warning-grade inference.");
         ImGui.TextUnformatted($"At least {_cfg.SafeConfidence:F0}%: eligible for safe-position guidance. This intentionally uses an extremely high Never Guess Lethal threshold.");
+        ImGui.TextUnformatted("World/radar color encodes confidence, not damage: cyan -> yellow -> orange -> red as reliability increases. The radar also prints the percentage.");
         ImGui.Separator();
 
         ImGui.TextUnformatted("WHAT FORETELL OBSERVES");
         ImGui.TextUnformatted("Casts and hit targets; statuses; icons; VFX; tethers; actor lifecycle/targetability/model state; event objects; action-timeline events; NPC yells; map effects; director updates; party positions and sudden displacement.");
+        ImGui.TextUnformatted("For cast actions Foretell also reads local client Action metadata (CastType, EffectRange, XAxisModifier, TargetArea, Omen/VFX and actor hitbox) as a prior before outcome evidence is available.");
         ImGui.TextUnformatted("Learning is contextual by territory, source OID and trigger, so the same numeric signal does not automatically mean the same mechanic everywhere.");
         ImGui.Separator();
 

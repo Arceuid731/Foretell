@@ -25,10 +25,12 @@ public sealed partial class ForetellEngine
 
         for (var length = 8f; length <= 50f; length += 4f)
             for (var halfWidth = 1.5f; halfWidth <= 12f; halfWidth += 1.5f)
+            {
                 Try(new(GeometryKind.Rectangle, cast.Origin, cast.Rotation, length, halfWidth,
                     Score(samples, p => InRect(p, cast.Origin, cast.Rotation, length, halfWidth))));
                 Try(new(GeometryKind.Cross, cast.Origin, cast.Rotation, length, halfWidth,
                     Score(samples, p => InCross(p, cast.Origin, cast.Rotation, length, halfWidth))));
+            }
         return best;
     }
 

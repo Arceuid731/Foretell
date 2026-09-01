@@ -227,17 +227,26 @@ public sealed partial class ForetellEngine
         var source = new Vector2(trigger.X, trigger.Z);
         var target = new Vector2(trigger.TargetX, trigger.TargetZ);
         var origin = p.Geometry is GeometryKind.Circle or GeometryKind.Donut ? target : source;
-        var confidence = mechanic?.Confidence ?? p.Confidence;
-        var geometry = mechanic is { Geometry: not GeometryKind.Unknown } && mechanic.Confidence >= p.Confidence ? mechanic.Geometry : p.Geometry;
-        var p1 = geometry == mechanic?.Geometry && mechanic.P1 > 0 ? mechanic.P1 : p.P1;
-        var p2 = geometry == mechanic?.Geometry && mechanic.P2 > 0 ? mechanic.P2 : p.P2;
+        var preferLearned = mechanic is { Geometry: not GeometryKind.Unknown } && (mechanic.Observations > 0 || mechanic.Confidence >= p.Confidence);
+        var confidence = preferLearned ? mechanic!.Confidence : p.Confidence;
+        var geometry = preferLearned ? mechanic!.Geometry : p.Geometry;
+        var p1 = preferLearned && mechanic!.P1 > 0 ? mechanic.P1 : p.P1;
+        var p2 = preferLearned && mechanic!.P2 > 0 ? mechanic.P2 : p.P2;
 
         // StartEpisode may already have emitted a learned prediction. Never downgrade it; when metadata agrees,
         // replace it with the fused confidence/evidence so first-cast priors and learned evidence reinforce each other.
         if (_predictions.TryGetValue(trigger.Sequence, out var existing))
         {
-            if (existing.Geometry != geometry && existing.Confidence >= confidence) return;
-            confidence = Math.Max(confidence, existing.Confidence);
+            if (existing.Geometry != geometry)
+            {
+                // StartEpisode's prediction comes from persisted learned memory. A disagreeing static prior may not
+                // replace it once real outcomes exist for the signal.
+                if (mechanic?.Observations > 0 || existing.Confidence >= confidence) return;
+            }
+            else
+            {
+                confidence = Math.Max(confidence, existing.Confidence);
+            }
         }
 
         _predictions[trigger.Sequence] = new(trigger.ActorID, trigger.PrimaryID, geometry, MechanicKind.GroundAOE,
