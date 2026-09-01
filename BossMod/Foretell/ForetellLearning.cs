@@ -4,6 +4,7 @@ public sealed partial class ForetellEngine
 {
     private void ProcessObservation(ForetellObservation observation, bool replaying = false)
     {
+        observation.At = NormalizeObservationTime(observation.At);
         if (observation.Sequence == 0) observation.Sequence = ++_sequence;
         else _sequence = Math.Max(_sequence, observation.Sequence);
         if (observation.TerritoryID == 0) observation.TerritoryID = _territory;

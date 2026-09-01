@@ -20,12 +20,17 @@ requirements = {
         "_ws.Actors.EffectResult.Subscribe(OnEffectResult)",
         "InitializeNativeHooks()",
         "InitializeDalamudSignals()",
+        "private static DateTime NormalizeObservationTime",
+        "At = ObservationNow()",
     ],
     "BossMod/Foretell/ForetellObserver.cs": [
         'affected.Binary[$"{prefix}.raw"]',
         'resolved.Numeric["action.globalSequence"]',
         'obs.Numeric["effectResult.sequence"]',
         'obs.Numeric["actorControl.p8"]',
+    ],
+    "BossMod/Foretell/ForetellLearning.cs": [
+        "observation.At = NormalizeObservationTime(observation.At)",
     ],
     "BossMod/Foretell/ForetellDataFabric.cs": [
         'FlattenRoot(_ws.Frame, "runtime.frame"',
@@ -86,6 +91,14 @@ for guard, invocation in [
         errors.append(f"Foretell reflection contract invocation disappeared without review: {invocation}")
     elif guard_at >= 0 and guard_at > invocation_at:
         errors.append(f"Foretell invokes non-boxable reflection member before its crash guard: {invocation}")
+
+learning = read("BossMod/Foretell/ForetellLearning.cs")
+if learning.find("observation.At = NormalizeObservationTime(observation.At)") > learning.find("observation.At.AddSeconds(-8)"):
+    errors.append("Foretell performs DateTime arithmetic before normalizing an uninitialized WorldState timestamp")
+
+engine = read("BossMod/Foretell/ForetellEngine.cs")
+if engine.find("SampleDataFabric(force: true)") > engine.find("InitializeNativeHooks()"):
+    errors.append("Foretell installs native hooks before fallible initial Data Fabric sampling")
 
 foretell_sources = "\n".join(
     path.read_text(encoding="utf-8-sig")

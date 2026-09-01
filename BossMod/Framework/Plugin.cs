@@ -115,6 +115,7 @@ public sealed class Plugin : IAsyncDalamudPlugin
         var qpf = (ulong)FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance()->PerformanceCounterFrequency;
         _rsr = new(_dalamud);
         _ws = new(qpf, _gameVersion);
+        _foretell = new(_ws, _dalamud.ConfigDirectory.FullName);
         _hints = new();
         _cancelCastTweak = new(_ws, _hints);
         _bossmod = new(_ws);
@@ -130,7 +131,6 @@ public sealed class Plugin : IAsyncDalamudPlugin
         _dtr = new(_rotation, _ai);
         _mbox = new(_rotation, _ws);
         _partyRoles = new(_ws);
-        _foretell = new(_ws, _dalamud.ConfigDirectory.FullName);
         _wndBossmod = new(_bossmod, _zonemod);
         Service.BossModWindow = _wndBossmod;
         _wndBossmodHints = new(_bossmod, _zonemod);

@@ -40,9 +40,10 @@ public sealed partial class ForetellEngine
 
     private void SampleDataFabric(bool force = false)
     {
-        if (!force && (_ws.CurrentTime - _lastFabricSample).TotalMilliseconds < 500)
+        var now = ObservationNow();
+        if (!force && (now - _lastFabricSample).TotalMilliseconds < 500)
             return;
-        _lastFabricSample = _ws.CurrentTime;
+        _lastFabricSample = now;
         RefreshRuntimeContext();
 
         foreach (var actor in _ws.Actors)
@@ -53,11 +54,11 @@ public sealed partial class ForetellEngine
             var pos = new Vector2(actor.Position.X, actor.Position.Z);
             if (_fabricActorTracks.TryGetValue(actor.InstanceID, out var previous))
             {
-                var dt = Math.Max(.001, (_ws.CurrentTime - previous.At).TotalSeconds);
+                var dt = Math.Max(.001, (now - previous.At).TotalSeconds);
                 obs.Numeric["derived.actor.speed"] = Vector2.Distance(previous.Position, pos) / dt;
                 obs.Numeric["derived.actor.angularSpeed"] = Math.Abs(NormalizeAngle(actor.Rotation.Rad - previous.Rotation)) / dt;
             }
-            _fabricActorTracks[actor.InstanceID] = new() { At = _ws.CurrentTime, Position = pos, Rotation = actor.Rotation.Rad };
+            _fabricActorTracks[actor.InstanceID] = new() { At = now, Position = pos, Rotation = actor.Rotation.Rad };
 
             var fingerprint = Fingerprint(obs, "actor.") + Fingerprint(obs, "derived.actor.") + Fingerprint(obs, "native.character.");
             if (_actorFabricFingerprint.GetValueOrDefault(actor.InstanceID) == fingerprint)

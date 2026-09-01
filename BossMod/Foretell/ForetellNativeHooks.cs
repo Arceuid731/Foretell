@@ -164,7 +164,7 @@ public sealed partial class ForetellEngine
             if (result == 0) return result;
             var track = new NativeVFXTrack(System.Threading.Interlocked.Increment(ref _nativeVFXSequence), "actor", path, "",
                 caster.ID, caster.OID, caster.X, caster.Y, caster.Z, caster.Rotation, caster.Radius,
-                target.ID, target.OID, target.X, target.Y, target.Z, target.Rotation, target.Radius, _ws.CurrentTime);
+                target.ID, target.OID, target.X, target.Y, target.Z, target.Rotation, target.Radius, ObservationNow());
             _nativeVFXTracks[result] = track;
             EmitNativeVFX(ObservationKind.NativeVFXSpawn, track, a4, a5, a6, a7);
         }
@@ -202,7 +202,7 @@ public sealed partial class ForetellEngine
             if (result == null) return result;
             var position = result->Position;
             var track = new NativeVFXTrack(System.Threading.Interlocked.Increment(ref _nativeVFXSequence), "static", pathText, poolText,
-                0, 0, position.X, position.Y, position.Z, 0, 0, 0, 0, 0, 0, 0, 0, 0, _ws.CurrentTime);
+                0, 0, position.X, position.Y, position.Z, 0, 0, 0, 0, 0, 0, 0, 0, 0, ObservationNow());
             _nativeVFXTracks[(nint)result] = track;
             EmitNativeVFX(ObservationKind.NativeVFXSpawn, track);
         }
@@ -273,7 +273,7 @@ public sealed partial class ForetellEngine
         StoreNative(obs, "native.vfx.arg6", a6);
         StoreNative(obs, "native.vfx.arg7", a7);
         if (kind == ObservationKind.NativeVFXDestroy)
-            StoreNative(obs, "native.vfx.lifetimeSeconds", Math.Max(0, (_ws.CurrentTime - track.Created).TotalSeconds));
+            StoreNative(obs, "native.vfx.lifetimeSeconds", Math.Max(0, (ObservationNow() - track.Created).TotalSeconds));
         ProcessObservation(obs);
     }
 

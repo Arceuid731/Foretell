@@ -87,7 +87,7 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Stability hotfix: Data Fabric now detects native function-pointer, pointer, by-ref and by-ref-like members before reflection invocation. This prevents a fatal CoreCLR 0x80131506 crash during initial runtime-context sampling while keeping such members visible in the coverage audit as explicitly excluded or requiring dedicated typed ingestion.
+          Startup stability hotfix: Data Fabric detects native function-pointer, pointer, by-ref and by-ref-like members before reflection invocation, and normalizes the uninitialized WorldState clock before any DateTime arithmetic. Initial sampling now completes before Foretell installs hooks/subscriptions, with rollback for later initialization failures. This prevents both the fatal CoreCLR 0x80131506 path and the DateTime underflow seen during first installation without hiding affected capabilities from the coverage audit.
 
           Native data-completeness release. Foretell combines semantic BMR WorldState events, every non-frame WorldState operation, generic Dalamud/runtime state, Lumina metadata, an unconditional passive server/client IPC tap, and direct EventObject plus actor/static VFX lifecycle sensors with full VFX paths.
 

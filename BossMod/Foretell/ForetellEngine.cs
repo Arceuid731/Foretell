@@ -63,48 +63,67 @@ public sealed partial class ForetellEngine : IDisposable
         _classifier = new(_store.ML);
         _territory = CurrentTerritory();
         _session = NewSession(_territory);
+        _subscriptions = new();
         StartEncounterSession(_territory);
-        SyncReplayWriter();
-        InstallForetellCommand();
-        InitializeNativeHooks();
-
-        _subscriptions = new(
-            _ws.Modified.Subscribe(OnWorldOperation),
-            _ws.SystemLogMessage.Subscribe(OnSystemLog),
-            _ws.Network.RawServerIPCReceived.Subscribe(OnRawServerIPC),
-            _ws.Network.RawClientIPCSent.Subscribe(OnRawClientIPC),
-            _ws.Network.RawActorControlReceived.Subscribe(OnRawActorControl),
-            _ws.Actors.Added.Subscribe(OnActorAdded),
-            _ws.Actors.Removed.Subscribe(OnActorRemoved),
-            _ws.Actors.CastStarted.Subscribe(OnCastStarted),
-            _ws.Actors.CastFinished.Subscribe(OnCastFinished),
-            _ws.Actors.IsTargetableChanged.Subscribe(OnTargetableChanged),
-            _ws.Actors.IsDeadChanged.Subscribe(OnDeathChanged),
-            _ws.Actors.RenderflagsChanged.Subscribe(OnRenderFlagsChanged),
-            _ws.Actors.EventStateChanged.Subscribe(OnEventStateChanged),
-            _ws.Actors.Tethered.Subscribe(OnTether),
-            _ws.Actors.Untethered.Subscribe(OnUntether),
-            _ws.Actors.StatusGain.Subscribe(OnStatusGain),
-            _ws.Actors.StatusLose.Subscribe(OnStatusLose),
-            _ws.Actors.IconAppeared.Subscribe(OnIcon),
-            _ws.Actors.VFXAppeared.Subscribe(OnVFX),
-            _ws.Actors.CastEvent.Subscribe(OnCastEvent),
-            _ws.Actors.EffectResult.Subscribe(OnEffectResult),
-            _ws.Actors.EventObjectStateChange.Subscribe(OnEventObjectState),
-            _ws.Actors.EventObjectAnimation.Subscribe(OnEventObjectAnimation),
-            _ws.Actors.PlayActionTimelineEvent.Subscribe(OnActionTimelineEvent),
-            _ws.Actors.PlayActionTimelineSync.Subscribe(OnActionTimelineSync),
-            _ws.Actors.EventNpcYell.Subscribe(OnNpcYell),
-            _ws.Actors.ModelStateChanged.Subscribe(OnModelStateChanged),
-            _ws.MapEffect.Subscribe(OnMapEffect),
-            _ws.LegacyMapEffect.Subscribe(OnLegacyMapEffect),
-            _ws.DirectorUpdate.Subscribe(OnDirectorUpdate));
-        InitializeDalamudSignals();
 
         foreach (var actor in _ws.Actors)
             OnActorAdded(actor);
         SamplePartyPositions();
         SampleDataFabric(force: true);
+
+        // Perform all fallible initial sampling before installing passive native hooks or event callbacks. If a
+        // future sensor rejects startup, the constructor cannot leave Foretell-owned hooks behind.
+        try
+        {
+            SyncReplayWriter();
+            InstallForetellCommand();
+            InitializeNativeHooks();
+            SubscribeToWorldState();
+            InitializeDalamudSignals();
+        }
+        catch
+        {
+            _subscriptions.Dispose();
+            DisposeNativeHooks();
+            _replay?.Dispose();
+            _replay = null;
+            Service.CommandManager.RemoveHandler("/foretell");
+            throw;
+        }
+    }
+
+    private void SubscribeToWorldState()
+    {
+        _subscriptions.Add(_ws.Modified.Subscribe(OnWorldOperation));
+        _subscriptions.Add(_ws.SystemLogMessage.Subscribe(OnSystemLog));
+        _subscriptions.Add(_ws.Network.RawServerIPCReceived.Subscribe(OnRawServerIPC));
+        _subscriptions.Add(_ws.Network.RawClientIPCSent.Subscribe(OnRawClientIPC));
+        _subscriptions.Add(_ws.Network.RawActorControlReceived.Subscribe(OnRawActorControl));
+        _subscriptions.Add(_ws.Actors.Added.Subscribe(OnActorAdded));
+        _subscriptions.Add(_ws.Actors.Removed.Subscribe(OnActorRemoved));
+        _subscriptions.Add(_ws.Actors.CastStarted.Subscribe(OnCastStarted));
+        _subscriptions.Add(_ws.Actors.CastFinished.Subscribe(OnCastFinished));
+        _subscriptions.Add(_ws.Actors.IsTargetableChanged.Subscribe(OnTargetableChanged));
+        _subscriptions.Add(_ws.Actors.IsDeadChanged.Subscribe(OnDeathChanged));
+        _subscriptions.Add(_ws.Actors.RenderflagsChanged.Subscribe(OnRenderFlagsChanged));
+        _subscriptions.Add(_ws.Actors.EventStateChanged.Subscribe(OnEventStateChanged));
+        _subscriptions.Add(_ws.Actors.Tethered.Subscribe(OnTether));
+        _subscriptions.Add(_ws.Actors.Untethered.Subscribe(OnUntether));
+        _subscriptions.Add(_ws.Actors.StatusGain.Subscribe(OnStatusGain));
+        _subscriptions.Add(_ws.Actors.StatusLose.Subscribe(OnStatusLose));
+        _subscriptions.Add(_ws.Actors.IconAppeared.Subscribe(OnIcon));
+        _subscriptions.Add(_ws.Actors.VFXAppeared.Subscribe(OnVFX));
+        _subscriptions.Add(_ws.Actors.CastEvent.Subscribe(OnCastEvent));
+        _subscriptions.Add(_ws.Actors.EffectResult.Subscribe(OnEffectResult));
+        _subscriptions.Add(_ws.Actors.EventObjectStateChange.Subscribe(OnEventObjectState));
+        _subscriptions.Add(_ws.Actors.EventObjectAnimation.Subscribe(OnEventObjectAnimation));
+        _subscriptions.Add(_ws.Actors.PlayActionTimelineEvent.Subscribe(OnActionTimelineEvent));
+        _subscriptions.Add(_ws.Actors.PlayActionTimelineSync.Subscribe(OnActionTimelineSync));
+        _subscriptions.Add(_ws.Actors.EventNpcYell.Subscribe(OnNpcYell));
+        _subscriptions.Add(_ws.Actors.ModelStateChanged.Subscribe(OnModelStateChanged));
+        _subscriptions.Add(_ws.MapEffect.Subscribe(OnMapEffect));
+        _subscriptions.Add(_ws.LegacyMapEffect.Subscribe(OnLegacyMapEffect));
+        _subscriptions.Add(_ws.DirectorUpdate.Subscribe(OnDirectorUpdate));
     }
 
     public void Dispose()
@@ -115,29 +134,31 @@ public sealed partial class ForetellEngine : IDisposable
         _replay?.Dispose();
         _subscriptions.Dispose();
         DisposeNativeHooks();
+        Service.CommandManager.RemoveHandler("/foretell");
     }
 
     public void Update()
     {
+        var now = ObservationNow();
         var territory = CurrentTerritory();
         if (territory != _territory)
             ChangeTerritory(territory);
 
         SyncReplayWriter();
-        if ((_ws.CurrentTime - _lastPositionSample).TotalMilliseconds >= 250)
+        if ((now - _lastPositionSample).TotalMilliseconds >= 250)
         {
             SamplePartyPositions();
             SampleDataFabric();
-            _lastPositionSample = _ws.CurrentTime;
+            _lastPositionSample = now;
         }
 
-        FinalizeDue(_ws.CurrentTime);
-        TrimRecentSignals(_ws.CurrentTime.AddSeconds(-8));
+        FinalizeDue(now);
+        TrimRecentSignals(now.AddSeconds(-8));
 
-        foreach (var key in _predictions.Where(p => p.Value.Activation.AddSeconds(1.5) < _ws.CurrentTime).Select(p => p.Key).ToArray())
+        foreach (var key in _predictions.Where(p => p.Value.Activation.AddSeconds(1.5) < now).Select(p => p.Key).ToArray())
             _predictions.Remove(key);
 
-        if (_inPull && (_ws.CurrentTime - _lastCombatSignal).TotalSeconds > 30)
+        if (_inPull && (now - _lastCombatSignal).TotalSeconds > 30)
             _inPull = false;
 
         if ((DateTime.UtcNow - _lastSave).TotalSeconds > 30)
@@ -327,7 +348,7 @@ public sealed partial class ForetellEngine : IDisposable
         return new()
         {
             Sequence = ++_sequence,
-            At = _ws.CurrentTime,
+            At = ObservationNow(),
             TerritoryID = _territory,
             Kind = kind,
             SourceKind = actor == null ? SourceKind.Environment : ClassifySource(actor),
@@ -347,6 +368,11 @@ public sealed partial class ForetellEngine : IDisposable
             Detail = detail
         };
     }
+
+    private DateTime ObservationNow() => NormalizeObservationTime(_ws.CurrentTime);
+
+    private static DateTime NormalizeObservationTime(DateTime value)
+        => value.Ticks < TimeSpan.TicksPerDay || value.Ticks > DateTime.MaxValue.Ticks - TimeSpan.TicksPerDay ? DateTime.UtcNow : value;
 
     private static SourceKind ClassifySource(Actor actor)
     {
