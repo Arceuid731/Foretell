@@ -84,13 +84,15 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Adaptive encounter-intelligence update with metadata-first geometry priors, empirical override/correction, contextual multi-signal learning, and confidence-colored world/radar geometry.
+          Exhaustive encounter-agnostic telemetry release. Foretell now combines semantic BMR WorldState events, every non-frame WorldState operation, generic Dalamud/runtime state, Lumina metadata, an unconditional passive server/client IPC tap, and a direct EventObject object-effect surface.
 
-          Client Action data such as CastType, EffectRange, XAxisModifier, TargetArea, Omen/VFX and actor hitbox can seed ordinary telegraphs before hit/no-hit evidence exists. Metadata alone remains capped below the 99% safe-guidance gate, and observed outcomes can override a conflicting prior.
+          Raw packet payloads are retained losslessly in Foretell replay. Every payload byte contributes to the compressed hashed learner feature space, so unknown or not-yet-decoded packet fields are not silently discarded. ActionEffect/EffectResult, ActorControl, statuses, casts, system logs, map/director events, timelines, actor state and native object effects all participate in causal correlation.
 
-          Radar and world overlay use the same reliability colors (cyan/blue -> yellow -> orange -> red) and render circle, donut, cone, rectangle and cross geometry. Color represents confidence, not damage severity.
+          The local classifier expands from 10 fixed features to 10 deterministic core features plus 128 generic hashed Data Fabric dimensions while preserving compatible legacy weights. Runtime coverage auditing tracks discovered, ingested, learner-used, explicitly excluded and unaccounted fields.
 
-          Recommended first run: Observe, then Compare, then Hybrid after reviewing learned mechanics.
+          Foretell still starts from zero encounter knowledge: hand-authored BossModule/state-machine/component/layout/preset answers are excluded. Generic BMR algorithms, geometry/pathfinding/constraint primitives, decoders and raw sensors remain valid encounter-agnostic machinery.
+
+          ACT/IINACT are not required for telemetry. Recommended first run remains Observe, then Compare, then Hybrid after reviewing learned mechanics and the Data Fabric coverage audit.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
