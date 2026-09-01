@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
+using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Keys;
 
 namespace BossMod.Foretell;
 
@@ -15,7 +17,6 @@ public sealed partial class ForetellEngine
     // recursion/bug guard, not a collection sampling policy.
     private const int MaxFabricEntriesPerRoot = 4096;
     private const double MaxFabricTraversalMilliseconds = 1.0;
-    private const double SlowFabricGetterMilliseconds = 2.0;
     private const int RuntimeRootCount = 21;
     private const int NativeActorSlices = 2;
     private DateTime _lastFabricSample;
@@ -27,11 +28,10 @@ public sealed partial class ForetellEngine
     private readonly Dictionary<ulong, string> _nativeActorFabricFingerprint = [];
     private readonly Dictionary<ulong, FabricActorTrack> _fabricActorTracks = [];
     private readonly Dictionary<string, int> _fabricCollectionOffsets = [];
-    private readonly HashSet<string> _slowFabricMembers = [];
     private readonly Dictionary<Type, PropertyInfo[]> _fabricPropertyCache = [];
     private readonly Dictionary<Type, FieldInfo[]> _fabricFieldCache = [];
     private long _fabricDeferredTraversals;
-    private long _fabricQuarantinedGetters;
+    private long _fabricRejectedGetters;
 
     private sealed class FabricActorTrack
     {
@@ -383,13 +383,11 @@ public sealed partial class ForetellEngine
                 break;
             case 10:
                 obs.Detail = "runtime.condition";
-                FlattenRoot(Service.Condition, "runtime.condition", obs, 2);
-                FlattenEnumIndexers(Service.Condition, "runtime.condition", obs);
+                StoreConditionState(obs);
                 break;
             case 11:
                 obs.Detail = "runtime.keyState";
-                FlattenRoot(Service.KeyState, "runtime.keyState", obs, 1);
-                FlattenEnumIndexers(Service.KeyState, "runtime.keyState", obs);
+                StoreKeyState(obs);
                 break;
             case 12:
                 obs.Detail = "runtime.gameGui";
@@ -496,6 +494,12 @@ public sealed partial class ForetellEngine
             RegisterCapability(path, type, path, false, true, "operational/API plumbing; not game-state evidence");
             return;
         }
+        if (!CanTraverseFabricType(type))
+        {
+            RegisterCapability(path, type, path, false, false,
+                "external live implementation rejected before enumeration/reflection; dedicated typed ingestion required");
+            return;
+        }
         if (depth >= maxDepth)
         {
             RegisterCapability(path, type, path, false, false, "bounded traversal reached; dedicated ingestion is required if this is gameplay state");
@@ -567,28 +571,19 @@ public sealed partial class ForetellEngine
             if (RejectNonBoxableMember(p.PropertyType, memberPath, type, p.Name))
                 continue;
 
-            var memberKey = $"{type.AssemblyQualifiedName}|P|{p.Name}";
-            if (_slowFabricMembers.Contains(memberKey))
+            // Never invoke an arbitrary property getter on a live Dalamud/native implementation. A getter can
+            // cross into unmanaged code; neither a stopwatch deadline nor a managed catch can contain an access
+            // violation. Only assemblies explicitly classified as managed telemetry DTOs may execute getters.
+            if (!CanInvokeFabricGetter(type))
             {
-                RegisterCapability(memberPath, type, p.Name, false, false, "slow live getter quarantined; dedicated typed ingestion required");
+                ++_fabricRejectedGetters;
+                RegisterCapability(memberPath, type, p.Name, false, false,
+                    "live getter rejected before invocation; dedicated typed ingestion required");
                 continue;
             }
             try
             {
-                var getterStarted = Stopwatch.GetTimestamp();
                 var memberValue = p.GetValue(value);
-                var getterMilliseconds = Stopwatch.GetElapsedTime(getterStarted).TotalMilliseconds;
-                if (getterMilliseconds > SlowFabricGetterMilliseconds)
-                {
-                    _slowFabricMembers.Add(memberKey);
-                    ++_fabricQuarantinedGetters;
-                    RegisterCapability(memberPath, type, p.Name, false, false,
-                        $"live getter quarantined after {getterMilliseconds:F2} ms; dedicated typed ingestion required");
-                    Service.Log($"[Foretell] Quarantined slow Data Fabric getter {type.FullName}.{p.Name} ({getterMilliseconds:F2} ms)");
-                    if (memberValue != null)
-                        TryStoreScalar(memberValue, memberValue.GetType(), memberPath, observation);
-                    continue;
-                }
                 FlattenObject(memberValue, memberPath, observation, depth + 1, maxDepth, visited, ref budget, deadline, ref deferred);
             }
             catch (Exception e)
@@ -634,6 +629,29 @@ public sealed partial class ForetellEngine
         if (!_fabricFieldCache.TryGetValue(type, out var result))
             _fabricFieldCache[type] = result = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).OrderBy(f => f.Name).ToArray();
         return result;
+    }
+
+    private static bool CanInvokeFabricGetter(Type type)
+    {
+        var assembly = type.Assembly;
+        if (assembly == typeof(ForetellEngine).Assembly)
+            return true;
+
+        // Lumina generated row properties are deterministic managed projections over sqpack row data. They do
+        // not call game-client functions and are the only external property surface allowed in the generic path.
+        var assemblyName = assembly.GetName().Name ?? "";
+        return assemblyName.StartsWith("Lumina", StringComparison.Ordinal);
+    }
+
+    private static bool CanTraverseFabricType(Type type)
+    {
+        var assembly = type.Assembly;
+        if (assembly == typeof(ForetellEngine).Assembly)
+            return true;
+
+        var assemblyName = assembly.GetName().Name ?? "";
+        return assemblyName.StartsWith("Lumina", StringComparison.Ordinal)
+            || assemblyName is "System.Private.CoreLib" or "System.Collections" or "System.Numerics.Vectors";
     }
 
     // Reflection cannot box these CLR types. In particular, invoking PropertyInfo.GetValue for a function-pointer
@@ -732,27 +750,23 @@ public sealed partial class ForetellEngine
         return false;
     }
 
-    private void FlattenEnumIndexers(object? source, string prefix, ForetellObservation observation)
+    private void StoreConditionState(ForetellObservation observation)
     {
-        if (source == null) return;
-        var type = source.GetType();
-        foreach (var p in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+        foreach (var flag in Enum.GetValues<ConditionFlag>())
         {
-            var pars = p.GetIndexParameters();
-            if (pars.Length != 1 || !pars[0].ParameterType.IsEnum || p.GetMethod == null) continue;
-            foreach (var key in Enum.GetValues(pars[0].ParameterType).Cast<object>())
-            {
-                var path = $"{prefix}.{p.Name}[{key}]";
-                try
-                {
-                    var v = p.GetValue(source, [key]);
-                    if (v != null) TryStoreScalar(v, v.GetType(), path, observation);
-                }
-                catch (Exception e)
-                {
-                    RegisterCapability(path, type, p.Name, false, false, $"indexer rejected: {e.GetType().Name}");
-                }
-            }
+            var path = $"runtime.condition[{flag}]";
+            StoreFabric(observation, path, Service.Condition[flag]);
+            RegisterCapability(path, typeof(ConditionFlag), flag.ToString(), true, false, "typed Dalamud condition indexer");
+        }
+    }
+
+    private void StoreKeyState(ForetellObservation observation)
+    {
+        foreach (var key in Service.KeyState.GetValidVirtualKeys())
+        {
+            var path = $"runtime.keyState[{key}]";
+            StoreFabric(observation, path, Service.KeyState[key]);
+            RegisterCapability(path, typeof(VirtualKey), key.ToString(), true, false, "typed Dalamud key-state indexer");
         }
     }
 

@@ -263,7 +263,7 @@ public sealed partial class ForetellEngine
         ImGui.TextUnformatted("Data Fabric");
         ImGui.SameLine();
         ImGui.TextUnformatted($"{coverage.Ingested}/{coverage.Discovered} ingested  |  {coverage.Used} used  |  {coverage.Excluded} excluded  |  {coverage.Unaccounted} unaccounted");
-        ImGui.TextUnformatted($"Live scanner: {_fabricDeferredTraversals:N0} yielded slices  |  {_fabricQuarantinedGetters:N0} slow getters quarantined");
+        ImGui.TextUnformatted($"Live scanner: {_fabricDeferredTraversals:N0} yielded slices  |  {_fabricRejectedGetters:N0} unsafe getters rejected");
         if (coverage.Unaccounted != 0)
             ImGui.TextWrapped("Some discovered fields still require typed ingestion. Raw, semantic and native sensors continue independently.");
         ImGui.TextWrapped($"Last inference: {_lastEvidence}");
@@ -567,7 +567,7 @@ public sealed partial class ForetellEngine
         {
             ImGui.TextWrapped("Casts, full ActionEffect and EffectResult sequences, statuses, icons, VFX paths, both native tether slots, actors, event objects, timelines, map/director state, environment, camera, IPC, ActorControl and structured Dalamud signals feed the learner.");
             ImGui.TextUnformatted($"{_store.Coverage.Discovered} discovered  |  {_store.Coverage.Ingested} ingested  |  {_store.Coverage.Used} used  |  {_store.Coverage.Excluded} excluded  |  {_store.Coverage.Unaccounted} unaccounted");
-            ImGui.TextUnformatted($"{_fabricDeferredTraversals:N0} budget yields  |  {_fabricQuarantinedGetters:N0} slow generic getters quarantined");
+            ImGui.TextUnformatted($"{_fabricDeferredTraversals:N0} budget yields  |  {_fabricRejectedGetters:N0} unsafe generic getters rejected");
         }
 
         if (ImGui.CollapsingHeader("Commands"))

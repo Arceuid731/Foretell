@@ -51,7 +51,11 @@ requirements = {
         "EnrichActorCore(observation, actor, \"actor\")",
         "EnrichActorCollections(obs, actor)",
         "--budget",
-        "slow Data Fabric getter",
+        "live getter rejected before invocation",
+        "CanInvokeFabricGetter(type)",
+        "CanTraverseFabricType(type)",
+        "StoreConditionState(obs)",
+        "StoreKeyState(obs)",
         "RejectNonBoxableMember(p.PropertyType",
         "RejectNonBoxableMember(f.FieldType",
         "memberType.IsFunctionPointer",
@@ -113,6 +117,7 @@ for path, needles in requirements.items():
 fabric = read("BossMod/Foretell/ForetellDataFabric.cs")
 for guard, invocation in [
     ("RejectNonBoxableMember(p.PropertyType", "p.GetValue(value)"),
+    ("CanInvokeFabricGetter(type)", "p.GetValue(value)"),
     ("RejectNonBoxableMember(f.FieldType", "f.GetValue(value)"),
 ]:
     guard_at = fabric.find(guard)
@@ -121,6 +126,13 @@ for guard, invocation in [
         errors.append(f"Foretell reflection contract invocation disappeared without review: {invocation}")
     elif guard_at >= 0 and guard_at > invocation_at:
         errors.append(f"Foretell invokes non-boxable reflection member before its crash guard: {invocation}")
+
+for forbidden in ["FlattenEnumIndexers(", "move.IsFlying()", "move.IsDiving()"]:
+    if forbidden in fabric or forbidden in read("BossMod/Foretell/ForetellNativeState.cs"):
+        errors.append(f"Foretell runtime crash guard regressed: forbidden live invocation {forbidden!r}")
+
+if fabric.find("CanTraverseFabricType(type)") > fabric.find("value is IEnumerable enumerable"):
+    errors.append("Foretell can enumerate an external live implementation before applying its assembly allowlist")
 
 learning = read("BossMod/Foretell/ForetellLearning.cs")
 if learning.find("observation.At = NormalizeObservationTime(observation.At)") > learning.find("observation.At.AddSeconds(-8)"):

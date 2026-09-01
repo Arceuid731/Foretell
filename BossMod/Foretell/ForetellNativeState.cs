@@ -58,16 +58,8 @@ public sealed partial class ForetellEngine
         ref var move = ref character->MoveController;
         StoreNative(observation, $"{p}.move.movementState", move.MovementState);
         StoreNative(observation, $"{p}.move.isSwimming", move.IsSwimming);
-        try
-        {
-            StoreNative(observation, $"{p}.move.isFlying", move.IsFlying());
-            StoreNative(observation, $"{p}.move.isDiving", move.IsDiving());
-        }
-        catch (Exception e)
-        {
-            RegisterCapability($"{p}.move.nativeMethods", typeof(FFXIVClientStructs.FFXIV.Client.Game.Control.MoveControl.MoveController),
-                "IsFlying/IsDiving", false, true, $"native method unavailable: {e.GetType().Name}");
-        }
+        RegisterCapability($"{p}.move.nativeMethods", typeof(FFXIVClientStructs.FFXIV.Client.Game.Control.MoveControl.MoveController),
+            "IsFlying/IsDiving", false, true, "native function calls forbidden in the high-frequency sampler; movement fields remain ingested");
 
         ref var vfx = ref character->Vfx;
         StoreNative(observation, $"{p}.vfx.voiceId", vfx.VoiceId);
