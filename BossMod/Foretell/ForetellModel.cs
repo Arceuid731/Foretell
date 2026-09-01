@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace BossMod.Foretell;
 
-public enum GeometryKind { Unknown, Circle, Donut, Cone, Rectangle }
+public enum GeometryKind { Unknown, Circle, Donut, Cone, Rectangle, Cross }
 public enum MechanicKind
 {
     Unknown, GroundAOE, Raidwide, Tankbuster, Stack, Spread, Tower, Knockback, Gaze, Tether, Proximity,
@@ -17,7 +17,8 @@ public enum ObservationKind
     Icon, VFX, TetherStart, TetherEnd, StatusGain, StatusLose,
     EventObjectState, EventObjectAnimation, ActionTimelineEvent, ActionTimelineSync, NpcYell,
     MapEffect, LegacyMapEffect, DirectorUpdate,
-    PositionSample, Displacement
+    PositionSample, Displacement,
+    ClientMetadata
 }
 
 public enum SourceKind { Unknown, Player, Pet, Enemy, EventObject, Environment }
@@ -71,7 +72,22 @@ public sealed class ContextualMechanic
     public DateTime LastSeen { get; set; }
     public Dictionary<ObservationKind, int> Evidence { get; set; } = [];
     public List<MechanicSamplePoint> Samples { get; set; } = [];
-    [JsonIgnore] public float Confidence
+
+    // Static client-data prior. This is deliberately kept separate from empirical score so outcome evidence can
+    // confirm, refine or contradict it instead of silently treating the game sheet as ground truth.
+    [JsonConverter(typeof(JsonStringEnumConverter))] public GeometryKind PriorGeometry { get; set; }
+    public float PriorP1 { get; set; }
+    public float PriorP2 { get; set; }
+    public float PriorConfidence { get; set; }
+    public int PriorCastType { get; set; }
+    public int PriorEffectRange { get; set; }
+    public int PriorXAxisModifier { get; set; }
+    public bool PriorTargetArea { get; set; }
+    public uint PriorOmenID { get; set; }
+    public string PriorOmen { get; set; } = "";
+    public string PriorEvidence { get; set; } = "";
+
+    [JsonIgnore] public float EmpiricalConfidence
     {
         get
         {
@@ -79,6 +95,23 @@ public sealed class ContextualMechanic
             var agreement = Observations == 0 ? 0 : Confirmations / (float)Observations;
             var ambiguityPenalty = 1f / (1f + AmbiguousSamples * .12f);
             return Math.Clamp((Score * .48f + repetition * .30f + agreement * .22f) * ambiguityPenalty, 0, 1);
+        }
+    }
+
+    [JsonIgnore] public float Confidence
+    {
+        get
+        {
+            var empirical = EmpiricalConfidence;
+            if (PriorConfidence <= 0) return empirical;
+            if (Observations == 0) return PriorConfidence;
+
+            // Independent-ish evidence fusion: the metadata gives a useful first-cast prior, while repeated outcomes
+            // rapidly dominate. Conflicting evidence is already penalized through EmpiricalConfidence.
+            var fused = 1f - (1f - PriorConfidence) * (1f - empirical);
+            if (AmbiguousSamples > 0)
+                fused *= 1f / (1f + AmbiguousSamples * .08f);
+            return Math.Clamp(fused, 0, .999f);
         }
     }
 }
@@ -162,7 +195,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 2;
+    public int Schema { get; set; } = 3;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
@@ -212,6 +245,11 @@ public readonly record struct ActivePrediction(
     ulong CasterID, uint ActionID, GeometryKind Geometry, MechanicKind Kind,
     Vector2 Origin, Vector2 Target, float Rotation, float P1, float P2,
     DateTime Activation, float Confidence, string Evidence);
+
+internal readonly record struct ActionGeometryPrior(
+    uint ActionID, GeometryKind Geometry, float P1, float P2, float Confidence,
+    int CastType, int EffectRange, int XAxisModifier, bool TargetArea,
+    uint OmenID, string Omen, string Evidence);
 
 internal readonly record struct CastSnapshot(
     ulong CasterID, uint ActionID, Vector2 Origin, Vector2 Target, float Rotation,
