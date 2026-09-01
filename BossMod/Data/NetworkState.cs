@@ -54,8 +54,19 @@ public sealed class NetworkState
         public readonly byte[] Payload = payload;
     }
 
+    public readonly struct RawActorControl(uint sourceID, uint command, uint p1, uint p2, uint p3, uint p4, uint p5, uint p6, uint p7, uint p8, ulong targetID, byte replaying)
+    {
+        public readonly uint SourceID = sourceID;
+        public readonly uint Command = command;
+        public readonly uint P1 = p1; public readonly uint P2 = p2; public readonly uint P3 = p3; public readonly uint P4 = p4;
+        public readonly uint P5 = p5; public readonly uint P6 = p6; public readonly uint P7 = p7; public readonly uint P8 = p8;
+        public readonly ulong TargetID = targetID;
+        public readonly byte Replaying = replaying;
+    }
+
     public Event<RawServerIPC> RawServerIPCReceived = new();
     public Event<RawClientIPC> RawClientIPCSent = new();
+    public Event<RawActorControl> RawActorControlReceived = new();
 
     public IDScrambleFields IDScramble;
 

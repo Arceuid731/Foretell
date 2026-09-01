@@ -32,12 +32,51 @@ public sealed partial class ForetellEngine
 
     private void OnCastEvent(Actor actor, ActorCastEvent ev)
     {
-        var action = ReadActionID(ev);
+        var action = ev.Action.ID;
         if (action == 0) return;
-        var targets = ExtractTargetIDs(ev);
-        ProcessRichObservation(Observation(ObservationKind.ActionResolved, actor, action, value1: targets.Count), ev);
-        foreach (var target in targets)
-            ProcessObservation(Observation(ObservationKind.AffectedTarget, actor, action, target: target));
+        var resolved = Observation(ObservationKind.ActionResolved, actor, action, value1: ev.Targets.Count);
+        resolved.Numeric["action.globalSequence"] = ev.GlobalSequence;
+        resolved.Numeric["action.sourceSequence"] = ev.SourceSequence;
+        resolved.Numeric["action.maxTargets"] = ev.MaxTargets;
+        resolved.Numeric["action.animationLock"] = ev.AnimationLockTime;
+        resolved.Numeric["action.targetY"] = ev.TargetPos.Y;
+        ProcessRichObservation(resolved, ev);
+
+        var seen = new HashSet<ulong>();
+        foreach (var target in ev.Targets)
+        {
+            seen.Add(target.ID);
+            var affected = Observation(ObservationKind.AffectedTarget, actor, action, target: target.ID);
+            var effects = target.Effects.ValidEffects();
+            affected.Numeric["actionEffect.count"] = effects.Length;
+            for (var i = 0; i < effects.Length; ++i)
+            {
+                ref readonly var effect = ref effects[i];
+                var prefix = $"actionEffect.{i}";
+                affected.Numeric[$"{prefix}.type"] = (byte)effect.Type;
+                affected.Numeric[$"{prefix}.param0"] = effect.Param0;
+                affected.Numeric[$"{prefix}.param1"] = effect.Param1;
+                affected.Numeric[$"{prefix}.param2"] = effect.Param2;
+                affected.Numeric[$"{prefix}.param3"] = effect.Param3;
+                affected.Numeric[$"{prefix}.param4"] = effect.Param4;
+                affected.Numeric[$"{prefix}.value"] = effect.Value;
+                affected.Numeric[$"{prefix}.fromTarget"] = effect.FromTarget ? 1 : 0;
+                affected.Numeric[$"{prefix}.atSource"] = effect.AtSource ? 1 : 0;
+                affected.Numeric[$"{prefix}.damageType"] = (int)effect.DamageType;
+                affected.Numeric[$"{prefix}.damageElement"] = (int)effect.DamageElement;
+                affected.Numeric[$"{prefix}.damageHealValue"] = effect.DamageHealValue;
+                affected.Text[$"{prefix}.typeName"] = effect.Type.ToString();
+                affected.Binary[$"{prefix}.raw"] =
+                [
+                    (byte)effect.Type, effect.Param0, effect.Param1, effect.Param2, effect.Param3, effect.Param4,
+                    (byte)(effect.Value & 0xFF), (byte)(effect.Value >> 8)
+                ];
+            }
+            ProcessObservation(affected);
+        }
+
+        if (ev.MainTargetID != 0 && !seen.Contains(ev.MainTargetID))
+            ProcessObservation(Observation(ObservationKind.AffectedTarget, actor, action, target: ev.MainTargetID, detail: "main-target-only"));
     }
 
     private void OnTargetableChanged(Actor actor)
@@ -178,7 +217,13 @@ public sealed partial class ForetellEngine
     }
 
     private void OnSystemLog(WorldState.OpSystemLogMessage op)
-        => ProcessRichObservation(Observation(ObservationKind.SystemLog, primary: op.MessageID), op);
+    {
+        var obs = Observation(ObservationKind.SystemLog, primary: op.MessageID);
+        obs.Numeric["systemLog.argCount"] = op.Args.Length;
+        for (var i = 0; i < op.Args.Length; ++i)
+            obs.Numeric[$"systemLog.arg.{i}"] = op.Args[i];
+        ProcessRichObservation(obs, op);
+    }
 
     private void OnRawServerIPC(NetworkState.RawServerIPC packet)
     {
@@ -196,6 +241,22 @@ public sealed partial class ForetellEngine
     {
         var obs = Observation(ObservationKind.ClientIPC, primary: packet.Opcode, detail: "client->server");
         ProcessRichObservation(obs, packet);
+    }
+
+    private void OnRawActorControl(NetworkState.RawActorControl control)
+    {
+        var actor = control.SourceID != 0 ? _ws.Actors.Find(control.SourceID) : null;
+        var obs = Observation(ObservationKind.ActorControlRaw, actor, control.Command, target: control.TargetID, flag: control.Replaying != 0);
+        if (actor == null && control.SourceID != 0)
+        {
+            obs.ActorID = control.SourceID;
+            obs.SourceKind = SourceKind.Unknown;
+        }
+        obs.Numeric["actorControl.p1"] = control.P1; obs.Numeric["actorControl.p2"] = control.P2;
+        obs.Numeric["actorControl.p3"] = control.P3; obs.Numeric["actorControl.p4"] = control.P4;
+        obs.Numeric["actorControl.p5"] = control.P5; obs.Numeric["actorControl.p6"] = control.P6;
+        obs.Numeric["actorControl.p7"] = control.P7; obs.Numeric["actorControl.p8"] = control.P8;
+        ProcessRichObservation(obs, control);
     }
 
     private void SamplePartyPositions()

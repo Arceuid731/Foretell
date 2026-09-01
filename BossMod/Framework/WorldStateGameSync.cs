@@ -44,6 +44,7 @@ sealed class WorldStateGameSync : IDisposable
     private readonly Network.PacketDecoderGame _decoder = new();
     private readonly System.Collections.Concurrent.ConcurrentQueue<NetworkState.RawServerIPC> _foretellRawServerPackets = new();
     private readonly System.Collections.Concurrent.ConcurrentQueue<NetworkState.RawClientIPC> _foretellRawClientPackets = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<NetworkState.RawActorControl> _foretellRawActorControls = new();
 
     private readonly ConfigListener<ReplayManagementConfig> _netConfig;
     private readonly EventSubscriptions _subscriptions;
@@ -260,6 +261,8 @@ sealed class WorldStateGameSync : IDisposable
             _ws.Network.RawServerIPCReceived.Fire(rawServer);
         while (_foretellRawClientPackets.TryDequeue(out var rawClient))
             _ws.Network.RawClientIPCSent.Fire(rawClient);
+        while (_foretellRawActorControls.TryDequeue(out var rawControl))
+            _ws.Network.RawActorControlReceived.Fire(rawControl);
 
         _playerEnmity.Clear();
         var uiState = UIState.Instance();
@@ -1306,6 +1309,7 @@ sealed class WorldStateGameSync : IDisposable
     private void ProcessPacketActorControlDetour(uint actorID, uint category, uint p1, uint p2, uint p3, uint p4, uint p5, uint p6, uint p7, uint p8, ulong targetID, byte replaying)
     {
         _processPacketActorControlHook.Original(actorID, category, p1, p2, p3, p4, p5, p6, p7, p8, targetID, replaying);
+        _foretellRawActorControls.Enqueue(new(actorID, category, p1, p2, p3, p4, p5, p6, p7, p8, targetID, replaying));
         switch ((Network.ServerIPC.ActorControlCategory)category)
         {
             case Network.ServerIPC.ActorControlCategory.TargetIcon:

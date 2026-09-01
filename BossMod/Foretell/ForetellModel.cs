@@ -17,7 +17,7 @@ public enum ObservationKind
     Icon, VFX, TetherStart, TetherEnd, StatusGain, StatusLose,
     EventObjectState, EventObjectAnimation, ActionTimelineEvent, ActionTimelineSync, NpcYell,
     MapEffect, LegacyMapEffect, DirectorUpdate, SystemLog, ObjectEffect,
-    WorldOperation, ServerIPC, ClientIPC,
+    WorldOperation, ServerIPC, ClientIPC, ActorControlRaw,
     PositionSample, Displacement, ActorSnapshot,
     ClientMetadata, GenericFeature
 }

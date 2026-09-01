@@ -72,6 +72,7 @@ public sealed partial class ForetellEngine : IDisposable
             _ws.SystemLogMessage.Subscribe(OnSystemLog),
             _ws.Network.RawServerIPCReceived.Subscribe(OnRawServerIPC),
             _ws.Network.RawClientIPCSent.Subscribe(OnRawClientIPC),
+            _ws.Network.RawActorControlReceived.Subscribe(OnRawActorControl),
             _ws.Actors.Added.Subscribe(OnActorAdded),
             _ws.Actors.Removed.Subscribe(OnActorRemoved),
             _ws.Actors.CastStarted.Subscribe(OnCastStarted),
