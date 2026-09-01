@@ -14,10 +14,12 @@ public sealed partial class ForetellEngine
     // recursion/bug guard, not a collection sampling policy.
     private const int MaxFabricEntriesPerRoot = 4096;
     private const int RuntimeRootCount = 21;
+    private const int NativeActorSlices = 2;
     private DateTime _lastFabricSample;
     private DateTime _lastNativeFabricSample;
     private int _runtimeRootCursor;
     private int _actorFabricCursor;
+    private int _nativeActorSliceCursor;
     private readonly Dictionary<ulong, string> _actorFabricFingerprint = [];
     private readonly Dictionary<ulong, string> _nativeActorFabricFingerprint = [];
     private readonly Dictionary<ulong, FabricActorTrack> _fabricActorTracks = [];
@@ -36,6 +38,7 @@ public sealed partial class ForetellEngine
         _fabricActorTracks.Clear();
         _runtimeRootCursor = 0;
         _actorFabricCursor = 0;
+        _nativeActorSliceCursor = 0;
         ResetNativeDataFabric();
         _lastFabricSample = default;
         _lastNativeFabricSample = default;
@@ -52,22 +55,21 @@ public sealed partial class ForetellEngine
             _lastFabricSample = now;
             RefreshRuntimeContextSlice();
             SampleGenericActorSlice();
+            SampleNativeActorSlice(now);
+
+            foreach (var dead in _fabricActorTracks.Keys.Where(id => _ws.Actors.Find(id) == null).ToArray())
+            {
+                _fabricActorTracks.Remove(dead);
+                _actorFabricFingerprint.Remove(dead);
+                _nativeActorFabricFingerprint.Remove(dead);
+            }
         }
 
-        // Native character fields are cheap direct reads and include time-sensitive tether/timeline progress, so
-        // retain the original 2 Hz coverage without paying generic reflection for every actor in the same frame.
+        // Environment and camera retain their original 2 Hz cadence. Character direct reads are partitioned into
+        // two alternating 250 ms slices above, preserving 2 Hz per actor without an all-actors frame spike.
         if (!force && (now - _lastNativeFabricSample).TotalMilliseconds < 500)
             return;
         _lastNativeFabricSample = now;
-        SampleNativeActorState(now);
-
-        foreach (var dead in _fabricActorTracks.Keys.Where(id => _ws.Actors.Find(id) == null).ToArray())
-        {
-            _fabricActorTracks.Remove(dead);
-            _actorFabricFingerprint.Remove(dead);
-            _nativeActorFabricFingerprint.Remove(dead);
-        }
-
         SampleNativeEnvironment();
         SampleNativeCamera();
     }
@@ -90,10 +92,13 @@ public sealed partial class ForetellEngine
         ProcessObservation(obs, enriched: true);
     }
 
-    private void SampleNativeActorState(DateTime now)
+    private void SampleNativeActorSlice(DateTime now)
     {
-        foreach (var actor in _ws.Actors)
+        var actors = _ws.Actors.ToArray();
+        var slice = _nativeActorSliceCursor++ % NativeActorSlices;
+        for (var i = slice; i < actors.Length; i += NativeActorSlices)
         {
+            var actor = actors[i];
             var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:native");
             EnrichNativeCharacter(obs, actor);
             var pos = new Vector2(actor.Position.X, actor.Position.Z);

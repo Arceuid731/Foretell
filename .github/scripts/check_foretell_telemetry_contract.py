@@ -45,7 +45,7 @@ requirements = {
         "AuditDalamudPluginServices()",
         "RefreshRuntimeContextSlice()",
         "SampleGenericActorSlice()",
-        "SampleNativeActorState(now)",
+        "SampleNativeActorSlice(now)",
         "ProcessObservation(obs, enriched: true)",
         "RejectNonBoxableMember(p.PropertyType",
         "RejectNonBoxableMember(f.FieldType",
