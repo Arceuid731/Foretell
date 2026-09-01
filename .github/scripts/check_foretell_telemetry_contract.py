@@ -31,6 +31,8 @@ requirements = {
     ],
     "BossMod/Foretell/ForetellLearning.cs": [
         "observation.At = NormalizeObservationTime(observation.At)",
+        "bool replaying = false, bool enriched = false",
+        "else if (!enriched) EnrichObservation(observation)",
     ],
     "BossMod/Foretell/ForetellDataFabric.cs": [
         'FlattenRoot(_ws.Frame, "runtime.frame"',
@@ -41,9 +43,17 @@ requirements = {
         'FlattenRoot(_ws.Network, "runtime.network"',
         "foreach (var item in enumerable)",
         "AuditDalamudPluginServices()",
+        "RefreshRuntimeContextSlice()",
+        "SampleGenericActorSlice()",
+        "SampleNativeActorState(now)",
+        "ProcessObservation(obs, enriched: true)",
         "RejectNonBoxableMember(p.PropertyType",
         "RejectNonBoxableMember(f.FieldType",
         "memberType.IsFunctionPointer",
+    ],
+    "BossMod/Framework/Plugin.cs": [
+        "OpenMainUi += () => _foretell.OpenInspector()",
+        "OpenConfigUi += () => _foretell.OpenInspector()",
     ],
     "BossMod/Foretell/ForetellNativeState.cs": [
         'var tp = $"{p}.vfx.tether[{i}]"',
@@ -106,6 +116,8 @@ foretell_sources = "\n".join(
 )
 
 for forbidden, reason in {
+    "_runtimeNumeric": "duplicating the full runtime cache into every observation",
+    "RefreshRuntimeContext()": "synchronous all-root runtime reflection sweep",
     ".Take(32)": "fixed 32-entry telemetry sampling cap",
     "n >= 32": "fixed 32-entry telemetry sampling cap",
     "MaxFabricEntriesPerObject": "shared monolithic object budget",

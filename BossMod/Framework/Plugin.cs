@@ -107,8 +107,7 @@ public sealed class Plugin : IAsyncDalamudPlugin
 
         Service.Config.Modified.Subscribe(() => Task.Run(() => Service.Config.SaveToFile(_dalamud.ConfigFile)));
 
-        CommandManager.AddHandler("/bmr", new CommandInfo(OnCommand) { HelpMessage = "Show Foretell/BossMod settings UI" });
-        CommandManager.AddHandler("/foretell", new CommandInfo(OnCommand) { HelpMessage = "Show Foretell settings UI" });
+        CommandManager.AddHandler("/bmr", new CommandInfo(OnCommand) { HelpMessage = "Show BossMod Reborn settings UI" });
 
         ActionDefinitions.Instance.UnlockCheck = QuestUnlocked; // ensure action definitions are initialized and set unlock check functor (we don't really store the quest progress in clientstate, for now at least)
 
@@ -145,8 +144,10 @@ public sealed class Plugin : IAsyncDalamudPlugin
 
         _dalamud.UiBuilder.DisableAutomaticUiHide = true;
         _dalamud.UiBuilder.Draw += DrawUI;
-        _dalamud.UiBuilder.OpenMainUi += () => OpenConfigUI();
-        _dalamud.UiBuilder.OpenConfigUi += () => OpenConfigUI();
+        // Foretell owns the plugin's primary/config entry points. Legacy BMR configuration remains available
+        // explicitly through /bmr while /foretell and the Dalamud buttons open the dedicated Foretell cockpit.
+        _dalamud.UiBuilder.OpenMainUi += () => _foretell.OpenInspector();
+        _dalamud.UiBuilder.OpenConfigUi += () => _foretell.OpenInspector();
     }
 
     public async ValueTask DisposeAsync()

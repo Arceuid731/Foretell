@@ -2,13 +2,13 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
-    private void ProcessObservation(ForetellObservation observation, bool replaying = false)
+    private void ProcessObservation(ForetellObservation observation, bool replaying = false, bool enriched = false)
     {
         observation.At = NormalizeObservationTime(observation.At);
         if (observation.Sequence == 0) observation.Sequence = ++_sequence;
         else _sequence = Math.Max(_sequence, observation.Sequence);
         if (observation.TerritoryID == 0) observation.TerritoryID = _territory;
-        if (replaying) RegisterRecordedFeatures(observation); else EnrichObservation(observation);
+        if (replaying) RegisterRecordedFeatures(observation); else if (!enriched) EnrichObservation(observation);
 
         FinalizeDue(observation.At);
         _session.Observe(observation);

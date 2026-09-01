@@ -159,7 +159,7 @@ public sealed partial class ForetellEngine
         if (fingerprint == _environmentFabricFingerprint)
             return;
         _environmentFabricFingerprint = fingerprint;
-        ProcessObservation(obs);
+        ProcessObservation(obs, enriched: true);
     }
 
     private void SampleNativeCamera()
@@ -193,7 +193,7 @@ public sealed partial class ForetellEngine
         if (fingerprint == _cameraFabricFingerprint)
             return;
         _cameraFabricFingerprint = fingerprint;
-        ProcessObservation(obs);
+        ProcessObservation(obs, enriched: true);
     }
 
     private void StoreVector(ForetellObservation observation, string prefix, Vector3 value)

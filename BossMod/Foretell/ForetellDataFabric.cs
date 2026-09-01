@@ -13,12 +13,14 @@ public sealed partial class ForetellEngine
     // party/actor collection can never starve camera, client, network or environment state. The budget is a
     // recursion/bug guard, not a collection sampling policy.
     private const int MaxFabricEntriesPerRoot = 4096;
+    private const int RuntimeRootCount = 21;
     private DateTime _lastFabricSample;
+    private DateTime _lastNativeFabricSample;
+    private int _runtimeRootCursor;
+    private int _actorFabricCursor;
     private readonly Dictionary<ulong, string> _actorFabricFingerprint = [];
+    private readonly Dictionary<ulong, string> _nativeActorFabricFingerprint = [];
     private readonly Dictionary<ulong, FabricActorTrack> _fabricActorTracks = [];
-    private Dictionary<string, double> _runtimeNumeric = [];
-    private Dictionary<string, string> _runtimeText = [];
-    private Dictionary<string, byte[]> _runtimeBinary = [];
 
     private sealed class FabricActorTrack
     {
@@ -30,26 +32,69 @@ public sealed partial class ForetellEngine
     private void ResetDataFabric()
     {
         _actorFabricFingerprint.Clear();
+        _nativeActorFabricFingerprint.Clear();
         _fabricActorTracks.Clear();
-        _runtimeNumeric.Clear();
-        _runtimeText.Clear();
-        _runtimeBinary.Clear();
+        _runtimeRootCursor = 0;
+        _actorFabricCursor = 0;
         ResetNativeDataFabric();
         _lastFabricSample = default;
+        _lastNativeFabricSample = default;
     }
 
     private void SampleDataFabric(bool force = false)
     {
         var now = ObservationNow();
-        if (!force && (now - _lastFabricSample).TotalMilliseconds < 500)
-            return;
-        _lastFabricSample = now;
-        RefreshRuntimeContext();
 
+        // Reflection remains complete over a sweep, but only one independent root and one generic actor are
+        // traversed per slice. This keeps the game/framework thread free of the old half-second aggregate spike.
+        if (force || (now - _lastFabricSample).TotalMilliseconds >= 250)
+        {
+            _lastFabricSample = now;
+            RefreshRuntimeContextSlice();
+            SampleGenericActorSlice();
+        }
+
+        // Native character fields are cheap direct reads and include time-sensitive tether/timeline progress, so
+        // retain the original 2 Hz coverage without paying generic reflection for every actor in the same frame.
+        if (!force && (now - _lastNativeFabricSample).TotalMilliseconds < 500)
+            return;
+        _lastNativeFabricSample = now;
+        SampleNativeActorState(now);
+
+        foreach (var dead in _fabricActorTracks.Keys.Where(id => _ws.Actors.Find(id) == null).ToArray())
+        {
+            _fabricActorTracks.Remove(dead);
+            _actorFabricFingerprint.Remove(dead);
+            _nativeActorFabricFingerprint.Remove(dead);
+        }
+
+        SampleNativeEnvironment();
+        SampleNativeCamera();
+    }
+
+    private void SampleGenericActorSlice()
+    {
+        var actors = _ws.Actors.ToArray();
+        if (actors.Length == 0)
+            return;
+        if (_actorFabricCursor >= actors.Length)
+            _actorFabricCursor = 0;
+
+        var actor = actors[_actorFabricCursor++];
+        var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:generic");
+        EnrichObservation(obs, actor);
+        var fingerprint = Fingerprint(obs, "actor.") + Fingerprint(obs, "static.");
+        if (_actorFabricFingerprint.GetValueOrDefault(actor.InstanceID) == fingerprint)
+            return;
+        _actorFabricFingerprint[actor.InstanceID] = fingerprint;
+        ProcessObservation(obs, enriched: true);
+    }
+
+    private void SampleNativeActorState(DateTime now)
+    {
         foreach (var actor in _ws.Actors)
         {
-            var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: actor.Type.ToString());
-            EnrichObservation(obs, actor);
+            var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:native");
             EnrichNativeCharacter(obs, actor);
             var pos = new Vector2(actor.Position.X, actor.Position.Z);
             if (_fabricActorTracks.TryGetValue(actor.InstanceID, out var previous))
@@ -60,21 +105,12 @@ public sealed partial class ForetellEngine
             }
             _fabricActorTracks[actor.InstanceID] = new() { At = now, Position = pos, Rotation = actor.Rotation.Rad };
 
-            var fingerprint = Fingerprint(obs, "actor.") + Fingerprint(obs, "derived.actor.") + Fingerprint(obs, "native.character.");
-            if (_actorFabricFingerprint.GetValueOrDefault(actor.InstanceID) == fingerprint)
+            var fingerprint = Fingerprint(obs, "native.character.") + Fingerprint(obs, "derived.actor.");
+            if (_nativeActorFabricFingerprint.GetValueOrDefault(actor.InstanceID) == fingerprint)
                 continue;
-            _actorFabricFingerprint[actor.InstanceID] = fingerprint;
-            ProcessObservation(obs);
+            _nativeActorFabricFingerprint[actor.InstanceID] = fingerprint;
+            ProcessObservation(obs, enriched: true);
         }
-
-        foreach (var dead in _fabricActorTracks.Keys.Where(id => _ws.Actors.Find(id) == null).ToArray())
-        {
-            _fabricActorTracks.Remove(dead);
-            _actorFabricFingerprint.Remove(dead);
-        }
-
-        SampleNativeEnvironment();
-        SampleNativeCamera();
     }
 
     private static float NormalizeAngle(float angle)
@@ -87,7 +123,7 @@ public sealed partial class ForetellEngine
     private void ProcessRichObservation(ForetellObservation observation, object? payload)
     {
         EnrichObservation(observation, payload);
-        ProcessObservation(observation);
+        ProcessObservation(observation, enriched: true);
     }
 
     private void EnrichObservation(ForetellObservation observation, object? payload = null)
@@ -96,18 +132,8 @@ public sealed partial class ForetellEngine
         observation.Text ??= [];
         observation.Binary ??= [];
 
-        // Raw packet/operation observations arrive at high frequency; nearby actor snapshots and semantic events
-        // already carry the cached runtime context, so avoid duplicating it into every transport record.
-        var leanTransport = observation.Kind is ObservationKind.ServerIPC or ObservationKind.ClientIPC or ObservationKind.WorldOperation;
-        if (!leanTransport)
-        {
-            foreach (var (k, v) in _runtimeNumeric)
-                observation.Numeric.TryAdd(k, v);
-            foreach (var (k, v) in _runtimeText)
-                observation.Text.TryAdd(k, v);
-            foreach (var (k, v) in _runtimeBinary)
-                observation.Binary.TryAdd(k, v);
-        }
+        // Independent runtime roots are emitted as GenericFeature observations. Copying thousands of cached
+        // values into every semantic event multiplied allocations and reflection cost without adding evidence.
 
         var actor = observation.ActorID != 0 ? _ws.Actors.Find(observation.ActorID) : null;
         var target = observation.TargetID != 0 ? _ws.Actors.Find(observation.TargetID) : null;
@@ -132,44 +158,109 @@ public sealed partial class ForetellEngine
         }
     }
 
-    private void RefreshRuntimeContext()
+    private void RefreshRuntimeContextSlice()
     {
-        var obs = new ForetellObservation();
+        var slot = _runtimeRootCursor++ % RuntimeRootCount;
+        var obs = Observation(ObservationKind.GenericFeature, detail: $"runtime slice {slot}");
 
-        // Do not flatten WorldState as one object: its actor collection used to consume the shared budget before
-        // later roots were reached. Each gameplay source below is deliberately independent and actors themselves
-        // are emitted as dedicated ActorSnapshot observations.
-        TryStoreScalar(_ws.QPF, typeof(ulong), "runtime.worldState.qpf", obs);
-        TryStoreScalar(_ws.GameVersion, typeof(string), "runtime.worldState.gameVersion", obs);
-        TryStoreScalar(_ws.CurrentZone, typeof(ushort), "runtime.worldState.currentZone", obs);
-        TryStoreScalar(_ws.CurrentCFCID, typeof(ushort), "runtime.worldState.currentCFCID", obs);
-        TryStoreScalar(_ws.IsPvPArea, typeof(bool), "runtime.worldState.isPvPArea", obs);
-        TryStoreScalar(_ws.RSVEntries.Count, typeof(int), "runtime.worldState.rsvCount", obs);
-        FlattenRoot(_ws.Frame, "runtime.frame", obs, 4);
-        FlattenRoot(_ws.Waymarks, "runtime.waymarks", obs, 4);
-        FlattenRoot(_ws.Party, "runtime.party", obs, 5);
-        FlattenRoot(_ws.Client, "runtime.client", obs, 5);
-        FlattenRoot(_ws.DeepDungeon, "runtime.deepDungeon", obs, 5);
-        FlattenRoot(_ws.Network, "runtime.network", obs, 4);
-        FlattenRoot(Service.ClientState, "runtime.clientState", obs, 2);
-        FlattenRoot(Service.PlayerState, "runtime.playerState", obs, 2);
-        FlattenRoot(Service.TargetManager, "runtime.targetManager", obs, 2);
-        FlattenRoot(Service.Condition, "runtime.condition", obs, 2);
-        FlattenRoot(Service.KeyState, "runtime.keyState", obs, 1);
-        FlattenRoot(Service.GameGui, "runtime.gameGui", obs, 1);
-        FlattenRoot(Service.GameConfig, "runtime.gameConfig", obs, 1);
-        FlattenRoot(Service.PartyList, "runtime.partyList", obs, 4);
-        FlattenRoot(Service.BuddyList, "runtime.buddyList", obs, 4);
-        FlattenRoot(Service.FateTable, "runtime.fateTable", obs, 4);
-        FlattenRoot(Service.DutyState, "runtime.dutyState", obs, 3);
-        FlattenRoot(Service.GamepadState, "runtime.gamepadState", obs, 3);
-        FlattenEnumIndexers(Service.Condition, "runtime.condition", obs);
-        FlattenEnumIndexers(Service.KeyState, "runtime.keyState", obs);
-        AuditDalamudPluginServices();
-        TryFlattenRow<Lumina.Excel.Sheets.TerritoryType>(_territory, "static.territory", obs);
-        _runtimeNumeric = obs.Numeric;
-        _runtimeText = obs.Text;
-        _runtimeBinary = obs.Binary;
+        // Every source still owns the same independent 4096-entry traversal budget. A complete sweep now spans
+        // several frames instead of synchronously flattening every service and collection in one framework tick.
+        switch (slot)
+        {
+            case 0:
+                obs.Detail = "runtime.worldState";
+                TryStoreScalar(_ws.QPF, typeof(ulong), "runtime.worldState.qpf", obs);
+                TryStoreScalar(_ws.GameVersion, typeof(string), "runtime.worldState.gameVersion", obs);
+                TryStoreScalar(_ws.CurrentZone, typeof(ushort), "runtime.worldState.currentZone", obs);
+                TryStoreScalar(_ws.CurrentCFCID, typeof(ushort), "runtime.worldState.currentCFCID", obs);
+                TryStoreScalar(_ws.IsPvPArea, typeof(bool), "runtime.worldState.isPvPArea", obs);
+                TryStoreScalar(_ws.RSVEntries.Count, typeof(int), "runtime.worldState.rsvCount", obs);
+                break;
+            case 1:
+                obs.Detail = "runtime.frame";
+                FlattenRoot(_ws.Frame, "runtime.frame", obs, 4);
+                break;
+            case 2:
+                obs.Detail = "runtime.waymarks";
+                FlattenRoot(_ws.Waymarks, "runtime.waymarks", obs, 4);
+                break;
+            case 3:
+                obs.Detail = "runtime.party";
+                FlattenRoot(_ws.Party, "runtime.party", obs, 5);
+                break;
+            case 4:
+                obs.Detail = "runtime.client";
+                FlattenRoot(_ws.Client, "runtime.client", obs, 5);
+                break;
+            case 5:
+                obs.Detail = "runtime.deepDungeon";
+                FlattenRoot(_ws.DeepDungeon, "runtime.deepDungeon", obs, 5);
+                break;
+            case 6:
+                obs.Detail = "runtime.network";
+                FlattenRoot(_ws.Network, "runtime.network", obs, 4);
+                break;
+            case 7:
+                obs.Detail = "runtime.clientState";
+                FlattenRoot(Service.ClientState, "runtime.clientState", obs, 2);
+                break;
+            case 8:
+                obs.Detail = "runtime.playerState";
+                FlattenRoot(Service.PlayerState, "runtime.playerState", obs, 2);
+                break;
+            case 9:
+                obs.Detail = "runtime.targetManager";
+                FlattenRoot(Service.TargetManager, "runtime.targetManager", obs, 2);
+                break;
+            case 10:
+                obs.Detail = "runtime.condition";
+                FlattenRoot(Service.Condition, "runtime.condition", obs, 2);
+                FlattenEnumIndexers(Service.Condition, "runtime.condition", obs);
+                break;
+            case 11:
+                obs.Detail = "runtime.keyState";
+                FlattenRoot(Service.KeyState, "runtime.keyState", obs, 1);
+                FlattenEnumIndexers(Service.KeyState, "runtime.keyState", obs);
+                break;
+            case 12:
+                obs.Detail = "runtime.gameGui";
+                FlattenRoot(Service.GameGui, "runtime.gameGui", obs, 1);
+                break;
+            case 13:
+                obs.Detail = "runtime.gameConfig";
+                FlattenRoot(Service.GameConfig, "runtime.gameConfig", obs, 1);
+                break;
+            case 14:
+                obs.Detail = "runtime.partyList";
+                FlattenRoot(Service.PartyList, "runtime.partyList", obs, 4);
+                break;
+            case 15:
+                obs.Detail = "runtime.buddyList";
+                FlattenRoot(Service.BuddyList, "runtime.buddyList", obs, 4);
+                break;
+            case 16:
+                obs.Detail = "runtime.fateTable";
+                FlattenRoot(Service.FateTable, "runtime.fateTable", obs, 4);
+                break;
+            case 17:
+                obs.Detail = "runtime.dutyState";
+                FlattenRoot(Service.DutyState, "runtime.dutyState", obs, 3);
+                break;
+            case 18:
+                obs.Detail = "runtime.gamepadState";
+                FlattenRoot(Service.GamepadState, "runtime.gamepadState", obs, 3);
+                break;
+            case 19:
+                AuditDalamudPluginServices();
+                return;
+            case 20:
+                obs.Detail = "static.territory";
+                TryFlattenRow<Lumina.Excel.Sheets.TerritoryType>(_territory, "static.territory", obs);
+                break;
+        }
+
+        if (obs.Numeric.Count != 0 || obs.Text.Count != 0 || obs.Binary.Count != 0)
+            ProcessObservation(obs, enriched: true);
     }
 
     private void TryFlattenRow<T>(uint rowID, string prefix, ForetellObservation observation) where T : struct, Lumina.Excel.IExcelRow<T>
