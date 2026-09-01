@@ -87,15 +87,15 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Open-world performance hotfix.
+          Emergency native-telemetry quarantine.
 
-          Foretell no longer expands ActorState.OpMove and the continuously changing companion timer as rich observations on every framework frame. Those values were duplicate copies of the existing 4 Hz position stream and rotating typed runtime snapshots; in populated zones the duplicate enrichment created thousands of observations and allocations per minute.
+          The supplied 23:53 dump is an access violation in the NVIDIA user-mode driver nvwgf2umx.dll on its own worker thread while the FFXIV main thread waits in DeviceDX11.PostTick. It contains no Foretell managed frame, so the dump does not prove direct Foretell attribution. It does, however, make any Foretell detour on the VFX/render path unacceptable until its threading model is isolated.
 
-          Native Character telemetry now uses a rotating hard budget of at most six characters and 0.75 ms per 250 ms slice. Coverage remains population-independent and eventually visits every compatible actor, while a crowded open-world zone can no longer make one slice scale with half of all loaded characters.
+          Foretell therefore no longer installs its native actor/static VFX or ObjectEffect hooks. Direct FFXIVClientStructs Character, environment and camera telemetry readers are also quarantined. Raw network IPC, ActorControl, complete ActionEffect and EffectResult sequencing, WorldState operations, typed Dalamud services, semantic casts/statuses/tethers/VFX IDs, movement and the managed Data Fabric remain active.
 
-          Generic Dalamud log messages and UI toasts remain available in telemetry/replay but can no longer start learned mechanic episodes or pollute the encounter timeline. Unbound ambient native VFX remains recorded but no longer starts combat or a mechanic candidate by itself.
+          The quarantined sensors remain implemented but unreachable. They will only return after detours are reduced to bounded primitive capture into a concurrent queue and all interpretation is performed on the framework thread.
 
-          CI now rejects regressions to population-proportional native actor scans, high-frequency movement duplication and diagnostic/UI mechanic triggers. The telemetry contract and full Windows build were validated against the current Dalamud distribution before this release.
+          CI now rejects unconditional native-hook startup and any direct actor/environment/camera read that bypasses the fail-closed gate. The telemetry contract and full Windows build were validated against the current Dalamud distribution before this release.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
