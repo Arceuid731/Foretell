@@ -84,7 +84,7 @@ regex_once(
 # Reformat the confidence fusion and keep the 99% safe gate unreachable from metadata alone.
 regex_once(
     "BossMod/Foretell/ForetellModel.cs",
-    r"""            var empirical = EmpiricalConfidence;\n.*?            return Math\.Clamp\(fused, 0, \.999f\);""",
+    r"""[ \t]*var empirical = EmpiricalConfidence;\n.*?[ \t]*return Math\.Clamp\(fused, 0, \.999f\);""",
     """            var empirical = EmpiricalConfidence;
             if (PriorConfidence <= 0) return empirical;
             if (Observations == 0) return Math.Min(PriorConfidence, .98f);
