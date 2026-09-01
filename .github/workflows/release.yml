@@ -87,19 +87,17 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Startup stability hotfix: Data Fabric detects native function-pointer, pointer, by-ref and by-ref-like members before reflection invocation, and normalizes the uninitialized WorldState clock before any DateTime arithmetic. Initial sampling now completes before Foretell installs hooks/subscriptions, with rollback for later initialization failures. This prevents both the fatal CoreCLR 0x80131506 path and the DateTime underflow seen during first installation without hiding affected capabilities from the coverage audit.
+          Performance and interface hotfix.
 
-          Native data-completeness release. Foretell combines semantic BMR WorldState events, every non-frame WorldState operation, generic Dalamud/runtime state, Lumina metadata, an unconditional passive server/client IPC tap, and direct EventObject plus actor/static VFX lifecycle sensors with full VFX paths.
+          Data Fabric no longer performs its generic reflection sweep as one synchronous half-second spike on the FFXIV framework thread. The 21 independent runtime roots are emitted as rolling GenericFeature observations, one root per 250 ms slice, and generic actor reflection advances one actor per slice. Completeness is preserved over each sweep without letting party, actor or service collections monopolize a frame.
 
-          Raw packet payloads are retained losslessly in Foretell replay. Every payload byte contributes to the compressed hashed learner feature space, so unknown or not-yet-decoded packet fields are not silently discarded. ActionEffect/sequence-linked EffectResult, ActorControl p1..p8, statuses, casts, system logs, map/director events and native object/VFX effects all participate in causal correlation.
+          Time-sensitive native Character data remains sampled at 2 Hz per actor, including both tether slots and progress, timelines, model and transformation state. The actor table is now divided into two alternating 250 ms slices so this cadence no longer means reading every actor on the same frame. Native environment and camera state remain at 2 Hz.
 
-          Native Character snapshots add movement and soft-target state, both tether slots with progress, timeline arrays/speeds, model/skeleton data and transformation timers. Native environment/weather transitions, complete camera matrices/projection state, duty lifecycle, fly text, toast payloads and structured system LogMessage events add independent redundant evidence. Private player chat and unstable pointer addresses remain deliberately excluded.
+          Full runtime dictionaries are no longer duplicated into every semantic observation. Rich payload observations are enriched exactly once instead of being reflected a second time inside the learner. Raw server/client IPC, ActorControl, ActionEffect, sequence-linked EffectResult, VFX paths and all existing semantic/native sensors remain intact.
 
-          Fixed 32-entry sampling and the shared WorldState traversal budget are removed. Independent roots prevent large actor/party collections from starving client, network, environment or camera data. CI protects the telemetry contract, while runtime audits classify every Dalamud plugin service and expose unavailable, truncated or newly introduced sources as unaccounted.
+          Foretell now owns a dedicated interface entry point: the Dalamud main/config buttons and /foretell open the Foretell cockpit and its tabs. The legacy BossMod Reborn configuration remains available separately through /bmr; BMR itself is preserved for later cleanup.
 
-          Foretell still starts from zero encounter knowledge: hand-authored BossModule/state-machine/component/layout/preset answers are excluded. Generic BMR algorithms, geometry/pathfinding/constraint primitives, decoders and raw sensors remain valid encounter-agnostic machinery.
-
-          ACT/IINACT are not required for telemetry. Recommended first run remains Observe, then Compare, then Hybrid after reviewing learned mechanics and the Data Fabric coverage audit.
+          Foretell still starts from zero encounter knowledge. Hand-authored BossModule, state-machine, component, layout and preset answers remain excluded; only encounter-agnostic raw, semantic, native and metadata evidence feeds learning.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
