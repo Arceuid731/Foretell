@@ -87,17 +87,15 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Native telemetry safety hotfix.
+          Open-world performance hotfix.
 
-          The generic Data Fabric now fails closed before touching external live implementations. Arbitrary Dalamud and FFXIVClientStructs property getters, fields and enumerators are no longer traversed reflectively: these surfaces can cross into unmanaged client code, where a stopwatch deadline and managed exception handler cannot contain an access violation. BossMod/Foretell managed DTOs and Lumina generated rows retain their bounded rolling traversal.
+          Foretell no longer expands ActorState.OpMove and the continuously changing companion timer as rich observations on every framework frame. Those values were duplicate copies of the existing 4 Hz position stream and rotating typed runtime snapshots; in populated zones the duplicate enrichment created thousands of observations and allocations per minute.
 
-          Condition and keyboard state now use explicit typed Dalamud indexers. Other external services remain classified in telemetry coverage and require dedicated typed extractors instead of unsafe implementation reflection.
+          Native Character telemetry now uses a rotating hard budget of at most six characters and 0.75 ms per 250 ms slice. Coverage remains population-independent and eventually visits every compatible actor, while a crowded open-world zone can no longer make one slice scale with half of all loaded characters.
 
-          High-frequency Character sampling no longer invokes the native MoveController IsFlying/IsDiving functions. Stable movement fields remain recorded, together with native tethers, timelines, models and transformation state.
+          Generic Dalamud log messages and UI toasts remain available in telemetry/replay but can no longer start learned mechanic episodes or pollute the encounter timeline. Unbound ambient native VFX remains recorded but no longer starts combat or a mechanic candidate by itself.
 
-          CI now rejects any regression that enumerates an external live implementation before the assembly allowlist, reintroduces reflective enum indexers, or calls the removed native movement functions. The full Windows build was validated against the current Dalamud distribution before this release.
-
-          The supplied 22:35 crash dump shows an FFXIV Framework native callback but no Foretell managed frame; it also confirms that 0.5.3 was installed at crash time and 0.5.4 was fetched only after restart. This release therefore hardens the unsafe surfaces proven by earlier Foretell FlattenObject stacks without claiming a false one-to-one attribution for that final crash.
+          CI now rejects regressions to population-proportional native actor scans, high-frequency movement duplication and diagnostic/UI mechanic triggers. The telemetry contract and full Windows build were validated against the current Dalamud distribution before this release.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
