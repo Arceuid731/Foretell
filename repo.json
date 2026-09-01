@@ -23,9 +23,9 @@
     "IsTestingExclusive": false,
     "Punchline": "Adaptive encounter intelligence: observe, learn, predict.",
     "AcceptsFeedback": true,
-    "AssemblyVersion": "0.3.0.0",
-    "DownloadLinkInstall": "https://github.com/Arceuid731/Foretell/releases/download/v0.3.0/Foretell.zip",
-    "DownloadLinkUpdate": "https://github.com/Arceuid731/Foretell/releases/download/v0.3.0/Foretell.zip",
-    "DownloadLinkTesting": "https://github.com/Arceuid731/Foretell/releases/download/v0.3.0/Foretell.zip"
+    "AssemblyVersion": "0.4.0.0",
+    "DownloadLinkInstall": "https://github.com/Arceuid731/Foretell/releases/download/v0.4.0/Foretell.zip",
+    "DownloadLinkUpdate": "https://github.com/Arceuid731/Foretell/releases/download/v0.4.0/Foretell.zip",
+    "DownloadLinkTesting": "https://github.com/Arceuid731/Foretell/releases/download/v0.4.0/Foretell.zip"
   }
 ]
