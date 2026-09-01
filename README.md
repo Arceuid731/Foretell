@@ -4,6 +4,8 @@ Foretell is an experimental adaptive encounter-intelligence plugin for FFXIV, bu
 
 It keeps the mature BMR world-state/rendering stack while adding local multi-signal observation, mechanic inference, confidence/ambiguity tracking, persistent contextual encounter memory, timeline learning, Replay Lab diagnostics, and predictive world/radar/text guidance.
 
+For cast actions, Foretell also consumes useful local FFXIV client metadata as an immediate prior: `CastType`, `EffectRange`, `XAxisModifier`, `TargetArea`, `Omen`/VFX information and actor hitbox. These priors can make ordinary telegraphs useful from the first cast, but they are never treated as unquestionable ground truth: observed outcomes can confirm, refine or override them, and metadata alone cannot reach the 99% safe-guidance threshold.
+
 ## Dalamud custom repository
 
 `https://raw.githubusercontent.com/Arceuid731/Foretell/main/repo.json`
@@ -17,6 +19,17 @@ It keeps the mature BMR world-state/rendering stack while adding local multi-sig
 5. Move to **Hybrid** when the learned results match the fight. Use pure **Foretell** only when you intentionally want to hide legacy BMR encounter presentation.
 
 The in-game **Help** tab explains every Foretell mode, confidence threshold, data source, local file and slash command.
+
+## Confidence visualization
+
+Foretell uses the same confidence encoding on the world overlay and mini radar. The actual inferred circle, donut, cone, rectangle or cross is drawn with a color that represents **reliability**, not damage severity:
+
+- cyan/blue — early visual hypothesis
+- yellow — learned
+- orange — high-confidence warning-grade inference
+- red — safe-guidance-grade danger (at the configured strict threshold)
+
+The radar also prints confidence percentages. Safe-position suggestions remain advisory and are only eligible at the strict safe-confidence gate.
 
 ## Foretell modes
 
@@ -43,7 +56,7 @@ The in-game **Help** tab explains every Foretell mode, confidence threshold, dat
 
 ## Replay Lab
 
-Foretell records a compact normalized event stream locally. Replay Lab re-injects that stream through the same learner in an isolated temporary store, reports what was rediscovered/ambiguous/rejected, then restores the live learned memory. It is an inference replay, not a video or 3D recreation of FFXIV.
+Foretell records a compact normalized event stream locally. Replay Lab re-injects that stream through the same learner in an isolated temporary store, including the same client-metadata prior stage used during live play. It reports what was rediscovered/ambiguous/rejected, then restores the live learned memory. It is an inference replay, not a video or 3D recreation of FFXIV.
 
 This makes recorded pulls reusable as a regression corpus while the inference engine evolves.
 
