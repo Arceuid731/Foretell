@@ -1,0 +1,29 @@
+name: Apply Foretell Raw Surfaces v5
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'raw-surfaces-v5.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply exhaustive raw telemetry migration
+        run: python .github/scripts/apply_raw_surfaces_v5.py
+      - name: Commit engine changes
+        shell: bash
+        run: |
+          git config user.name 'Foretell Raw Telemetry Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add BossMod/Foretell BossMod/Data/NetworkState.cs BossMod/Framework/WorldStateGameSync.cs
+          git commit -m 'Ingest exhaustive raw event and network telemetry'
+          git pull --rebase origin main
+          git push origin HEAD:main
