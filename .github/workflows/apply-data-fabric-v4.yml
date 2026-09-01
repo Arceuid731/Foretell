@@ -1,0 +1,29 @@
+name: Apply Foretell Data Fabric v4
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'data-fabric-v4.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply Data Fabric migration
+        run: python .github/scripts/apply_data_fabric_v4.py
+      - name: Commit engine changes
+        shell: bash
+        run: |
+          git config user.name 'Foretell Data Fabric Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add BossMod/Foretell
+          git commit -m 'Add exhaustive generic Data Fabric ingestion'
+          git pull --rebase origin main
+          git push origin HEAD:main
