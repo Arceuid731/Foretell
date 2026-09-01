@@ -129,6 +129,11 @@ public sealed partial class ForetellEngine
                 DrawDashboard();
                 ImGui.EndTabItem();
             }
+            if (ImGui.BeginTabItem("Settings"))
+            {
+                DrawInspectorSettings();
+                ImGui.EndTabItem();
+            }
             if (ImGui.BeginTabItem("Learned mechanics"))
             {
                 DrawInspectorMechanics();
@@ -166,12 +171,16 @@ public sealed partial class ForetellEngine
 
     private void DrawInspectorHeader()
     {
-        ImGui.TextUnformatted($"Foretell is {(_cfg.EnableLearning ? "LEARNING" : "READ-ONLY")} | Territory {_territory} | Session {_session.ID}");
-        ImGui.TextUnformatted($"Current mode: {_cfg.Mode} - {ModeDescription(_cfg.Mode)}");
-        ImGui.TextUnformatted($"Live session: {_session.Observations:N0} observations | {_session.MechanicsFinalized} mechanic candidates reviewed | {_session.AmbiguousMechanics} ambiguous");
-        ImGui.Separator();
+        if (ImGui.BeginTable("ForetellHeader", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV))
+        {
+            DrawMetricCell(_cfg.EnableLearning ? "LEARNING" : "READ-ONLY", "Engine");
+            DrawMetricCell(_territory.ToString(), "Territory");
+            DrawMetricCell(_session.Observations.ToString("N0"), "Observations");
+            DrawMetricCell(_session.MechanicsFinalized.ToString(), "Reviewed");
+            ImGui.EndTable();
+        }
 
-        ImGui.TextUnformatted("Mode:");
+        ImGui.TextUnformatted("Mode");
         ImGui.SameLine();
         DrawModeButton(ForetellMode.Legacy);
         ImGui.SameLine();
@@ -183,57 +192,43 @@ public sealed partial class ForetellEngine
         ImGui.SameLine();
         DrawModeButton(ForetellMode.Foretell);
 
-        ImGui.TextUnformatted("Inspect data from:");
         ImGui.SameLine();
-        if (ImGui.Button($"Current territory ({_territory})")) _inspectorTerritory = _territory;
-        foreach (var id in _store.Encounters.Keys.Where(id => id != _territory).OrderByDescending(id => _store.Encounters[id].LastSeen).Take(6))
+        ImGui.TextUnformatted("  Territory");
+        ImGui.SameLine();
+        if (ImGui.Button($"Current ({_territory})"))
+            _inspectorTerritory = _territory;
+        foreach (var id in _store.Encounters.Keys.Where(id => id != _territory).OrderByDescending(id => _store.Encounters[id].LastSeen).Take(4))
         {
             ImGui.SameLine();
-            if (ImGui.Button($"{id}##territory{id}")) _inspectorTerritory = id;
+            if (ImGui.Button($"{id}##territory{id}"))
+                _inspectorTerritory = id;
         }
         ImGui.Separator();
+    }
+
+    private static void DrawMetricCell(string value, string label)
+    {
+        ImGui.TableNextColumn();
+        ImGui.TextUnformatted(value);
+        ImGui.TextDisabled(label);
     }
 
     private void DrawModeButton(ForetellMode mode)
     {
         var selected = _cfg.Mode == mode;
-        if (ImGui.Button($"{(selected ? "[x]" : "[ ]")} {mode}##mode{mode}")) SetMode(mode);
+        if (ImGui.Button($"{(selected ? "[x]" : "[ ]")} {mode}##mode{mode}"))
+            SetMode(mode);
     }
 
     private void DrawDashboard()
     {
-        ImGui.TextUnformatted("QUICK START");
-        ImGui.TextUnformatted("1. Start in Observe on a duty you know. Foretell watches silently and records evidence.");
-        ImGui.TextUnformatted("2. After a few pulls/runs, switch to Compare. Check whether Foretell agrees with BMR and with what you saw.");
-        ImGui.TextUnformatted("3. Use Hybrid once the learned mechanics look sane. Pure Foretell is the final validation mode.");
-        ImGui.Separator();
-
         DrawRecommendedNextStep();
-        ImGui.Separator();
-
-        ImGui.TextUnformatted("CORE FEATURES");
-        var changed = false;
-        changed |= ImGui.Checkbox("Adaptive learning##ftlearn", ref _cfg.EnableLearning);
-        ImGui.SameLine();
-        changed |= ImGui.Checkbox("Local ML classifier##ftml", ref _cfg.EnableML);
-        ImGui.SameLine();
-        changed |= ImGui.Checkbox("Record replay stream##ftrecord", ref _cfg.RecordReplay);
-        changed |= ImGui.Checkbox("World overlay##ftworld", ref _cfg.WorldOverlay);
-        ImGui.SameLine();
-        changed |= ImGui.Checkbox("Mini radar##ftradar", ref _cfg.MiniRadar);
-        ImGui.SameLine();
-        changed |= ImGui.Checkbox("Text hints##fttext", ref _cfg.TextHints);
-        changed |= ImGui.Checkbox("Safe-position suggestions##ftsafe", ref _cfg.SafePositionSuggestions);
-        if (changed) _cfg.Modified.Fire();
-
-        ImGui.TextUnformatted("Learning OFF = Foretell still observes/displays existing memory, but does not update learned mechanics or the ML model.");
-        ImGui.TextUnformatted("Replay recording is local only. Safe-position suggestions never move your character.");
-        ImGui.Separator();
 
         if (!_store.Encounters.TryGetValue(_inspectorTerritory, out var encounter))
         {
-            ImGui.TextUnformatted("NO DATA YET");
-            ImGui.TextUnformatted("Enter content with learning enabled. Casts, hits, statuses, icons, tethers, VFX, event objects, map effects and movement will appear here automatically.");
+            ImGui.Separator();
+            ImGui.TextUnformatted("No encounter data yet");
+            ImGui.TextWrapped("Enter content with learning enabled. Raw packets, casts, effects, statuses, VFX, tethers, actor state and movement are captured automatically.");
             return;
         }
 
@@ -243,22 +238,110 @@ public sealed partial class ForetellEngine
         var visual = encounter.Mechanics.Values.Count(m => m.Confidence >= visualCut);
         var warnings = encounter.Mechanics.Values.Count(m => m.Confidence >= warningCut);
         var safe = encounter.Mechanics.Values.Count(m => m.Confidence >= safeCut);
-        var ambiguous = encounter.Mechanics.Values.Count(m => m.AmbiguousSamples > 0);
-
-        ImGui.TextUnformatted($"TERRITORY {_inspectorTerritory} SUMMARY");
-        ImGui.TextUnformatted($"{encounter.Sessions} sessions | {encounter.Pulls} detected pulls | {encounter.Sources.Count} observed sources | {encounter.Mechanics.Count} mechanic candidates");
-        ImGui.TextUnformatted($"Confidence gates: {visual} visualizable (>= {_cfg.VisualConfidence:F0}%) | {warnings} warning-grade (>= {_cfg.WarningConfidence:F0}%) | {safe} safe-guidance-grade (>= {_cfg.SafeConfidence:F0}%) | {ambiguous} with conflicting evidence");
-        ImGui.TextUnformatted("Overlay/radar colors encode reliability: cyan = early/visual -> yellow = learned -> orange = high -> red = safe-guidance-grade. They do NOT encode damage severity.");
-        ImGui.TextUnformatted($"ML updates: {_store.ML.Updates:N0} | current predictions: {_predictions.Count} | active candidates awaiting outcome: {_episodes.Values.Count(e => !e.Finalized)}");
         var coverage = _store.Coverage;
-        ImGui.TextUnformatted($"DATA FABRIC: {coverage.Discovered} discovered | {coverage.Ingested} ingested | {coverage.Used} used by learner | {coverage.Excluded} explicitly excluded | {coverage.Unaccounted} UNACCOUNTED");
-        if (coverage.Unaccounted != 0) ImGui.TextUnformatted("WARNING: Data Fabric discovered fields that are neither ingested nor explicitly excluded. Export diagnostics and treat this build as incomplete.");
-        ImGui.TextUnformatted($"Last inference: {_lastEvidence}");
-        ImGui.Separator();
 
-        ImGui.TextUnformatted("BEST LEARNED MECHANICS");
-        foreach (var mechanic in encounter.Mechanics.Values.OrderByDescending(m => m.Confidence).Take(10))
-            ImGui.TextUnformatted($"{ConfidenceBadge(mechanic.Confidence)} {mechanic.Kind,-14} {mechanic.Geometry,-10} {mechanic.Confidence,6:P0} | seen {mechanic.Observations}x | source OID {mechanic.SourceOID:X} | trigger {mechanic.TriggerKind} {mechanic.TriggerID:X}");
+        ImGui.Separator();
+        if (ImGui.BeginTable("ForetellSummary", 5, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV))
+        {
+            DrawMetricCell(encounter.Sessions.ToString(), "Sessions");
+            DrawMetricCell(encounter.Pulls.ToString(), "Pulls");
+            DrawMetricCell(encounter.Sources.Count.ToString(), "Sources");
+            DrawMetricCell(encounter.Mechanics.Count.ToString(), "Candidates");
+            DrawMetricCell(_predictions.Count.ToString(), "Live predictions");
+            ImGui.EndTable();
+        }
+        if (ImGui.BeginTable("ForetellConfidence", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV))
+        {
+            DrawMetricCell(visual.ToString(), $">= {_cfg.VisualConfidence:F0}% visual");
+            DrawMetricCell(warnings.ToString(), $">= {_cfg.WarningConfidence:F0}% warning");
+            DrawMetricCell(safe.ToString(), $">= {_cfg.SafeConfidence:F0}% safe");
+            DrawMetricCell(_store.ML.Updates.ToString("N0"), "ML updates");
+            ImGui.EndTable();
+        }
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("Data Fabric");
+        ImGui.SameLine();
+        ImGui.TextUnformatted($"{coverage.Ingested}/{coverage.Discovered} ingested  |  {coverage.Used} used  |  {coverage.Excluded} excluded  |  {coverage.Unaccounted} unaccounted");
+        ImGui.TextUnformatted($"Live scanner: {_fabricDeferredTraversals:N0} yielded slices  |  {_fabricQuarantinedGetters:N0} slow getters quarantined");
+        if (coverage.Unaccounted != 0)
+            ImGui.TextWrapped("Some discovered fields still require typed ingestion. Raw, semantic and native sensors continue independently.");
+        ImGui.TextWrapped($"Last inference: {_lastEvidence}");
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("Best learned mechanics");
+        if (ImGui.BeginTable("ForetellBestMechanics", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Confidence");
+            ImGui.TableSetupColumn("Kind");
+            ImGui.TableSetupColumn("Geometry");
+            ImGui.TableSetupColumn("Seen");
+            ImGui.TableSetupColumn("Source");
+            ImGui.TableSetupColumn("Trigger");
+            ImGui.TableHeadersRow();
+            foreach (var mechanic in encounter.Mechanics.Values.OrderByDescending(m => m.Confidence).Take(12))
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted($"{ConfidenceBadge(mechanic.Confidence)} {mechanic.Confidence:P0}");
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(mechanic.Kind.ToString());
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(mechanic.Geometry.ToString());
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(mechanic.Observations.ToString());
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted($"{mechanic.SourceOID:X8}");
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted($"{mechanic.TriggerKind} {mechanic.TriggerID:X}");
+            }
+            ImGui.EndTable();
+        }
+    }
+
+    private void DrawInspectorSettings()
+    {
+        var changed = false;
+
+        if (ImGui.CollapsingHeader("Learning and storage", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            changed |= ImGui.Checkbox("Adaptive learning", ref _cfg.EnableLearning);
+            changed |= ImGui.Checkbox("Local ML classifier", ref _cfg.EnableML);
+            changed |= ImGui.Checkbox("Record local replay stream", ref _cfg.RecordReplay);
+            ImGui.TextDisabled("All learning and replay data stays local.");
+        }
+
+        if (ImGui.CollapsingHeader("Combat presentation", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            changed |= ImGui.Checkbox("World-space overlay", ref _cfg.WorldOverlay);
+            changed |= ImGui.Checkbox("Text hints", ref _cfg.TextHints);
+            changed |= ImGui.Checkbox("Safe-position suggestions", ref _cfg.SafePositionSuggestions);
+            changed |= ImGui.SliderFloat("Visual threshold (%)", ref _cfg.VisualConfidence, 50, 100);
+            changed |= ImGui.SliderFloat("Warning threshold (%)", ref _cfg.WarningConfidence, 50, 100);
+            changed |= ImGui.SliderFloat("Safe threshold (%)", ref _cfg.SafeConfidence, 50, 100);
+            changed |= ImGui.SliderInt("Maximum simultaneous mechanics", ref _cfg.MaxRenderedMechanics, 1, 32);
+            _cfg.WarningConfidence = Math.Max(_cfg.VisualConfidence, _cfg.WarningConfidence);
+            _cfg.SafeConfidence = Math.Max(_cfg.WarningConfidence, _cfg.SafeConfidence);
+        }
+
+        if (ImGui.CollapsingHeader("Mini radar", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            changed |= ImGui.Checkbox("Show mini radar", ref _cfg.MiniRadar);
+            changed |= ImGui.Checkbox("Unlock radar to move it", ref _cfg.RadarUnlocked);
+            changed |= ImGui.SliderFloat("Radar size (pixels)", ref _cfg.RadarSize, 100, 500);
+            changed |= ImGui.SliderFloat("World radius (yalms)", ref _cfg.RadarWorldRadius, 10, 80);
+            if (ImGui.Button("Reset radar to top-right"))
+            {
+                _cfg.RadarPositionX = -1;
+                _cfg.RadarPositionY = -1;
+                changed = true;
+            }
+            ImGui.SameLine();
+            ImGui.TextDisabled(_cfg.RadarUnlocked ? "Drag the radar title bar, then lock it here." : "Locked: radar ignores mouse input.");
+        }
+
+        if (changed)
+            _cfg.Modified.Fire();
     }
 
     private void DrawRecommendedNextStep()
@@ -267,17 +350,18 @@ public sealed partial class ForetellEngine
         var high = encounter?.Mechanics.Values.Count(m => m.Confidence >= _cfg.WarningConfidence / 100f) ?? 0;
         var recommendation = _cfg.Mode switch
         {
-            ForetellMode.Legacy => "Foretell is effectively hidden. Switch to Observe if you want it to start learning without changing your combat UI.",
-            ForetellMode.Observe when learned < 3 => "Stay in Observe for now. Foretell needs more repeated evidence before comparison is useful.",
-            ForetellMode.Observe => $"You already have {learned} learned candidates ({high} high-confidence). Compare mode is the useful next step.",
-            ForetellMode.Compare when high < 3 => "Keep Compare enabled and review the Learned mechanics tab. More evidence is useful before relying on adaptive guidance.",
-            ForetellMode.Compare => $"You have {high} high-confidence candidates. If the overlay matches the real mechanics, Hybrid is ready for practical testing.",
-            ForetellMode.Hybrid => "Use this as the normal validation mode: Foretell guides you while BMR remains visible as a reference/safety net.",
-            ForetellMode.Foretell => "Pure Foretell is active. Use this only after Compare/Hybrid look reliable for the encounter; review ambiguous mechanics after the run.",
+            ForetellMode.Legacy => "Foretell is hidden. Switch to Observe to learn without changing the combat UI.",
+            ForetellMode.Observe when learned < 3 => "Stay in Observe: more repeated evidence is needed before comparison is useful.",
+            ForetellMode.Observe => $"{learned} candidates learned, including {high} high-confidence. Compare is the useful next step.",
+            ForetellMode.Compare when high < 3 => "Keep Compare enabled and review Learned mechanics while evidence accumulates.",
+            ForetellMode.Compare => $"{high} high-confidence candidates. If the overlay matches the fight, Hybrid is ready to test.",
+            ForetellMode.Hybrid => "Validation mode: Foretell guides while BMR remains visible as a reference.",
+            ForetellMode.Foretell => "Pure Foretell is active. Review ambiguous mechanics after the run.",
             _ => ""
         };
-        ImGui.TextUnformatted("RECOMMENDED NEXT STEP");
-        ImGui.TextUnformatted(recommendation);
+        ImGui.TextUnformatted("Recommended next step");
+        ImGui.SameLine();
+        ImGui.TextWrapped(recommendation);
     }
 
     private static string ConfidenceBadge(float confidence)
@@ -330,15 +414,33 @@ public sealed partial class ForetellEngine
     {
         if (!_store.Encounters.TryGetValue(_inspectorTerritory, out var encounter) || encounter.Sources.Count == 0)
         {
-            ImGui.TextUnformatted("No mobs/event sources observed yet.");
+            ImGui.TextUnformatted("No mobs or event sources observed yet.");
             return;
         }
-        ImGui.TextUnformatted("A source is an enemy, add, event object or environment channel Foretell has observed. OID is the stable game object type ID, not the temporary instance ID.");
-        ImGui.Separator();
-        foreach (var source in encounter.Sources.Values.OrderByDescending(s => s.Casts).ThenByDescending(s => s.Signals).Take(250))
+
+        if (ImGui.BeginTable("ForetellSources", 7, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
         {
-            var learned = encounter.Mechanics.Values.Count(m => m.SourceOID == source.OID);
-            ImGui.TextUnformatted($"OID {source.OID:X8} | {source.Kind,-11} | {source.Observations,6} observations | {source.Casts,4} casts | {source.Signals,4} signals | {learned,3} learned mechanics | deaths {source.Deaths}");
+            ImGui.TableSetupColumn("OID");
+            ImGui.TableSetupColumn("Kind");
+            ImGui.TableSetupColumn("Observations");
+            ImGui.TableSetupColumn("Casts");
+            ImGui.TableSetupColumn("Signals");
+            ImGui.TableSetupColumn("Mechanics");
+            ImGui.TableSetupColumn("Deaths");
+            ImGui.TableHeadersRow();
+            foreach (var source in encounter.Sources.Values.OrderByDescending(x => x.Casts).ThenByDescending(x => x.Signals).Take(250))
+            {
+                var learned = encounter.Mechanics.Values.Count(m => m.SourceOID == source.OID);
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{source.OID:X8}");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Kind.ToString());
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Observations.ToString("N0"));
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Casts.ToString("N0"));
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Signals.ToString("N0"));
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(learned.ToString());
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Deaths.ToString());
+            }
+            ImGui.EndTable();
         }
     }
 
@@ -349,20 +451,57 @@ public sealed partial class ForetellEngine
             ImGui.TextUnformatted("No timeline data yet.");
             return;
         }
-        ImGui.TextUnformatted("Foretell learns repeated signal order and timing. Stability rises when the same transition repeats with similar timing.");
-        ImGui.TextUnformatted($"Learned phase buckets: {encounter.Phases.Count} | learned transitions: {encounter.Timeline.Count}");
-        ImGui.Separator();
-        foreach (var edge in encounter.Timeline.Values.OrderByDescending(e => e.Count).ThenByDescending(e => e.Stability).Take(180))
-            ImGui.TextUnformatted($"Phase {edge.Phase} | {edge.From} -> {edge.To} | delay {edge.MeanDelay:F2}s +/- {edge.StdDev:F2}s | seen {edge.Count}x | stability {edge.Stability:P0}");
+
+        ImGui.TextUnformatted($"{encounter.Phases.Count} phase buckets  |  {encounter.Timeline.Count} learned transitions");
+        if (ImGui.BeginTable("ForetellTimeline", 7, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Phase");
+            ImGui.TableSetupColumn("From");
+            ImGui.TableSetupColumn("To");
+            ImGui.TableSetupColumn("Delay");
+            ImGui.TableSetupColumn("Deviation");
+            ImGui.TableSetupColumn("Seen");
+            ImGui.TableSetupColumn("Stability");
+            ImGui.TableHeadersRow();
+            foreach (var edge in encounter.Timeline.Values.OrderByDescending(x => x.Count).ThenByDescending(x => x.Stability).Take(180))
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(edge.Phase.ToString());
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(edge.From);
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(edge.To);
+                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{edge.MeanDelay:F2}s");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted($"+/- {edge.StdDev:F2}s");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(edge.Count.ToString());
+                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{edge.Stability:P0}");
+            }
+            ImGui.EndTable();
+        }
     }
 
     private void DrawInspectorObservations()
     {
-        ImGui.TextUnformatted("RAW LIVE FEED - useful when Foretell missed or misclassified something. The last 100 normalized observations are kept in UI memory.");
-        ImGui.TextUnformatted("Position samples are intentionally frequent; combat signals such as CastStart, Icon, VFX, Tether, Status, MapEffect and DirectorUpdate are usually the interesting rows.");
-        ImGui.Separator();
-        foreach (var observation in _session.Recent.Reverse().Take(80))
-            ImGui.TextUnformatted($"{observation.At:T}.{observation.At.Millisecond:000} | {observation.Kind,-22} | source OID {observation.ActorOID:X8} | ID {observation.PrimaryID:X} | target {observation.TargetID:X} | v1 {observation.Value1:F2} | {observation.Detail}");
+        ImGui.TextUnformatted("Latest normalized observations (raw binary payloads remain in Replay Lab)");
+        if (ImGui.BeginTable("ForetellLiveFeed", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Time");
+            ImGui.TableSetupColumn("Kind");
+            ImGui.TableSetupColumn("Source");
+            ImGui.TableSetupColumn("ID");
+            ImGui.TableSetupColumn("Target");
+            ImGui.TableSetupColumn("Detail");
+            ImGui.TableHeadersRow();
+            foreach (var observation in _session.Recent.Reverse().Take(80))
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{observation.At:T}.{observation.At.Millisecond:000}");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(observation.Kind.ToString());
+                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{observation.ActorOID:X8}");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{observation.PrimaryID:X}");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{observation.TargetID:X}");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(observation.Detail);
+            }
+            ImGui.EndTable();
+        }
     }
 
     private void DrawInspectorReplay()
@@ -401,47 +540,51 @@ public sealed partial class ForetellEngine
 
     private void DrawInspectorHelp()
     {
-        ImGui.TextUnformatted("WHAT IS FORETELL?");
-        ImGui.TextUnformatted("Foretell is the adaptive layer added on top of BossMod Reborn. BMR supplies mature FFXIV world-state/rendering infrastructure; Foretell observes encounters, correlates signals and outcomes, learns reusable mechanic candidates, and only surfaces guidance when confidence passes configured gates.");
-        ImGui.Separator();
+        if (ImGui.CollapsingHeader("How Foretell works", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            ImGui.BulletText("Observe raw, semantic and native game evidence.");
+            ImGui.BulletText("Correlate signals with effects, movement, statuses and deaths.");
+            ImGui.BulletText("Surface guidance only after confidence gates are met.");
+            ImGui.BulletText("Never import hand-authored encounter answers.");
+        }
 
-        ImGui.TextUnformatted("MODES");
-        foreach (var mode in Enum.GetValues<ForetellMode>())
-            ImGui.TextUnformatted($"{mode,-8} - {ModeDescription(mode)}");
-        ImGui.Separator();
+        if (ImGui.CollapsingHeader("Modes", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            foreach (var mode in Enum.GetValues<ForetellMode>())
+                ImGui.TextUnformatted($"{mode,-8}  {ModeDescription(mode)}");
+        }
 
-        ImGui.TextUnformatted("CONFIDENCE / SAFETY");
-        ImGui.TextUnformatted($"Below {_cfg.VisualConfidence:F0}%: learning only, normally hidden from combat presentation.");
-        ImGui.TextUnformatted($"{_cfg.VisualConfidence:F0}% to {_cfg.WarningConfidence:F0}%: may be visualized as a learned hypothesis, not treated as reliable warning guidance.");
-        ImGui.TextUnformatted($"{_cfg.WarningConfidence:F0}% to {_cfg.SafeConfidence:F0}%: high-confidence warning-grade inference.");
-        ImGui.TextUnformatted($"At least {_cfg.SafeConfidence:F0}%: eligible for safe-position guidance. This intentionally uses an extremely high Never Guess Lethal threshold.");
-        ImGui.TextUnformatted("World/radar color encodes confidence, not damage: cyan -> yellow -> orange -> red as reliability increases. The radar also prints the percentage.");
-        ImGui.Separator();
+        if (ImGui.CollapsingHeader("Confidence and safety"))
+        {
+            ImGui.BulletText($"Below {_cfg.VisualConfidence:F0}%: learning only.");
+            ImGui.BulletText($"{_cfg.VisualConfidence:F0}-{_cfg.WarningConfidence:F0}%: visible hypothesis.");
+            ImGui.BulletText($"{_cfg.WarningConfidence:F0}-{_cfg.SafeConfidence:F0}%: warning-grade.");
+            ImGui.BulletText($"At least {_cfg.SafeConfidence:F0}%: eligible for safe-position guidance.");
+            ImGui.TextDisabled("Cyan -> yellow -> orange -> red encodes confidence, not damage.");
+        }
 
-        ImGui.TextUnformatted("WHAT FORETELL OBSERVES");
-        ImGui.TextUnformatted("Casts and hit targets; statuses; icons; raw actor/static VFX lifecycle and paths; both native tether slots and progress; actor lifecycle/targetability/model state; event objects; action timelines; NPC yells; map/director events; party positions and displacement.");
-        ImGui.TextUnformatted("For cast actions Foretell also reads local client Action metadata (CastType, EffectRange, XAxisModifier, TargetArea, Omen/VFX and actor hitbox) as a prior before outcome evidence is available.");
-        ImGui.TextWrapped("Data Fabric additionally flattens independent structured WorldState/runtime roots, full event payloads and relevant Lumina rows. Native Character movement, timeline, model and transformation containers, environment/weather transitions, complete camera state, duty/fly-text/toast/system-log signals and every classified Dalamud gameplay service feed the same hashed learner space.");
-        ImGui.TextWrapped("Encounter-authored BossModule/state-machine/component/layout/preset knowledge is explicitly excluded. The service and field audits expose anything new or unreachable as unaccounted instead of silently claiming completeness.");
-        ImGui.TextUnformatted($"Coverage audit right now: {_store.Coverage.Discovered} discovered / {_store.Coverage.Ingested} ingested / {_store.Coverage.Used} used / {_store.Coverage.Excluded} excluded / {_store.Coverage.Unaccounted} unaccounted.");
-        ImGui.TextUnformatted("Learning is contextual by territory, source OID and trigger, so the same numeric signal does not automatically mean the same mechanic everywhere.");
-        ImGui.Separator();
+        if (ImGui.CollapsingHeader("Telemetry coverage"))
+        {
+            ImGui.TextWrapped("Casts, full ActionEffect and EffectResult sequences, statuses, icons, VFX paths, both native tether slots, actors, event objects, timelines, map/director state, environment, camera, IPC, ActorControl and structured Dalamud signals feed the learner.");
+            ImGui.TextUnformatted($"{_store.Coverage.Discovered} discovered  |  {_store.Coverage.Ingested} ingested  |  {_store.Coverage.Used} used  |  {_store.Coverage.Excluded} excluded  |  {_store.Coverage.Unaccounted} unaccounted");
+            ImGui.TextUnformatted($"{_fabricDeferredTraversals:N0} budget yields  |  {_fabricQuarantinedGetters:N0} slow generic getters quarantined");
+        }
 
-        ImGui.TextUnformatted("COMMANDS");
-        ImGui.TextUnformatted("/foretell - toggle this Foretell cockpit");
-        ImGui.TextUnformatted("/foretell inspect  (or stats/debug) - open this cockpit");
-        ImGui.TextUnformatted("/foretell mode observe|compare|hybrid|foretell|legacy - change presentation mode");
-        ImGui.TextUnformatted("/foretell learning on|off - enable/disable mutation of learned memory");
-        ImGui.TextUnformatted("/foretell record on|off - enable/disable local normalized replay recording");
-        ImGui.TextUnformatted("/foretell replay - re-run the latest Foretell replay through an isolated learner sandbox");
-        ImGui.TextUnformatted("/foretell export - write a diagnostics snapshot for review/debugging");
-        ImGui.TextUnformatted("/foretell save - force-save learned memory now");
-        ImGui.TextUnformatted("/foretell help - print command summary and open this cockpit");
-        ImGui.Separator();
+        if (ImGui.CollapsingHeader("Commands"))
+        {
+            ImGui.BulletText("/foretell - toggle cockpit");
+            ImGui.BulletText("/foretell mode observe|compare|hybrid|foretell|legacy");
+            ImGui.BulletText("/foretell learning on|off");
+            ImGui.BulletText("/foretell record on|off");
+            ImGui.BulletText("/foretell replay | export | save");
+            ImGui.BulletText("/bmr - open the separate legacy BMR interface");
+        }
 
-        ImGui.TextUnformatted("FILES / PRIVACY");
-        ImGui.TextUnformatted("foretell-memory.json contains persistent local learned memory. foretell-replays/*.jsonl contains normalized and raw-binary local event streams. Foretell does not send these to a remote API.");
-        ImGui.TextWrapped("Structured native system LogMessage events are recorded, but private player chat is deliberately not captured. Process pointer addresses are also excluded because they are layout noise, not gameplay evidence.");
-        ImGui.TextUnformatted("The Replay Lab uses a temporary sandbox store and restores live memory after analysis.");
+        if (ImGui.CollapsingHeader("Files and privacy"))
+        {
+            ImGui.BulletText("foretell-memory.json: persistent learned memory.");
+            ImGui.BulletText("foretell-replays/*.jsonl: normalized and raw-binary local streams.");
+            ImGui.BulletText("No remote API, private player chat or process pointer addresses.");
+        }
     }
 }

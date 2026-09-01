@@ -50,6 +50,10 @@ public sealed class ConfigUI : IDisposable
         for (var i = 0; i < nodes2.Count; ++i)
         {
             var n = nodes2[i];
+            // Foretell owns a dedicated cockpit/settings surface. Keep its configuration persisted in ConfigRoot,
+            // but do not mix it into the legacy BossMod Reborn settings tree.
+            if (n is Foretell.ForetellConfig)
+                continue;
             nodes[n.GetType()] = new(n);
         }
 

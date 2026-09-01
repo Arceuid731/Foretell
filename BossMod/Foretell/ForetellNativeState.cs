@@ -26,7 +26,7 @@ public sealed partial class ForetellEngine
 
     private unsafe void EnrichNativeCharacter(ForetellObservation observation, Actor actor)
     {
-        if ((actor.InstanceID >> 32) != 0)
+        if ((actor.InstanceID >> 32) != 0 || !HasNativeCharacterLayout(actor.Type))
             return;
         if (Service.ObjectTable.SearchById((uint)actor.InstanceID) is not ICharacter dalamudCharacter)
             return;
@@ -120,6 +120,11 @@ public sealed partial class ForetellEngine
         StoreNative(observation, $"{p}.transformation.npcEquipId", transformation.NpcEquipId);
         StoreNative(observation, $"{p}.transformation.areWeaponsLoaded", transformation.AreWeaponLoaded);
     }
+
+    private static bool HasNativeCharacterLayout(ActorType type) => type is
+        ActorType.Player or ActorType.Part or ActorType.Pet or ActorType.Chocobo or ActorType.Enemy or
+        ActorType.Buddy or ActorType.Helper or ActorType.EventNpc or ActorType.MountType or
+        ActorType.Companion or ActorType.Retainer or ActorType.Cutscene;
 
     private void StoreTimelineArray<T>(ForetellObservation observation, string prefix, Span<T> values)
         where T : unmanaged

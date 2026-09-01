@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -13,6 +14,8 @@ public sealed partial class ForetellEngine
     // party/actor collection can never starve camera, client, network or environment state. The budget is a
     // recursion/bug guard, not a collection sampling policy.
     private const int MaxFabricEntriesPerRoot = 4096;
+    private const double MaxFabricTraversalMilliseconds = 1.0;
+    private const double SlowFabricGetterMilliseconds = 2.0;
     private const int RuntimeRootCount = 21;
     private const int NativeActorSlices = 2;
     private DateTime _lastFabricSample;
@@ -23,6 +26,12 @@ public sealed partial class ForetellEngine
     private readonly Dictionary<ulong, string> _actorFabricFingerprint = [];
     private readonly Dictionary<ulong, string> _nativeActorFabricFingerprint = [];
     private readonly Dictionary<ulong, FabricActorTrack> _fabricActorTracks = [];
+    private readonly Dictionary<string, int> _fabricCollectionOffsets = [];
+    private readonly HashSet<string> _slowFabricMembers = [];
+    private readonly Dictionary<Type, PropertyInfo[]> _fabricPropertyCache = [];
+    private readonly Dictionary<Type, FieldInfo[]> _fabricFieldCache = [];
+    private long _fabricDeferredTraversals;
+    private long _fabricQuarantinedGetters;
 
     private sealed class FabricActorTrack
     {
@@ -36,6 +45,7 @@ public sealed partial class ForetellEngine
         _actorFabricFingerprint.Clear();
         _nativeActorFabricFingerprint.Clear();
         _fabricActorTracks.Clear();
+        _fabricCollectionOffsets.Clear();
         _runtimeRootCursor = 0;
         _actorFabricCursor = 0;
         _nativeActorSliceCursor = 0;
@@ -85,6 +95,7 @@ public sealed partial class ForetellEngine
         var actor = actors[_actorFabricCursor++];
         var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:generic");
         EnrichObservation(obs, actor);
+        EnrichActorCollections(obs, actor);
         var fingerprint = Fingerprint(obs, "actor.") + Fingerprint(obs, "static.");
         if (_actorFabricFingerprint.GetValueOrDefault(actor.InstanceID) == fingerprint)
             return;
@@ -99,6 +110,8 @@ public sealed partial class ForetellEngine
         for (var i = slice; i < actors.Length; i += NativeActorSlices)
         {
             var actor = actors[i];
+            if (!HasNativeCharacterLayout(actor.Type))
+                continue;
             var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:native");
             EnrichNativeCharacter(obs, actor);
             var pos = new Vector2(actor.Position.X, actor.Position.Z);
@@ -143,9 +156,9 @@ public sealed partial class ForetellEngine
         var actor = observation.ActorID != 0 ? _ws.Actors.Find(observation.ActorID) : null;
         var target = observation.TargetID != 0 ? _ws.Actors.Find(observation.TargetID) : null;
         if (actor != null)
-            FlattenRoot(actor, "actor", observation, 4);
+            EnrichActorCore(observation, actor, "actor");
         if (target != null && target.InstanceID != actor?.InstanceID)
-            FlattenRoot(target, "target", observation, 3);
+            EnrichActorCore(observation, target, "target");
         if (payload != null && !ReferenceEquals(payload, actor))
             FlattenRoot(payload, "event", observation, 5);
 
@@ -157,11 +170,162 @@ public sealed partial class ForetellEngine
             TryFlattenRow<Lumina.Excel.Sheets.BNpcBase>(observation.ActorOID, "static.bnpcBase", observation);
         if (actor != null)
         {
-            var nameID = ToUInt(Member(actor, "NameID")) ?? ToUInt(Member(actor, "NameId")) ?? 0;
-            if (nameID != 0)
-                TryFlattenRow<Lumina.Excel.Sheets.BNpcName>(nameID, "static.bnpcName", observation);
+            if (actor.NameID != 0)
+                TryFlattenRow<Lumina.Excel.Sheets.BNpcName>(actor.NameID, "static.bnpcName", observation);
         }
     }
+
+    private void EnrichActorCore(ForetellObservation observation, Actor actor, string prefix)
+    {
+        StoreFabric(observation, $"{prefix}.instanceID", actor.InstanceID);
+        StoreFabric(observation, $"{prefix}.oid", actor.OID);
+        StoreFabric(observation, $"{prefix}.spawnIndex", actor.SpawnIndex);
+        StoreFabric(observation, $"{prefix}.layoutID", actor.LayoutID);
+        StoreFabric(observation, $"{prefix}.fateID", actor.FateID);
+        StoreFabric(observation, $"{prefix}.name", actor.Name);
+        StoreFabric(observation, $"{prefix}.nameID", actor.NameID);
+        StoreFabric(observation, $"{prefix}.type", actor.Type);
+        StoreFabric(observation, $"{prefix}.class", actor.Class);
+        StoreFabric(observation, $"{prefix}.role", actor.Role);
+        StoreFabric(observation, $"{prefix}.classCategory", actor.ClassCategory);
+        StoreFabric(observation, $"{prefix}.level", actor.Level);
+        StoreFabric(observation, $"{prefix}.position.x", actor.PosRot.X);
+        StoreFabric(observation, $"{prefix}.position.y", actor.PosRot.Y);
+        StoreFabric(observation, $"{prefix}.position.z", actor.PosRot.Z);
+        StoreFabric(observation, $"{prefix}.rotation", actor.PosRot.W);
+        StoreFabric(observation, $"{prefix}.previousPosition.x", actor.PrevPosRot.X);
+        StoreFabric(observation, $"{prefix}.previousPosition.y", actor.PrevPosRot.Y);
+        StoreFabric(observation, $"{prefix}.previousPosition.z", actor.PrevPosRot.Z);
+        StoreFabric(observation, $"{prefix}.previousRotation", actor.PrevPosRot.W);
+        StoreFabric(observation, $"{prefix}.hitboxRadius", actor.HitboxRadius);
+        StoreFabric(observation, $"{prefix}.hp.current", actor.HPMP.CurHP);
+        StoreFabric(observation, $"{prefix}.hp.maximum", actor.HPMP.MaxHP);
+        StoreFabric(observation, $"{prefix}.hp.shield", actor.HPMP.Shield);
+        StoreFabric(observation, $"{prefix}.mp.current", actor.HPMP.CurMP);
+        StoreFabric(observation, $"{prefix}.mp.maximum", actor.HPMP.MaxMP);
+        StoreFabric(observation, $"{prefix}.isDestroyed", actor.IsDestroyed);
+        StoreFabric(observation, $"{prefix}.isTargetable", actor.IsTargetable);
+        StoreFabric(observation, $"{prefix}.isAlly", actor.IsAlly);
+        StoreFabric(observation, $"{prefix}.visibility", actor.Visibility);
+        StoreFabric(observation, $"{prefix}.isDead", actor.IsDead);
+        StoreFabric(observation, $"{prefix}.inCombat", actor.InCombat);
+        StoreFabric(observation, $"{prefix}.aggroPlayer", actor.AggroPlayer);
+        StoreFabric(observation, $"{prefix}.isOpenTreasure", actor.IsOpenTreasure);
+        StoreFabric(observation, $"{prefix}.modelState.model", actor.ModelState.ModelState);
+        StoreFabric(observation, $"{prefix}.modelState.animation1", actor.ModelState.AnimState1);
+        StoreFabric(observation, $"{prefix}.modelState.animation2", actor.ModelState.AnimState2);
+        StoreFabric(observation, $"{prefix}.foray.level", actor.ForayInfo.Level);
+        StoreFabric(observation, $"{prefix}.foray.element", actor.ForayInfo.Element);
+        StoreFabric(observation, $"{prefix}.eventState", actor.EventState);
+        StoreFabric(observation, $"{prefix}.ownerID", actor.OwnerID);
+        StoreFabric(observation, $"{prefix}.targetID", actor.TargetID);
+        StoreFabric(observation, $"{prefix}.mountID", actor.MountId);
+        StoreFabric(observation, $"{prefix}.renderFlags", actor.Renderflags);
+        StoreFabric(observation, $"{prefix}.omnidirectional", actor.Omnidirectional);
+        StoreFabric(observation, $"{prefix}.tether.id", actor.Tether.ID);
+        StoreFabric(observation, $"{prefix}.tether.target", actor.Tether.Target);
+
+        if (actor.CastInfo is { } cast)
+        {
+            StoreFabric(observation, $"{prefix}.cast.actionType", cast.Action.Type);
+            StoreFabric(observation, $"{prefix}.cast.actionID", cast.Action.ID);
+            StoreFabric(observation, $"{prefix}.cast.targetID", cast.TargetID);
+            StoreFabric(observation, $"{prefix}.cast.rotation", cast.Rotation.Rad);
+            StoreFabric(observation, $"{prefix}.cast.location.x", cast.Location.X);
+            StoreFabric(observation, $"{prefix}.cast.location.y", cast.Location.Y);
+            StoreFabric(observation, $"{prefix}.cast.location.z", cast.Location.Z);
+            StoreFabric(observation, $"{prefix}.cast.elapsed", cast.ElapsedTime);
+            StoreFabric(observation, $"{prefix}.cast.total", cast.TotalTime);
+            StoreFabric(observation, $"{prefix}.cast.interruptible", cast.Interruptible);
+            StoreFabric(observation, $"{prefix}.cast.eventHappened", cast.EventHappened);
+        }
+        else
+        {
+            StoreFabric(observation, $"{prefix}.cast.active", false);
+        }
+    }
+
+    private void EnrichActorCollections(ForetellObservation observation, Actor actor)
+    {
+        const string prefix = "actor";
+        StoreFabric(observation, $"{prefix}.statuses.capacity", actor.Statuses.Length);
+        var activeStatuses = 0;
+        for (var i = 0; i < actor.Statuses.Length; ++i)
+        {
+            ref var status = ref actor.Statuses[i];
+            if (status.ID == 0)
+                continue;
+            var p = $"{prefix}.statuses[{i}]";
+            StoreFabric(observation, $"{p}.id", status.ID);
+            StoreFabric(observation, $"{p}.extra", status.Extra);
+            StoreFabric(observation, $"{p}.expires", status.ExpireAt);
+            StoreFabric(observation, $"{p}.sourceID", status.SourceID);
+            ++activeStatuses;
+        }
+        StoreFabric(observation, $"{prefix}.statuses.activeCount", activeStatuses);
+
+        var activeIncoming = 0;
+        for (var i = 0; i < actor.IncomingEffects.Length; ++i)
+        {
+            ref var incoming = ref actor.IncomingEffects[i];
+            if (incoming.GlobalSequence == 0)
+                continue;
+            var p = $"{prefix}.incomingEffects[{i}]";
+            StoreFabric(observation, $"{p}.globalSequence", incoming.GlobalSequence);
+            StoreFabric(observation, $"{p}.targetIndex", incoming.TargetIndex);
+            StoreFabric(observation, $"{p}.sourceInstanceID", incoming.SourceInstanceID);
+            StoreFabric(observation, $"{p}.actionType", incoming.Action.Type);
+            StoreFabric(observation, $"{p}.actionID", incoming.Action.ID);
+            for (var e = 0; e < ActionEffects.MaxCount; ++e)
+                StoreFabric(observation, $"{p}.raw[{e}]", incoming.Effects[e]);
+            ++activeIncoming;
+        }
+        StoreFabric(observation, $"{prefix}.incomingEffects.capacity", actor.IncomingEffects.Length);
+        StoreFabric(observation, $"{prefix}.incomingEffects.activeCount", activeIncoming);
+
+        StorePendingDeltas(observation, $"{prefix}.pendingHP", actor.PendingHPDifferences);
+        StorePendingDeltas(observation, $"{prefix}.pendingMP", actor.PendingMPDifferences);
+        StoreFabric(observation, $"{prefix}.pendingStatuses.count", actor.PendingStatuses.Count);
+        for (var i = 0; i < actor.PendingStatuses.Count; ++i)
+        {
+            var item = actor.PendingStatuses[i];
+            StorePendingEffect(observation, $"{prefix}.pendingStatuses[{i}].effect", item.Effect);
+            StoreFabric(observation, $"{prefix}.pendingStatuses[{i}].statusID", item.StatusId);
+            StoreFabric(observation, $"{prefix}.pendingStatuses[{i}].extraLow", item.ExtraLo);
+        }
+        StoreFabric(observation, $"{prefix}.pendingDispels.count", actor.PendingDispels.Count);
+        for (var i = 0; i < actor.PendingDispels.Count; ++i)
+        {
+            var item = actor.PendingDispels[i];
+            StorePendingEffect(observation, $"{prefix}.pendingDispels[{i}].effect", item.Effect);
+            StoreFabric(observation, $"{prefix}.pendingDispels[{i}].statusID", item.StatusId);
+        }
+        StoreFabric(observation, $"{prefix}.pendingKnockbacks.count", actor.PendingKnockbacks.Count);
+        for (var i = 0; i < actor.PendingKnockbacks.Count; ++i)
+            StorePendingEffect(observation, $"{prefix}.pendingKnockbacks[{i}]", actor.PendingKnockbacks[i]);
+    }
+
+    private void StorePendingDeltas(ForetellObservation observation, string prefix, List<PendingEffectDelta> values)
+    {
+        StoreFabric(observation, $"{prefix}.count", values.Count);
+        for (var i = 0; i < values.Count; ++i)
+        {
+            StorePendingEffect(observation, $"{prefix}[{i}].effect", values[i].Effect);
+            StoreFabric(observation, $"{prefix}[{i}].value", values[i].Value);
+        }
+    }
+
+    private void StorePendingEffect(ForetellObservation observation, string prefix, PendingEffect effect)
+    {
+        StoreFabric(observation, $"{prefix}.globalSequence", effect.GlobalSequence);
+        StoreFabric(observation, $"{prefix}.targetIndex", effect.TargetIndex);
+        StoreFabric(observation, $"{prefix}.sourceInstanceID", effect.SourceInstanceID);
+        StoreFabric(observation, $"{prefix}.expiration", effect.Expiration);
+        StoreFabric(observation, $"{prefix}.requiresEffectResult", effect.RequiresEffectResult);
+    }
+
+    private void StoreFabric<T>(ForetellObservation observation, string key, T value) where T : notnull
+        => TryStoreScalar(value, value.GetType(), key, observation);
 
     private void RefreshRuntimeContextSlice()
     {
@@ -290,22 +454,38 @@ public sealed partial class ForetellEngine
 
     private void FlattenRoot(object? value, string prefix, ForetellObservation observation, int maxDepth)
     {
-        if (value == null) return;
+        if (value == null)
+            return;
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
         var budget = MaxFabricEntriesPerRoot;
-        FlattenObject(value, prefix, observation, 0, maxDepth, visited, ref budget);
+        var deadline = Stopwatch.GetTimestamp() + Math.Max(1, (long)(Stopwatch.Frequency * MaxFabricTraversalMilliseconds / 1000));
+        var deferred = false;
+        FlattenObject(value, prefix, observation, 0, maxDepth, visited, ref budget, deadline, ref deferred);
+        if (deferred)
+        {
+            ++_fabricDeferredTraversals;
+            RegisterCapability($"{prefix}.__deferred", value.GetType(), prefix, false, false,
+                $"live traversal yielded after {MaxFabricTraversalMilliseconds:F1} ms; the rolling scanner will revisit this source");
+        }
     }
 
     private void FlattenObject(object? value, string path, ForetellObservation observation, int depth, int maxDepth,
-        HashSet<object> visited, ref int budget)
+        HashSet<object> visited, ref int budget, long deadline, ref bool deferred)
     {
-        if (value == null || budget <= 0) return;
-        var type = value.GetType();
-        if (TryStoreScalar(value, type, path, observation))
+        if (value == null || budget <= 0)
+            return;
+        if (Stopwatch.GetTimestamp() >= deadline)
         {
-            --budget;
+            deferred = true;
             return;
         }
+
+        // The safety budget counts every visited node, not only scalar leaves. Complex collections therefore cannot
+        // bypass the guard by yielding thousands of non-scalar/depth-limited objects.
+        --budget;
+        var type = value.GetType();
+        if (TryStoreScalar(value, type, path, observation))
+            return;
         if (IsEncounterAuthored(type))
         {
             RegisterCapability(path, type, path, false, true, "encounter-authored knowledge explicitly forbidden");
@@ -329,24 +509,48 @@ public sealed partial class ForetellEngine
 
         if (value is IEnumerable enumerable and not string)
         {
-            var n = 0;
+            var offset = _fabricCollectionOffsets.GetValueOrDefault(path);
+            var index = 0;
+            var sampled = 0;
+            var reachedEnd = true;
             foreach (var item in enumerable)
             {
-                if (budget <= 0) break;
-                FlattenObject(item, $"{path}[{n}]", observation, depth + 1, maxDepth, visited, ref budget);
-                ++n;
+                if (Stopwatch.GetTimestamp() >= deadline || budget <= 0)
+                {
+                    deferred = Stopwatch.GetTimestamp() >= deadline;
+                    reachedEnd = false;
+                    break;
+                }
+                if (index++ < offset)
+                    continue;
+                FlattenObject(item, $"{path}[{index - 1}]", observation, depth + 1, maxDepth, visited, ref budget, deadline, ref deferred);
+                ++sampled;
+                if (deferred)
+                {
+                    reachedEnd = false;
+                    break;
+                }
             }
-            observation.Numeric[$"{path}.__sampledCount"] = n;
+            _fabricCollectionOffsets[path] = reachedEnd || sampled == 0 ? 0 : offset + sampled;
+            observation.Numeric[$"{path}.__scanOffset"] = offset;
+            observation.Numeric[$"{path}.__sampledCount"] = sampled;
+            observation.Numeric[$"{path}.__complete"] = reachedEnd ? 1 : 0;
             RegisterCapability($"{path}.__sampledCount", type, "IEnumerable", true, false,
-                budget <= 0 ? "root safety budget exhausted; source must be split into a dedicated root" : "complete collection");
+                reachedEnd ? "complete collection sweep" : "time-sliced collection sweep; continuation retained");
             if (budget <= 0)
-                RegisterCapability($"{path}.__truncated", type, "IEnumerable", false, false, "root safety budget exhausted");
+                RegisterCapability($"{path}.__truncated", type, "IEnumerable", false, false, "root node safety budget exhausted");
+            return; // collection members are the evidence; reflecting collection implementation duplicates plumbing
         }
 
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-        foreach (var p in type.GetProperties(flags).OrderBy(p => p.Name))
+        foreach (var p in FabricProperties(type))
         {
-            if (budget <= 0) break;
+            if (budget <= 0)
+                break;
+            if (Stopwatch.GetTimestamp() >= deadline)
+            {
+                deferred = true;
+                break;
+            }
             var memberPath = $"{path}.{p.Name}";
             if (p.GetIndexParameters().Length != 0)
             {
@@ -362,30 +566,74 @@ public sealed partial class ForetellEngine
             }
             if (RejectNonBoxableMember(p.PropertyType, memberPath, type, p.Name))
                 continue;
+
+            var memberKey = $"{type.AssemblyQualifiedName}|P|{p.Name}";
+            if (_slowFabricMembers.Contains(memberKey))
+            {
+                RegisterCapability(memberPath, type, p.Name, false, false, "slow live getter quarantined; dedicated typed ingestion required");
+                continue;
+            }
             try
             {
-                FlattenObject(p.GetValue(value), memberPath, observation, depth + 1, maxDepth, visited, ref budget);
+                var getterStarted = Stopwatch.GetTimestamp();
+                var memberValue = p.GetValue(value);
+                var getterMilliseconds = Stopwatch.GetElapsedTime(getterStarted).TotalMilliseconds;
+                if (getterMilliseconds > SlowFabricGetterMilliseconds)
+                {
+                    _slowFabricMembers.Add(memberKey);
+                    ++_fabricQuarantinedGetters;
+                    RegisterCapability(memberPath, type, p.Name, false, false,
+                        $"live getter quarantined after {getterMilliseconds:F2} ms; dedicated typed ingestion required");
+                    Service.Log($"[Foretell] Quarantined slow Data Fabric getter {type.FullName}.{p.Name} ({getterMilliseconds:F2} ms)");
+                    if (memberValue != null)
+                        TryStoreScalar(memberValue, memberValue.GetType(), memberPath, observation);
+                    continue;
+                }
+                FlattenObject(memberValue, memberPath, observation, depth + 1, maxDepth, visited, ref budget, deadline, ref deferred);
             }
             catch (Exception e)
             {
                 RegisterCapability(memberPath, type, p.Name, false, false, $"getter rejected: {e.GetType().Name}");
             }
         }
-        foreach (var f in type.GetFields(flags).OrderBy(f => f.Name))
+
+        foreach (var f in FabricFields(type))
         {
-            if (budget <= 0 || f.IsStatic) break;
+            if (budget <= 0)
+                break;
+            if (Stopwatch.GetTimestamp() >= deadline)
+            {
+                deferred = true;
+                break;
+            }
+            if (f.IsStatic)
+                continue;
             var memberPath = $"{path}.{f.Name}";
             if (RejectNonBoxableMember(f.FieldType, memberPath, type, f.Name))
                 continue;
             try
             {
-                FlattenObject(f.GetValue(value), memberPath, observation, depth + 1, maxDepth, visited, ref budget);
+                FlattenObject(f.GetValue(value), memberPath, observation, depth + 1, maxDepth, visited, ref budget, deadline, ref deferred);
             }
             catch (Exception e)
             {
                 RegisterCapability(memberPath, type, f.Name, false, false, $"field rejected: {e.GetType().Name}");
             }
         }
+    }
+
+    private PropertyInfo[] FabricProperties(Type type)
+    {
+        if (!_fabricPropertyCache.TryGetValue(type, out var result))
+            _fabricPropertyCache[type] = result = type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).OrderBy(p => p.Name).ToArray();
+        return result;
+    }
+
+    private FieldInfo[] FabricFields(Type type)
+    {
+        if (!_fabricFieldCache.TryGetValue(type, out var result))
+            _fabricFieldCache[type] = result = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).OrderBy(f => f.Name).ToArray();
+        return result;
     }
 
     // Reflection cannot box these CLR types. In particular, invoking PropertyInfo.GetValue for a function-pointer

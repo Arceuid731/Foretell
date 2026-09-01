@@ -27,6 +27,13 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("Foretell mini radar", tooltip: "Show Foretell's compact encounter radar for learned/predicted mechanics.")]
     public bool MiniRadar = true;
 
+    [PropertyDisplay("Unlock radar position", tooltip: "Give the radar a draggable window. Lock it again after placing it.")]
+    public bool RadarUnlocked;
+
+    // Normalized top-left viewport position. Negative values select the default top-right placement.
+    public float RadarPositionX = -1;
+    public float RadarPositionY = -1;
+
     [PropertyDisplay("Text hints", tooltip: "Show adaptive mechanic, countdown, confidence and likely-next information.")]
     public bool TextHints = true;
 

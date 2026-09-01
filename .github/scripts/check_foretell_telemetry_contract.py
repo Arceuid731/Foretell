@@ -47,6 +47,11 @@ requirements = {
         "SampleGenericActorSlice()",
         "SampleNativeActorSlice(now)",
         "ProcessObservation(obs, enriched: true)",
+        "MaxFabricTraversalMilliseconds",
+        "EnrichActorCore(observation, actor, \"actor\")",
+        "EnrichActorCollections(obs, actor)",
+        "--budget",
+        "slow Data Fabric getter",
         "RejectNonBoxableMember(p.PropertyType",
         "RejectNonBoxableMember(f.FieldType",
         "memberType.IsFunctionPointer",
@@ -54,6 +59,20 @@ requirements = {
     "BossMod/Framework/Plugin.cs": [
         "OpenMainUi += () => _foretell.OpenInspector()",
         "OpenConfigUi += () => _foretell.OpenInspector()",
+    ],
+    "BossMod/Config/ConfigUI.cs": [
+        "n is Foretell.ForetellConfig",
+    ],
+    "BossMod/Foretell/ForetellConfig.cs": [
+        "RadarUnlocked",
+        "RadarPositionX",
+        "RadarPositionY",
+    ],
+    "BossMod/Foretell/ForetellRenderer.cs": [
+        "ForetellRadarWindow",
+        "drag to move",
+        "RadarPositionX",
+        "MaxRenderedMechanics",
     ],
     "BossMod/Foretell/ForetellNativeState.cs": [
         'var tp = $"{p}.vfx.tether[{i}]"',
@@ -64,6 +83,7 @@ requirements = {
         '"native.environment.transitionProgress"',
         '"native.camera.viewProjection"',
         "typeof(IDalamudService).Assembly.GetTypes()",
+        "HasNativeCharacterLayout(actor.Type)",
     ],
     "BossMod/Foretell/ForetellNativeHooks.cs": [
         "ActorVFXCreateSignature",
@@ -118,6 +138,8 @@ foretell_sources = "\n".join(
 for forbidden, reason in {
     "_runtimeNumeric": "duplicating the full runtime cache into every observation",
     "RefreshRuntimeContext()": "synchronous all-root runtime reflection sweep",
+    'FlattenRoot(actor, "actor"': "unbounded reflective actor traversal on the framework thread",
+    "if (budget <= 0 || f.IsStatic) break": "static field prematurely terminating a generic field scan",
     ".Take(32)": "fixed 32-entry telemetry sampling cap",
     "n >= 32": "fixed 32-entry telemetry sampling cap",
     "MaxFabricEntriesPerObject": "shared monolithic object budget",

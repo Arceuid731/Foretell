@@ -4,6 +4,9 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
+    private bool _radarWasUnlocked;
+    private bool _radarPositionDirty;
+
     public void Draw()
     {
         DrawInspector();
@@ -164,23 +167,75 @@ public sealed partial class ForetellEngine
     private void DrawRadar()
     {
         var player = _ws.Party[PartyState.PlayerSlot];
-        if (player == null) return;
+        if (player == null)
+            return;
         var cam = Camera.Instance;
-        if (cam == null) return;
+        if (cam == null)
+            return;
+
         var size = _cfg.RadarSize;
-        var margin = 22f;
-        var center = new Vector2(cam.ViewportSize.X - margin - size / 2, margin + size / 2);
-        var radius = size / 2;
-        var draw = ImGui.GetForegroundDrawList();
-        draw.AddCircleFilled(center, radius, Pack(12, 14, 20, 120), 64);
+        var viewport = cam.ViewportSize;
+        var windowSize = new Vector2(size + 24, size + 62);
+        var defaultPosition = new Vector2(Math.Max(8, viewport.X - windowSize.X - 22), 22);
+        var savedPosition = _cfg.RadarPositionX >= 0 && _cfg.RadarPositionY >= 0
+            ? new Vector2(_cfg.RadarPositionX * viewport.X, _cfg.RadarPositionY * viewport.Y)
+            : defaultPosition;
+
+        // Locked placement is applied every frame; unlocked placement is only seeded on transition so ImGui can
+        // move the window normally. Position is stored normalized to survive resolution/viewport changes.
+        if (!_cfg.RadarUnlocked || !_radarWasUnlocked)
+            ImGui.SetNextWindowPos(savedPosition, ImGuiCond.Always);
+        ImGui.SetNextWindowSize(windowSize, ImGuiCond.Always);
+
+        var flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar
+            | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoSavedSettings;
+        if (!_cfg.RadarUnlocked)
+            flags |= ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.NoBackground
+                | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoFocusOnAppearing;
+
+        if (!ImGui.Begin("Foretell radar - drag to move###ForetellRadarWindow", flags))
+        {
+            ImGui.End();
+            _radarWasUnlocked = _cfg.RadarUnlocked;
+            return;
+        }
+
+        if (_cfg.RadarUnlocked)
+        {
+            var position = ImGui.GetWindowPos();
+            var normalizedX = Math.Clamp(position.X / Math.Max(1, viewport.X), 0, 1);
+            var normalizedY = Math.Clamp(position.Y / Math.Max(1, viewport.Y), 0, 1);
+            if (Math.Abs(normalizedX - _cfg.RadarPositionX) > .0001f || Math.Abs(normalizedY - _cfg.RadarPositionY) > .0001f)
+            {
+                _cfg.RadarPositionX = normalizedX;
+                _cfg.RadarPositionY = normalizedY;
+                _radarPositionDirty = true;
+            }
+            if (_radarPositionDirty && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
+            {
+                _cfg.Modified.Fire();
+                _radarPositionDirty = false;
+            }
+        }
+        _radarWasUnlocked = _cfg.RadarUnlocked;
+
+        var canvas = ImGui.GetCursorScreenPos();
+        var center = canvas + new Vector2(size * .5f + 4, size * .5f + 22);
+        var radius = size * .5f;
+        var draw = ImGui.GetWindowDrawList();
+        draw.AddText(canvas + new Vector2(4, 1), 0xFFE0E0E0u,
+            _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : "Foretell radar");
+        draw.AddCircleFilled(center, radius, Pack(12, 14, 20, 150), 64);
         draw.AddCircle(center, radius, 0xAAE0E0E0u, 64, 1.5f);
         draw.AddCircleFilled(center, 4, 0xFFFFFFFFu);
+
         var scale = radius / MathF.Max(1, _cfg.RadarWorldRadius);
         var playerPos = V(player.Position);
-
+        var displayed = 0;
         foreach (var p in _predictions.Values.OrderBy(p => p.Activation))
         {
-            if (p.Confidence < _cfg.VisualConfidence / 100f) continue;
+            if (p.Confidence < _cfg.VisualConfidence / 100f || displayed++ >= _cfg.MaxRenderedMechanics)
+                continue;
             var col = ConfidenceColor(p.Confidence);
             var thickness = ConfidenceThickness(p.Confidence);
             DrawRadarGeometry(draw, p, playerPos, center, scale, col, thickness);
@@ -188,11 +243,11 @@ public sealed partial class ForetellEngine
             draw.AddText(c + new Vector2(5, -9), col, $"{p.Confidence:P0}");
         }
 
-        draw.AddText(center - new Vector2(radius, radius + 20), 0xFFE0E0E0u, "Foretell radar - color = confidence");
         var legendY = center.Y + radius + 4;
-        draw.AddText(new(center.X - radius, legendY), ConfidenceColor(_cfg.VisualConfidence / 100f), $"{_cfg.VisualConfidence:F0}% learning");
-        draw.AddText(new(center.X - 20, legendY), ConfidenceColor(_cfg.WarningConfidence / 100f), $"{_cfg.WarningConfidence:F0}% high");
-        draw.AddText(new(center.X + radius - 62, legendY), ConfidenceColor(_cfg.SafeConfidence / 100f), $"{_cfg.SafeConfidence:F0}% safe");
+        draw.AddText(new(center.X - radius, legendY), ConfidenceColor(_cfg.VisualConfidence / 100f), $"{_cfg.VisualConfidence:F0}% learn");
+        draw.AddText(new(center.X - 22, legendY), ConfidenceColor(_cfg.WarningConfidence / 100f), $"{_cfg.WarningConfidence:F0}% high");
+        draw.AddText(new(center.X + radius - 58, legendY), ConfidenceColor(_cfg.SafeConfidence / 100f), $"{_cfg.SafeConfidence:F0}% safe");
+        ImGui.End();
     }
 
     private static Vector2 RadarPoint(Vector2 world, Vector2 player, Vector2 center, float scale)
