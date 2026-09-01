@@ -15,3 +15,5 @@ Foretell intentionally does not automate player movement. Low-confidence predict
 Foretell ingests generic structured evidence available through BMR WorldState, Dalamud runtime gameplay services, actor/target state, raw event payloads, and relevant Lumina rows. Reflection discovers scalar/enum/text fields recursively and feeds them through a stable hashed feature space; ActionEffect/status/map/director payload details are retained in replay instead of discarded.
 
 The one deliberate boundary is encounter-authored knowledge: BossModule implementations, state machines, encounter components/layouts/presets and equivalent hand-written answers are excluded. Foretell learns from the raw game data instead. The in-game coverage audit reports discovered, ingested, learner-used, explicitly excluded and unaccounted fields; unaccounted data is treated as a defect rather than silently ignored.
+
+The Data Fabric contract is enforced at runtime and visible in the Inspector coverage counters.
