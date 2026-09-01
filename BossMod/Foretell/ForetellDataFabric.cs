@@ -9,12 +9,16 @@ namespace BossMod.Foretell;
 // encounter-component knowledge: Foretell may consume the same raw game state, but never their authored answers.
 public sealed partial class ForetellEngine
 {
-    private const int MaxFabricEntriesPerObject = 768;
+    // A root owns its own traversal budget. Runtime state is split into independent roots below, so a large
+    // party/actor collection can never starve camera, client, network or environment state. The budget is a
+    // recursion/bug guard, not a collection sampling policy.
+    private const int MaxFabricEntriesPerRoot = 4096;
     private DateTime _lastFabricSample;
     private readonly Dictionary<ulong, string> _actorFabricFingerprint = [];
     private readonly Dictionary<ulong, FabricActorTrack> _fabricActorTracks = [];
     private Dictionary<string, double> _runtimeNumeric = [];
     private Dictionary<string, string> _runtimeText = [];
+    private Dictionary<string, byte[]> _runtimeBinary = [];
 
     private sealed class FabricActorTrack
     {
@@ -29,6 +33,8 @@ public sealed partial class ForetellEngine
         _fabricActorTracks.Clear();
         _runtimeNumeric.Clear();
         _runtimeText.Clear();
+        _runtimeBinary.Clear();
+        ResetNativeDataFabric();
         _lastFabricSample = default;
     }
 
@@ -43,6 +49,7 @@ public sealed partial class ForetellEngine
         {
             var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: actor.Type.ToString());
             EnrichObservation(obs, actor);
+            EnrichNativeCharacter(obs, actor);
             var pos = new Vector2(actor.Position.X, actor.Position.Z);
             if (_fabricActorTracks.TryGetValue(actor.InstanceID, out var previous))
             {
@@ -52,7 +59,7 @@ public sealed partial class ForetellEngine
             }
             _fabricActorTracks[actor.InstanceID] = new() { At = _ws.CurrentTime, Position = pos, Rotation = actor.Rotation.Rad };
 
-            var fingerprint = Fingerprint(obs, "actor.") + Fingerprint(obs, "derived.actor.");
+            var fingerprint = Fingerprint(obs, "actor.") + Fingerprint(obs, "derived.actor.") + Fingerprint(obs, "native.character.");
             if (_actorFabricFingerprint.GetValueOrDefault(actor.InstanceID) == fingerprint)
                 continue;
             _actorFabricFingerprint[actor.InstanceID] = fingerprint;
@@ -64,6 +71,9 @@ public sealed partial class ForetellEngine
             _fabricActorTracks.Remove(dead);
             _actorFabricFingerprint.Remove(dead);
         }
+
+        SampleNativeEnvironment();
+        SampleNativeCamera();
     }
 
     private static float NormalizeAngle(float angle)
@@ -94,6 +104,8 @@ public sealed partial class ForetellEngine
                 observation.Numeric.TryAdd(k, v);
             foreach (var (k, v) in _runtimeText)
                 observation.Text.TryAdd(k, v);
+            foreach (var (k, v) in _runtimeBinary)
+                observation.Binary.TryAdd(k, v);
         }
 
         var actor = observation.ActorID != 0 ? _ws.Actors.Find(observation.ActorID) : null;
@@ -122,7 +134,22 @@ public sealed partial class ForetellEngine
     private void RefreshRuntimeContext()
     {
         var obs = new ForetellObservation();
-        FlattenRoot(_ws, "runtime.worldState", obs, 3);
+
+        // Do not flatten WorldState as one object: its actor collection used to consume the shared budget before
+        // later roots were reached. Each gameplay source below is deliberately independent and actors themselves
+        // are emitted as dedicated ActorSnapshot observations.
+        TryStoreScalar(_ws.QPF, typeof(ulong), "runtime.worldState.qpf", obs);
+        TryStoreScalar(_ws.GameVersion, typeof(string), "runtime.worldState.gameVersion", obs);
+        TryStoreScalar(_ws.CurrentZone, typeof(ushort), "runtime.worldState.currentZone", obs);
+        TryStoreScalar(_ws.CurrentCFCID, typeof(ushort), "runtime.worldState.currentCFCID", obs);
+        TryStoreScalar(_ws.IsPvPArea, typeof(bool), "runtime.worldState.isPvPArea", obs);
+        TryStoreScalar(_ws.RSVEntries.Count, typeof(int), "runtime.worldState.rsvCount", obs);
+        FlattenRoot(_ws.Frame, "runtime.frame", obs, 4);
+        FlattenRoot(_ws.Waymarks, "runtime.waymarks", obs, 4);
+        FlattenRoot(_ws.Party, "runtime.party", obs, 5);
+        FlattenRoot(_ws.Client, "runtime.client", obs, 5);
+        FlattenRoot(_ws.DeepDungeon, "runtime.deepDungeon", obs, 5);
+        FlattenRoot(_ws.Network, "runtime.network", obs, 4);
         FlattenRoot(Service.ClientState, "runtime.clientState", obs, 2);
         FlattenRoot(Service.PlayerState, "runtime.playerState", obs, 2);
         FlattenRoot(Service.TargetManager, "runtime.targetManager", obs, 2);
@@ -130,12 +157,18 @@ public sealed partial class ForetellEngine
         FlattenRoot(Service.KeyState, "runtime.keyState", obs, 1);
         FlattenRoot(Service.GameGui, "runtime.gameGui", obs, 1);
         FlattenRoot(Service.GameConfig, "runtime.gameConfig", obs, 1);
-        FlattenRoot(Service.ObjectTable, "runtime.objectTable", obs, 1);
+        FlattenRoot(Service.PartyList, "runtime.partyList", obs, 4);
+        FlattenRoot(Service.BuddyList, "runtime.buddyList", obs, 4);
+        FlattenRoot(Service.FateTable, "runtime.fateTable", obs, 4);
+        FlattenRoot(Service.DutyState, "runtime.dutyState", obs, 3);
+        FlattenRoot(Service.GamepadState, "runtime.gamepadState", obs, 3);
         FlattenEnumIndexers(Service.Condition, "runtime.condition", obs);
         FlattenEnumIndexers(Service.KeyState, "runtime.keyState", obs);
+        AuditDalamudPluginServices();
         TryFlattenRow<Lumina.Excel.Sheets.TerritoryType>(_territory, "static.territory", obs);
         _runtimeNumeric = obs.Numeric;
         _runtimeText = obs.Text;
+        _runtimeBinary = obs.Binary;
     }
 
     private void TryFlattenRow<T>(uint rowID, string prefix, ForetellObservation observation) where T : struct, Lumina.Excel.IExcelRow<T>
@@ -162,7 +195,7 @@ public sealed partial class ForetellEngine
     {
         if (value == null) return;
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-        var budget = MaxFabricEntriesPerObject;
+        var budget = MaxFabricEntriesPerRoot;
         FlattenObject(value, prefix, observation, 0, maxDepth, visited, ref budget);
     }
 
@@ -188,7 +221,7 @@ public sealed partial class ForetellEngine
         }
         if (depth >= maxDepth)
         {
-            RegisterCapability(path, type, path, false, true, "bounded traversal reached; parent identity already captured");
+            RegisterCapability(path, type, path, false, false, "bounded traversal reached; dedicated ingestion is required if this is gameplay state");
             return;
         }
         if (!type.IsValueType && !visited.Add(value))
@@ -202,12 +235,15 @@ public sealed partial class ForetellEngine
             var n = 0;
             foreach (var item in enumerable)
             {
-                if (n >= 32 || budget <= 0) break;
+                if (budget <= 0) break;
                 FlattenObject(item, $"{path}[{n}]", observation, depth + 1, maxDepth, visited, ref budget);
                 ++n;
             }
             observation.Numeric[$"{path}.__sampledCount"] = n;
-            RegisterCapability($"{path}.__sampledCount", type, "IEnumerable", true, false, n >= 32 ? "collection sampled; dedicated sources cover high-cardinality actors" : "");
+            RegisterCapability($"{path}.__sampledCount", type, "IEnumerable", true, false,
+                budget <= 0 ? "root safety budget exhausted; source must be split into a dedicated root" : "complete collection");
+            if (budget <= 0)
+                RegisterCapability($"{path}.__truncated", type, "IEnumerable", false, false, "root safety budget exhausted");
         }
 
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
@@ -217,7 +253,9 @@ public sealed partial class ForetellEngine
             var memberPath = $"{path}.{p.Name}";
             if (p.GetIndexParameters().Length != 0)
             {
-                RegisterCapability(memberPath, type, p.Name, false, true, "indexer handled separately when enum-addressable");
+                var enumAddressable = p.GetIndexParameters().Length == 1 && p.GetIndexParameters()[0].ParameterType.IsEnum;
+                RegisterCapability(memberPath, type, p.Name, false, enumAddressable,
+                    enumAddressable ? "duplicate indexer handled by complete enum traversal" : "non-enum indexer requires dedicated ingestion");
                 continue;
             }
             if (p.GetMethod == null || p.GetMethod.IsStatic)
@@ -231,7 +269,7 @@ public sealed partial class ForetellEngine
             }
             catch (Exception e)
             {
-                RegisterCapability(memberPath, type, p.Name, false, true, $"getter rejected: {e.GetType().Name}");
+                RegisterCapability(memberPath, type, p.Name, false, false, $"getter rejected: {e.GetType().Name}");
             }
         }
         foreach (var f in type.GetFields(flags).OrderBy(f => f.Name))
@@ -244,7 +282,7 @@ public sealed partial class ForetellEngine
             }
             catch (Exception e)
             {
-                RegisterCapability(memberPath, type, f.Name, false, true, $"field rejected: {e.GetType().Name}");
+                RegisterCapability(memberPath, type, f.Name, false, false, $"field rejected: {e.GetType().Name}");
             }
         }
     }
@@ -297,7 +335,7 @@ public sealed partial class ForetellEngine
         }
         if (value is string s)
         {
-            observation.Text[path] = s.Length <= 160 ? s : s[..160];
+            observation.Text[path] = s;
             RegisterCapability(path, type, path, true, false, "text");
             return true;
         }
@@ -335,7 +373,7 @@ public sealed partial class ForetellEngine
         {
             var pars = p.GetIndexParameters();
             if (pars.Length != 1 || !pars[0].ParameterType.IsEnum || p.GetMethod == null) continue;
-            foreach (var key in Enum.GetValues(pars[0].ParameterType).Cast<object>().Take(512))
+            foreach (var key in Enum.GetValues(pars[0].ParameterType).Cast<object>())
             {
                 var path = $"{prefix}.{p.Name}[{key}]";
                 try
@@ -345,7 +383,7 @@ public sealed partial class ForetellEngine
                 }
                 catch (Exception e)
                 {
-                    RegisterCapability(path, type, p.Name, false, true, $"indexer rejected: {e.GetType().Name}");
+                    RegisterCapability(path, type, p.Name, false, false, $"indexer rejected: {e.GetType().Name}");
                 }
             }
         }

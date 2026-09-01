@@ -177,7 +177,7 @@ public sealed partial class ForetellEngine
             ProcessRichObservation(Observation(ObservationKind.ActionTimelineSync, actor), events);
             return;
         }
-        foreach (var ev in events.Take(32))
+        foreach (var ev in events)
             ProcessRichObservation(Observation(ObservationKind.ActionTimelineSync, actor, ev.Item2, detail: ev.Item1.ToString("X")), events);
     }
 

@@ -28,14 +28,12 @@ internal sealed class MechanicEpisode
     {
         foreach (var (key, value) in observation.Numeric)
         {
-            if (FeatureSums.Count >= 4096 && !FeatureSums.ContainsKey(key)) continue;
             FeatureSums[key] = FeatureSums.GetValueOrDefault(key) + value;
             FeatureCounts[key] = FeatureCounts.GetValueOrDefault(key) + 1;
         }
         foreach (var (key, value) in observation.Text)
         {
             var token = $"@text:{key}={value}";
-            if (FeatureSums.Count >= 4096 && !FeatureSums.ContainsKey(token)) continue;
             FeatureSums[token] = FeatureSums.GetValueOrDefault(token) + 1;
             FeatureCounts[token] = FeatureCounts.GetValueOrDefault(token) + 1;
         }

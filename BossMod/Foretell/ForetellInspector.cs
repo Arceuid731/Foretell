@@ -419,9 +419,10 @@ public sealed partial class ForetellEngine
         ImGui.Separator();
 
         ImGui.TextUnformatted("WHAT FORETELL OBSERVES");
-        ImGui.TextUnformatted("Casts and hit targets; statuses; icons; VFX; tethers; actor lifecycle/targetability/model state; event objects; action-timeline events; NPC yells; map effects; director updates; party positions and sudden displacement.");
+        ImGui.TextUnformatted("Casts and hit targets; statuses; icons; raw actor/static VFX lifecycle and paths; both native tether slots and progress; actor lifecycle/targetability/model state; event objects; action timelines; NPC yells; map/director events; party positions and displacement.");
         ImGui.TextUnformatted("For cast actions Foretell also reads local client Action metadata (CastType, EffectRange, XAxisModifier, TargetArea, Omen/VFX and actor hitbox) as a prior before outcome evidence is available.");
-        ImGui.TextWrapped("Data Fabric additionally flattens generic structured WorldState, actor/target state, full event payloads, runtime gameplay services and complete relevant Lumina rows into hashed learner features. Encounter-authored BossModule/state-machine/component knowledge is explicitly excluded.");
+        ImGui.TextWrapped("Data Fabric additionally flattens independent structured WorldState/runtime roots, full event payloads and relevant Lumina rows. Native Character movement, timeline, model and transformation containers, environment/weather transitions, complete camera state, duty/fly-text/toast/system-log signals and every classified Dalamud gameplay service feed the same hashed learner space.");
+        ImGui.TextWrapped("Encounter-authored BossModule/state-machine/component/layout/preset knowledge is explicitly excluded. The service and field audits expose anything new or unreachable as unaccounted instead of silently claiming completeness.");
         ImGui.TextUnformatted($"Coverage audit right now: {_store.Coverage.Discovered} discovered / {_store.Coverage.Ingested} ingested / {_store.Coverage.Used} used / {_store.Coverage.Excluded} excluded / {_store.Coverage.Unaccounted} unaccounted.");
         ImGui.TextUnformatted("Learning is contextual by territory, source OID and trigger, so the same numeric signal does not automatically mean the same mechanic everywhere.");
         ImGui.Separator();
@@ -439,7 +440,8 @@ public sealed partial class ForetellEngine
         ImGui.Separator();
 
         ImGui.TextUnformatted("FILES / PRIVACY");
-        ImGui.TextUnformatted("foretell-memory.json contains persistent local learned memory. foretell-replays/*.jsonl contains normalized local event streams. Foretell does not send these to a remote API.");
+        ImGui.TextUnformatted("foretell-memory.json contains persistent local learned memory. foretell-replays/*.jsonl contains normalized and raw-binary local event streams. Foretell does not send these to a remote API.");
+        ImGui.TextWrapped("Structured native system LogMessage events are recorded, but private player chat is deliberately not captured. Process pointer addresses are also excluded because they are layout noise, not gameplay evidence.");
         ImGui.TextUnformatted("The Replay Lab uses a temporary sandbox store and restores live memory after analysis.");
     }
 }

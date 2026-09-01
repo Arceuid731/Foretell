@@ -17,8 +17,10 @@ public enum ObservationKind
     Icon, VFX, TetherStart, TetherEnd, StatusGain, StatusLose,
     EventObjectState, EventObjectAnimation, ActionTimelineEvent, ActionTimelineSync, NpcYell,
     MapEffect, LegacyMapEffect, DirectorUpdate, SystemLog, ObjectEffect,
+    DutyStarted, DutyWiped, DutyRecommenced, DutyCompleted, FlyText, DalamudLogMessage, NormalToast, QuestToast, ErrorToast,
     WorldOperation, ServerIPC, ClientIPC, ActorControlRaw,
-    PositionSample, Displacement, ActorSnapshot,
+    PositionSample, Displacement, ActorSnapshot, EnvironmentSnapshot, CameraSnapshot,
+    NativeVFXSpawn, NativeVFXDestroy,
     ClientMetadata, GenericFeature
 }
 
@@ -241,7 +243,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 5;
+    public int Schema { get; set; } = 6;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];

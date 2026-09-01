@@ -23,6 +23,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate zero-knowledge telemetry contract
+        run: python .github/scripts/check_foretell_telemetry_contract.py
+
       - name: Read release configuration
         shell: pwsh
         run: |
@@ -84,11 +87,13 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Exhaustive encounter-agnostic telemetry release. Foretell now combines semantic BMR WorldState events, every non-frame WorldState operation, generic Dalamud/runtime state, Lumina metadata, an unconditional passive server/client IPC tap, and a direct EventObject object-effect surface.
+          Native data-completeness release. Foretell combines semantic BMR WorldState events, every non-frame WorldState operation, generic Dalamud/runtime state, Lumina metadata, an unconditional passive server/client IPC tap, and direct EventObject plus actor/static VFX lifecycle sensors with full VFX paths.
 
-          Raw packet payloads are retained losslessly in Foretell replay. Every payload byte contributes to the compressed hashed learner feature space, so unknown or not-yet-decoded packet fields are not silently discarded. ActionEffect/EffectResult, ActorControl, statuses, casts, system logs, map/director events, timelines, actor state and native object effects all participate in causal correlation.
+          Raw packet payloads are retained losslessly in Foretell replay. Every payload byte contributes to the compressed hashed learner feature space, so unknown or not-yet-decoded packet fields are not silently discarded. ActionEffect/sequence-linked EffectResult, ActorControl p1..p8, statuses, casts, system logs, map/director events and native object/VFX effects all participate in causal correlation.
 
-          The local classifier expands from 10 fixed features to 10 deterministic core features plus 128 generic hashed Data Fabric dimensions while preserving compatible legacy weights. Runtime coverage auditing tracks discovered, ingested, learner-used, explicitly excluded and unaccounted fields.
+          Native Character snapshots add movement and soft-target state, both tether slots with progress, timeline arrays/speeds, model/skeleton data and transformation timers. Native environment/weather transitions, complete camera matrices/projection state, duty lifecycle, fly text, toast payloads and structured system LogMessage events add independent redundant evidence. Private player chat and unstable pointer addresses remain deliberately excluded.
+
+          Fixed 32-entry sampling and the shared WorldState traversal budget are removed. Independent roots prevent large actor/party collections from starving client, network, environment or camera data. CI protects the telemetry contract, while runtime audits classify every Dalamud plugin service and expose unavailable, truncated or newly introduced sources as unaccounted.
 
           Foretell still starts from zero encounter knowledge: hand-authored BossModule/state-machine/component/layout/preset answers are excluded. Generic BMR algorithms, geometry/pathfinding/constraint primitives, decoders and raw sensors remain valid encounter-agnostic machinery.
 

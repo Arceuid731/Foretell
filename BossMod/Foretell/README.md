@@ -12,15 +12,19 @@ Foretell intentionally does not automate player movement. Low-confidence predict
 
 ## Data Fabric completeness contract
 
-Foretell ingests generic structured evidence available through BMR WorldState, Dalamud runtime gameplay services, actor/target state, raw event payloads, and relevant Lumina rows. Reflection discovers scalar/enum/text fields recursively and feeds them through a stable hashed feature space; ActionEffect/status/map/director payload details are retained in replay instead of discarded.
+Foretell ingests generic structured evidence available through BMR WorldState, Dalamud runtime gameplay services, actor/target state, raw event payloads, native FFXIVClientStructs memory, and relevant Lumina rows. Reflection discovers scalar/enum/text/binary fields recursively and feeds them through a stable hashed feature space; ActionEffect/status/map/director payload details are retained in replay instead of discarded.
 
 The one deliberate boundary is encounter-authored knowledge: BossModule implementations, state machines, encounter components/layouts/presets and equivalent hand-written answers are excluded. Foretell learns from the raw game data instead. The in-game coverage audit reports discovered, ingested, learner-used, explicitly excluded and unaccounted fields; unaccounted data is treated as a defect rather than silently ignored.
 
-The Data Fabric contract is enforced at runtime and visible in the Inspector coverage counters.
+The Data Fabric contract is enforced both in CI and at runtime and is visible in the Inspector coverage counters. Collections are traversed completely within a per-root recursion safety budget: party, client, network, Deep Dungeon, waymarks, Dalamud services and individual actors cannot starve one another. Budget exhaustion becomes an explicit unaccounted capability.
 
 ### Raw event hierarchy
 
-Foretell does not require ACT or IINACT for encounter telemetry. The inherited BMR sync layer already hooks/decodes native FFXIV client and network surfaces (casts, ActionEffect/EffectResult, ActorControl, statuses, map/director events, system logs, timelines, etc.). Foretell additionally consumes every non-frame `WorldState.Operation`, an unconditional lossless server/client IPC tap, and a direct EventObject animation/object-effect surface. Full binary payloads are retained in Foretell replay and every byte contributes to the compressed hashed learner feature space.
+Foretell does not require ACT or IINACT for encounter telemetry. The inherited BMR sync layer already hooks/decodes native FFXIV client and network surfaces (casts, ActionEffect/EffectResult, ActorControl, statuses, map/director events, system logs, timelines, etc.). Foretell additionally consumes every non-frame `WorldState.Operation`, an unconditional lossless server/client IPC tap, direct EventObject animation/object effects, and native actor/static VFX creation and destruction with complete paths. Full binary payloads are retained in Foretell replay and every byte contributes to the compressed hashed learner feature space.
+
+Native character snapshots preserve movement state, soft target, both tether slots with progress, voice ID, animation timeline arrays and speeds, model/skeleton state, and transformation state/timers. Separate environment snapshots preserve time, weather and transition progress; camera snapshots preserve origin, viewport, view/projection matrices and projection parameters. Duty lifecycle, fly-text/toast payloads and structured native system LogMessage events supply additional redundant evidence. Private player chat is deliberately not captured, and process pointer addresses are excluded because they are unstable layout noise rather than gameplay facts.
+
+Every Dalamud `IDalamudService` interface is runtime-audited: gameplay services must identify their ingestion route, non-gameplay services must carry an explicit reason, and unknown future services become unaccounted until reviewed.
 
 BMR/Splatoon encounter-authored answers remain forbidden. Generic BMR primitives and algorithms (geometry, AOE mathematics, arena/pathfinding/constraint utilities, packet decoders and raw sensors) are allowed because they are encounter-agnostic machinery rather than manually authored mechanic knowledge.
 

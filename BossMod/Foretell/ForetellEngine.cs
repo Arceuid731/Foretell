@@ -99,6 +99,7 @@ public sealed partial class ForetellEngine : IDisposable
             _ws.MapEffect.Subscribe(OnMapEffect),
             _ws.LegacyMapEffect.Subscribe(OnLegacyMapEffect),
             _ws.DirectorUpdate.Subscribe(OnDirectorUpdate));
+        InitializeDalamudSignals();
 
         foreach (var actor in _ws.Actors)
             OnActorAdded(actor);
@@ -273,7 +274,7 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void NormalizeStore()
     {
-        _store.Schema = Math.Max(_store.Schema, 5);
+        _store.Schema = Math.Max(_store.Schema, 6);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];

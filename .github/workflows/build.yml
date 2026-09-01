@@ -6,11 +6,13 @@ on:
     paths:
       - 'BossMod/**'
       - '.github/workflows/build.yml'
+      - '.github/scripts/check_foretell_telemetry_contract.py'
   pull_request:
     branches: [ main ]
     paths:
       - 'BossMod/**'
       - '.github/workflows/build.yml'
+      - '.github/scripts/check_foretell_telemetry_contract.py'
   workflow_dispatch:
 
 concurrency:
@@ -22,6 +24,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Validate zero-knowledge telemetry contract
+        run: python .github/scripts/check_foretell_telemetry_contract.py
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'

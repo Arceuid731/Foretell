@@ -68,7 +68,10 @@ public sealed partial class ForetellEngine
         if (observation.Kind == ObservationKind.CastStart) ++source.Casts;
         if (observation.Kind is ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart or ObservationKind.StatusGain or
             ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ActionTimelineEvent or
-            ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate or ObservationKind.NpcYell or ObservationKind.ObjectEffect or ObservationKind.SystemLog)
+            ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate or ObservationKind.NpcYell or ObservationKind.ObjectEffect or
+            ObservationKind.NativeVFXSpawn or ObservationKind.NativeVFXDestroy or ObservationKind.DutyStarted or ObservationKind.DutyWiped or
+            ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted or ObservationKind.FlyText or ObservationKind.DalamudLogMessage or
+            ObservationKind.NormalToast or ObservationKind.QuestToast or ObservationKind.ErrorToast or ObservationKind.SystemLog)
             ++source.Signals;
         if (observation.Kind == ObservationKind.DeathChanged && observation.Flag) ++source.Deaths;
     }
@@ -91,19 +94,25 @@ public sealed partial class ForetellEngine
         => observation.SourceKind is SourceKind.Enemy or SourceKind.EventObject or SourceKind.Environment
             && observation.Kind is ObservationKind.CastStart or ObservationKind.ActionResolved or ObservationKind.Icon or ObservationKind.VFX
                 or ObservationKind.TetherStart or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation
-                or ObservationKind.ActionTimelineEvent or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate or ObservationKind.ObjectEffect;
+                or ObservationKind.ActionTimelineEvent or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
+                or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn;
 
     private static bool IsTimelineSignal(ForetellObservation observation)
         => observation.Kind is ObservationKind.CastStart or ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
             or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ActionTimelineEvent
-            or ObservationKind.NpcYell or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate or ObservationKind.ObjectEffect or ObservationKind.SystemLog;
+            or ObservationKind.NpcYell or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
+            or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn or ObservationKind.DutyStarted or ObservationKind.DutyWiped
+            or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted or ObservationKind.DalamudLogMessage
+            or ObservationKind.NormalToast or ObservationKind.QuestToast or ObservationKind.ErrorToast or ObservationKind.SystemLog;
 
     private static bool IsEpisodeTrigger(ForetellObservation observation)
     {
         if (observation.SourceKind is SourceKind.Player or SourceKind.Pet) return false;
         return observation.Kind is ObservationKind.CastStart or ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
             or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ActionTimelineEvent
-            or ObservationKind.NpcYell or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate or ObservationKind.ObjectEffect or ObservationKind.SystemLog;
+            or ObservationKind.NpcYell or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
+            or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn or ObservationKind.DalamudLogMessage
+            or ObservationKind.NormalToast or ObservationKind.QuestToast or ObservationKind.ErrorToast or ObservationKind.SystemLog;
     }
 
     private static string SignalKey(ForetellObservation observation)
@@ -243,6 +252,7 @@ public sealed partial class ForetellEngine
                 break;
             case ObservationKind.Icon:
             case ObservationKind.VFX:
+            case ObservationKind.NativeVFXSpawn:
                 if (observation.TargetID != 0 && episode.ParticipantPositions.ContainsKey(observation.TargetID))
                     episode.AffectedTargets.Add(observation.TargetID);
                 break;
@@ -523,7 +533,7 @@ public sealed partial class ForetellEngine
 
         if (affected.Count is > 0 and <= 2)
         {
-            var allTanks = affected.All(id => episode.ParticipantRoleNames.GetValueOrDefault(id).Contains("Tank", StringComparison.OrdinalIgnoreCase));
+            var allTanks = affected.All(id => episode.ParticipantRoleNames.GetValueOrDefault(id)?.Contains("Tank", StringComparison.OrdinalIgnoreCase) == true);
             if (participants >= 4 && allTanks) return MechanicKind.Tankbuster;
         }
 

@@ -12,12 +12,13 @@ public sealed class OnlineClassifier
     {
         _state = state;
         var oldFeatureCount = Math.Max(0, state.FeatureCount);
-        var validClasses = state.ClassCount == ClassCount && state.Weights?.Length == ClassCount;
-        if (!validClasses || state.Weights.Any(w => w == null || w.Length != oldFeatureCount + 1) || oldFeatureCount != FeatureCount)
+        var old = state.Weights ?? [];
+        var validClasses = state.ClassCount == ClassCount && old.Length == ClassCount;
+        var validShape = validClasses && old.All(w => w != null && w.Length == oldFeatureCount + 1);
+        if (!validShape || oldFeatureCount != FeatureCount)
         {
-            var old = state.Weights ?? [];
             var migrated = NewWeights();
-            if (validClasses)
+            if (validShape)
             {
                 for (var c = 0; c < ClassCount; ++c)
                 {

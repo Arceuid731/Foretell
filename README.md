@@ -64,7 +64,13 @@ This makes recorded pulls reusable as a regression corpus while the inference en
 
 Foretell is advisory. It does not add autonomous character movement. Low-confidence hypotheses are suppressed from stronger guidance, and safe-position suggestions use the deliberately strict **Never Guess Lethal** confidence threshold.
 
-Learned memory, normalized replay streams, and diagnostics stay local; Foretell does not require a remote inference API.
+Learned memory, normalized/raw-binary replay streams, and diagnostics stay local; Foretell does not require a remote inference API. Foretell records structured native system messages but deliberately excludes private player chat and process pointer addresses.
+
+## Zero-knowledge telemetry boundary
+
+Foretell starts without authored encounter answers. It may learn from raw server/client IPC, `ActorControl`, complete `ActionEffect` and sequence-linked `EffectResult`, WorldState operations, FFXIVClientStructs memory, actor/static VFX paths and lifecycles, native character/tether/timeline/model/transformation state, environment, camera, Dalamud gameplay services, Lumina metadata and observed outcomes.
+
+It must not import BossModule mechanics, state machines, boss components, encounter layouts/presets or equivalent hand-authored safe spots and phase answers. CI checks this boundary and the in-game coverage audit reports any sensor that is truncated, unavailable or not explicitly classified.
 
 ## Upstream
 

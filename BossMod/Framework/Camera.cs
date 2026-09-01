@@ -17,6 +17,14 @@ sealed class Camera
     public float CameraAzimuth; // facing north = 0, facing west = pi/4, facing south = +-pi/2, facing east = -pi/4
     public float CameraAltitude; // facing horizontally = 0, facing down = pi/4, facing up = -pi/4
     public Vector2 ViewportSize;
+    public float FieldOfView;
+    public float AspectRatio;
+    public float NativeNearPlane;
+    public float FarPlane;
+    public float OrthoHeight;
+    public bool IsOrtho;
+    public bool StandardZ;
+    public bool FiniteFarPlane;
 
     private enum WorldPrimitiveRunKind : byte { Lines, Curves }
 
@@ -55,6 +63,14 @@ sealed class Camera
 
         CameraAzimuth = MathF.Atan2(View.M13, View.M33);
         CameraAltitude = MathF.Asin(View.M23);
+        FieldOfView = renderCamera->FoV;
+        AspectRatio = renderCamera->AspectRatio;
+        NativeNearPlane = renderCamera->NearPlane;
+        FarPlane = renderCamera->FarPlane;
+        OrthoHeight = renderCamera->OrthoHeight;
+        IsOrtho = renderCamera->IsOrtho;
+        StandardZ = renderCamera->StandardZ;
+        FiniteFarPlane = renderCamera->FiniteFarPlane;
         var device = FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Device.Instance();
         ViewportSize = new(device->Width, device->Height);
     }
