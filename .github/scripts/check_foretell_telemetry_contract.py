@@ -28,6 +28,9 @@ requirements = {
         'resolved.Numeric["action.globalSequence"]',
         'obs.Numeric["effectResult.sequence"]',
         'obs.Numeric["actorControl.p8"]',
+        "WorldOperationSubstitution(op)",
+        "ActorState.OpMove =>",
+        "ClientState.OpActiveCompanionChange",
     ],
     "BossMod/Foretell/ForetellLearning.cs": [
         "observation.At = NormalizeObservationTime(observation.At)",
@@ -48,6 +51,8 @@ requirements = {
         "SampleNativeActorSlice(now)",
         "ProcessObservation(obs, enriched: true)",
         "MaxFabricTraversalMilliseconds",
+        "MaxNativeActorsPerSlice",
+        "MaxNativeActorTraversalMilliseconds",
         "EnrichActorCore(observation, actor, \"actor\")",
         "EnrichActorCollections(obs, actor)",
         "--budget",
@@ -131,12 +136,22 @@ for forbidden in ["FlattenEnumIndexers(", "move.IsFlying()", "move.IsDiving()"]:
     if forbidden in fabric or forbidden in read("BossMod/Foretell/ForetellNativeState.cs"):
         errors.append(f"Foretell runtime crash guard regressed: forbidden live invocation {forbidden!r}")
 
+if "NativeActorSlices" in fabric:
+    errors.append("Foretell native actor sampling regressed to a population-proportional all-actor slice")
+
 if fabric.find("CanTraverseFabricType(type)") > fabric.find("value is IEnumerable enumerable"):
     errors.append("Foretell can enumerate an external live implementation before applying its assembly allowlist")
 
 learning = read("BossMod/Foretell/ForetellLearning.cs")
 if learning.find("observation.At = NormalizeObservationTime(observation.At)") > learning.find("observation.At.AddSeconds(-8)"):
     errors.append("Foretell performs DateTime arithmetic before normalizing an uninitialized WorldState timestamp")
+
+episode_trigger = learning[learning.find("private static bool IsEpisodeTrigger"):learning.find("private static string SignalKey")]
+for noisy_trigger in ["DalamudLogMessage", "NormalToast", "QuestToast", "ErrorToast"]:
+    if noisy_trigger in episode_trigger:
+        errors.append(f"Foretell creates mechanic episodes from a diagnostic/UI stream: {noisy_trigger}")
+if "observation.ActorID == 0 && observation.TargetID == 0" not in episode_trigger:
+    errors.append("Foretell can create mechanic episodes from unbound ambient native VFX")
 
 engine = read("BossMod/Foretell/ForetellEngine.cs")
 if engine.find("SampleDataFabric(force: true)") > engine.find("InitializeNativeHooks()"):

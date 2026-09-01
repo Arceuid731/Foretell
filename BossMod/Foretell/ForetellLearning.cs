@@ -92,7 +92,8 @@ public sealed partial class ForetellEngine
     }
 
     private static bool IsCombatSignal(ForetellObservation observation)
-        => observation.SourceKind is SourceKind.Enemy or SourceKind.EventObject or SourceKind.Environment
+        => (observation.Kind != ObservationKind.NativeVFXSpawn || observation.ActorID != 0 || observation.TargetID != 0)
+            && observation.SourceKind is SourceKind.Enemy or SourceKind.EventObject or SourceKind.Environment
             && observation.Kind is ObservationKind.CastStart or ObservationKind.ActionResolved or ObservationKind.Icon or ObservationKind.VFX
                 or ObservationKind.TetherStart or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation
                 or ObservationKind.ActionTimelineEvent or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
@@ -103,17 +104,16 @@ public sealed partial class ForetellEngine
             or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ActionTimelineEvent
             or ObservationKind.NpcYell or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
             or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn or ObservationKind.DutyStarted or ObservationKind.DutyWiped
-            or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted or ObservationKind.DalamudLogMessage
-            or ObservationKind.NormalToast or ObservationKind.QuestToast or ObservationKind.ErrorToast or ObservationKind.SystemLog;
+            or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted or ObservationKind.SystemLog;
 
     private static bool IsEpisodeTrigger(ForetellObservation observation)
     {
         if (observation.SourceKind is SourceKind.Player or SourceKind.Pet) return false;
+        if (observation.Kind == ObservationKind.NativeVFXSpawn && observation.ActorID == 0 && observation.TargetID == 0) return false;
         return observation.Kind is ObservationKind.CastStart or ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
             or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ActionTimelineEvent
             or ObservationKind.NpcYell or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
-            or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn or ObservationKind.DalamudLogMessage
-            or ObservationKind.NormalToast or ObservationKind.QuestToast or ObservationKind.ErrorToast or ObservationKind.SystemLog;
+            or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn or ObservationKind.SystemLog;
     }
 
     private static string SignalKey(ForetellObservation observation)

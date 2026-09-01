@@ -5,6 +5,8 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
+    private readonly HashSet<Type> _substitutedWorldOperations = [];
+
     private void OnActorAdded(Actor actor)
         => ProcessObservation(Observation(ObservationKind.ActorAdded, actor, detail: actor.Type.ToString()));
 
@@ -222,6 +224,16 @@ public sealed partial class ForetellEngine
             return;
         }
 
+        // These values either update at render frequency or already have a lossless semantic/sampled Foretell
+        // representation. Expanding the operation and its actor here as well used to allocate hundreds of fields
+        // per actor movement, turning busy open-world zones into thousands of duplicate observations per minute.
+        if (WorldOperationSubstitution(op) is { } substitution)
+        {
+            if (_substitutedWorldOperations.Add(op.GetType()))
+                RegisterCapability($"worldop.{op.GetType().Name}", op.GetType(), op.GetType().Name, false, true, substitution);
+            return;
+        }
+
         var actorID = ToULong(Member(op, "InstanceID")) ?? ToULong(Member(op, "ActorID")) ?? ToULong(Member(op, "SourceID")) ?? ToULong(Member(op, "CasterID")) ?? 0;
         var actor = actorID != 0 ? _ws.Actors.Find(actorID) : null;
         var typeName = op.GetType().FullName ?? op.GetType().Name;
@@ -233,6 +245,20 @@ public sealed partial class ForetellEngine
         }
         ProcessRichObservation(obs, op);
     }
+
+    private static string? WorldOperationSubstitution(WorldState.Operation op) => op switch
+    {
+        ActorState.OpMove => "represented by 4 Hz PositionSample plus rotating generic/native actor snapshots",
+        ActorState.OpCreate or ActorState.OpDestroy => "duplicate of the semantic actor lifecycle stream",
+        ActorState.OpTargetable or ActorState.OpDead or ActorState.OpRenderflags or ActorState.OpEventState or ActorState.OpModelState => "duplicate of a semantic actor-state stream",
+        ActorState.OpTether or ActorState.OpCastInfo or ActorState.OpCastEvent or ActorState.OpStatus or ActorState.OpIcon or ActorState.OpVFX => "duplicate of a lossless semantic combat stream",
+        ActorState.OpEventObjectStateChange or ActorState.OpEventObjectAnimation or ActorState.OpPlayActionTimelineEvent or ActorState.OpPlayActionTimelineSync or ActorState.OpEventNpcYell => "duplicate of a semantic encounter-signal stream",
+        ClientState.OpActiveCompanionChange or ClientState.OpActivePetChange or ClientState.OpActiveFateChange => "represented by the sampled runtime.client root; continuous timers are not discrete events",
+        ClientState.OpAnimationLockChange or ClientState.OpComboChange or ClientState.OpCooldown or ClientState.OpProcTimersChange => "represented by typed action/effect events and the sampled runtime.client root",
+        ClientState.OpHateChange => "represented by typed enmity state in the sampled runtime.client root",
+        ClientState.OpForcedMovementDirectionChange => "represented by sampled movement and runtime.client state",
+        _ => null
+    };
 
     private void OnSystemLog(WorldState.OpSystemLogMessage op)
     {

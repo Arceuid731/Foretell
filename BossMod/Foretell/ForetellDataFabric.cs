@@ -18,12 +18,13 @@ public sealed partial class ForetellEngine
     private const int MaxFabricEntriesPerRoot = 4096;
     private const double MaxFabricTraversalMilliseconds = 1.0;
     private const int RuntimeRootCount = 21;
-    private const int NativeActorSlices = 2;
+    private const int MaxNativeActorsPerSlice = 6;
+    private const double MaxNativeActorTraversalMilliseconds = 0.75;
     private DateTime _lastFabricSample;
     private DateTime _lastNativeFabricSample;
     private int _runtimeRootCursor;
     private int _actorFabricCursor;
-    private int _nativeActorSliceCursor;
+    private int _nativeActorCursor;
     private readonly Dictionary<ulong, string> _actorFabricFingerprint = [];
     private readonly Dictionary<ulong, string> _nativeActorFabricFingerprint = [];
     private readonly Dictionary<ulong, FabricActorTrack> _fabricActorTracks = [];
@@ -48,7 +49,7 @@ public sealed partial class ForetellEngine
         _fabricCollectionOffsets.Clear();
         _runtimeRootCursor = 0;
         _actorFabricCursor = 0;
-        _nativeActorSliceCursor = 0;
+        _nativeActorCursor = 0;
         ResetNativeDataFabric();
         _lastFabricSample = default;
         _lastNativeFabricSample = default;
@@ -75,8 +76,8 @@ public sealed partial class ForetellEngine
             }
         }
 
-        // Environment and camera retain their original 2 Hz cadence. Character direct reads are partitioned into
-        // two alternating 250 ms slices above, preserving 2 Hz per actor without an all-actors frame spike.
+        // Environment and camera retain their original 2 Hz cadence. Character reads use a rotating bounded
+        // queue above: every actor remains discoverable, while population size can no longer create a frame spike.
         if (!force && (now - _lastNativeFabricSample).TotalMilliseconds < 500)
             return;
         _lastNativeFabricSample = now;
@@ -106,12 +107,23 @@ public sealed partial class ForetellEngine
     private void SampleNativeActorSlice(DateTime now)
     {
         var actors = _ws.Actors.ToArray();
-        var slice = _nativeActorSliceCursor++ % NativeActorSlices;
-        for (var i = slice; i < actors.Length; i += NativeActorSlices)
+        if (actors.Length == 0)
+            return;
+        if (_nativeActorCursor >= actors.Length)
+            _nativeActorCursor = 0;
+
+        var started = Stopwatch.GetTimestamp();
+        var examined = 0;
+        var sampled = 0;
+        while (examined < actors.Length && sampled < MaxNativeActorsPerSlice && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxNativeActorTraversalMilliseconds)
         {
-            var actor = actors[i];
+            var actor = actors[_nativeActorCursor++];
+            if (_nativeActorCursor >= actors.Length)
+                _nativeActorCursor = 0;
+            ++examined;
             if (!HasNativeCharacterLayout(actor.Type))
                 continue;
+            ++sampled;
             var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:native");
             EnrichNativeCharacter(obs, actor);
             var pos = new Vector2(actor.Position.X, actor.Position.Z);
