@@ -263,6 +263,8 @@ public sealed partial class ForetellEngine
                 RegisterCapability(memberPath, type, p.Name, false, true, "not readable instance data");
                 continue;
             }
+            if (RejectNonBoxableMember(p.PropertyType, memberPath, type, p.Name))
+                continue;
             try
             {
                 FlattenObject(p.GetValue(value), memberPath, observation, depth + 1, maxDepth, visited, ref budget);
@@ -276,6 +278,8 @@ public sealed partial class ForetellEngine
         {
             if (budget <= 0 || f.IsStatic) break;
             var memberPath = $"{path}.{f.Name}";
+            if (RejectNonBoxableMember(f.FieldType, memberPath, type, f.Name))
+                continue;
             try
             {
                 FlattenObject(f.GetValue(value), memberPath, observation, depth + 1, maxDepth, visited, ref budget);
@@ -285,6 +289,24 @@ public sealed partial class ForetellEngine
                 RegisterCapability(memberPath, type, f.Name, false, false, $"field rejected: {e.GetType().Name}");
             }
         }
+    }
+
+    // Reflection cannot box these CLR types. In particular, invoking PropertyInfo.GetValue for a function-pointer
+    // member makes MethodBaseInvoker ask the runtime for a managed call signature and can terminate CoreCLR with
+    // 0x80131506 before managed exception handling is reached.
+    private bool RejectNonBoxableMember(Type memberType, string path, Type sourceType, string member)
+    {
+        if (memberType.IsPointer || memberType.IsFunctionPointer)
+        {
+            RegisterCapability(path, sourceType, member, false, true, "native pointer/function pointer is operational layout, never learner evidence");
+            return true;
+        }
+        if (memberType.IsByRef || memberType.IsByRefLike || memberType == typeof(TypedReference) || memberType == typeof(ArgIterator))
+        {
+            RegisterCapability(path, sourceType, member, false, false, "non-boxable CLR value requires dedicated typed ingestion");
+            return true;
+        }
+        return false;
     }
 
     private bool TryStoreScalar(object value, Type type, string path, ForetellObservation observation)
@@ -401,8 +423,11 @@ public sealed partial class ForetellEngine
     private static bool IsOperationalType(Type type)
     {
         if (typeof(Delegate).IsAssignableFrom(type)) return true;
+        if (typeof(Type).IsAssignableFrom(type) || typeof(MemberInfo).IsAssignableFrom(type)) return true;
+        if (type == typeof(RuntimeTypeHandle) || type == typeof(RuntimeMethodHandle) || type == typeof(RuntimeFieldHandle) || type == typeof(RuntimeArgumentHandle)) return true;
         var n = type.FullName ?? type.Name;
-        return n.Contains("ImGui", StringComparison.OrdinalIgnoreCase)
+        return (type.Namespace?.StartsWith("System.Reflection", StringComparison.Ordinal) ?? false)
+            || n.Contains("ImGui", StringComparison.OrdinalIgnoreCase)
             || n.Contains("Window", StringComparison.OrdinalIgnoreCase)
             || n.Contains("Logger", StringComparison.OrdinalIgnoreCase)
             || n.Contains("Texture", StringComparison.OrdinalIgnoreCase)

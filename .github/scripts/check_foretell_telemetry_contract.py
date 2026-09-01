@@ -36,6 +36,9 @@ requirements = {
         'FlattenRoot(_ws.Network, "runtime.network"',
         "foreach (var item in enumerable)",
         "AuditDalamudPluginServices()",
+        "RejectNonBoxableMember(p.PropertyType",
+        "RejectNonBoxableMember(f.FieldType",
+        "memberType.IsFunctionPointer",
     ],
     "BossMod/Foretell/ForetellNativeState.cs": [
         'var tp = $"{p}.vfx.tether[{i}]"',
@@ -71,6 +74,18 @@ for path, needles in requirements.items():
     for needle in needles:
         if needle not in text:
             errors.append(f"{path}: missing contract marker {needle!r}")
+
+fabric = read("BossMod/Foretell/ForetellDataFabric.cs")
+for guard, invocation in [
+    ("RejectNonBoxableMember(p.PropertyType", "p.GetValue(value)"),
+    ("RejectNonBoxableMember(f.FieldType", "f.GetValue(value)"),
+]:
+    guard_at = fabric.find(guard)
+    invocation_at = fabric.find(invocation)
+    if invocation_at < 0:
+        errors.append(f"Foretell reflection contract invocation disappeared without review: {invocation}")
+    elif guard_at >= 0 and guard_at > invocation_at:
+        errors.append(f"Foretell invokes non-boxable reflection member before its crash guard: {invocation}")
 
 foretell_sources = "\n".join(
     path.read_text(encoding="utf-8-sig")

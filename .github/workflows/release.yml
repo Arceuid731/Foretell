@@ -87,6 +87,8 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
+          Stability hotfix: Data Fabric now detects native function-pointer, pointer, by-ref and by-ref-like members before reflection invocation. This prevents a fatal CoreCLR 0x80131506 crash during initial runtime-context sampling while keeping such members visible in the coverage audit as explicitly excluded or requiring dedicated typed ingestion.
+
           Native data-completeness release. Foretell combines semantic BMR WorldState events, every non-frame WorldState operation, generic Dalamud/runtime state, Lumina metadata, an unconditional passive server/client IPC tap, and direct EventObject plus actor/static VFX lifecycle sensors with full VFX paths.
 
           Raw packet payloads are retained losslessly in Foretell replay. Every payload byte contributes to the compressed hashed learner feature space, so unknown or not-yet-decoded packet fields are not silently discarded. ActionEffect/sequence-linked EffectResult, ActorControl p1..p8, statuses, casts, system logs, map/director events and native object/VFX effects all participate in causal correlation.
