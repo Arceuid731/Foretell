@@ -66,6 +66,12 @@ public sealed partial class ForetellEngine
         return forward >= 0 && forward <= length && MathF.Abs(side) <= halfWidth;
     }
 
+    private static bool InCross(Vector2 p, Vector2 o, float rot, float length, float halfWidth)
+        => InRect(p, o, rot, length, halfWidth)
+            || InRect(p, o, rot + MathF.PI, length, halfWidth)
+            || InRect(p, o, rot + MathF.PI * .5f, length, halfWidth)
+            || InRect(p, o, rot - MathF.PI * .5f, length, halfWidth);
+
     private static float Norm(float a)
     {
         while (a > MathF.PI) a -= MathF.Tau;
@@ -79,6 +85,7 @@ public sealed partial class ForetellEngine
         GeometryKind.Donut => Vector2.Distance(q, p.Origin) is var d && d >= p.P1 && d <= p.P2,
         GeometryKind.Cone => InCone(q, p.Origin, p.Rotation, p.P1, p.P2),
         GeometryKind.Rectangle => InRect(q, p.Origin, p.Rotation, p.P1, p.P2),
+        GeometryKind.Cross => InCross(q, p.Origin, p.Rotation, p.P1, p.P2),
         _ => false
     };
 }
