@@ -87,17 +87,17 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Open-world performance and cockpit UI hotfix.
+          Native telemetry safety hotfix.
 
-          The generic Data Fabric safety budget now counts every visited node instead of only scalar leaves. Complex FATE, object and service collections can no longer bypass the guard. Each reflective root has a hard 1 ms live traversal deadline, collection continuation is retained across rolling passes, collection implementation internals are no longer reflected after their contents, and getters exceeding 2 ms are quarantined for later dedicated typed ingestion.
+          The generic Data Fabric now fails closed before touching external live implementations. Arbitrary Dalamud and FFXIVClientStructs property getters, fields and enumerators are no longer traversed reflectively: these surfaces can cross into unmanaged client code, where a stopwatch deadline and managed exception handler cannot contain an access violation. BossMod/Foretell managed DTOs and Lumina generated rows retain their bounded rolling traversal.
 
-          Normalized BMR Actor state now uses a bounded typed extractor instead of recursive reflection, including identity, position, HP/MP, targeting, model, cast, statuses, incoming ActionEffect payloads and pending EffectResult-linked state. Native Character sampling rejects non-character actor types before ObjectTable lookup, avoiding the large open-world EventObject/gathering-object search cost. Raw IPC, semantic WorldState events and direct native hooks remain independent of the generic scanner.
+          Condition and keyboard state now use explicit typed Dalamud indexers. Other external services remain classified in telemetry coverage and require dedicated typed extractors instead of unsafe implementation reflection.
 
-          The Foretell cockpit has been redesigned around compact metrics, tables and collapsible help instead of large text walls. It now has its own Settings tab for learning, rendering, confidence gates and radar configuration. ForetellConfig is explicitly excluded from the legacy BMR Settings tree.
+          High-frequency Character sampling no longer invokes the native MoveController IsFlying/IsDiving functions. Stable movement fields remain recorded, together with native tethers, timelines, models and transformation state.
 
-          The mini radar is now a persistent ImGui window. Enable "Unlock radar to move it" in Foretell > Settings, drag its title bar, then lock it again. Its normalized position survives resolution and viewport changes, and a reset button restores the top-right default.
+          CI now rejects any regression that enumerates an external live implementation before the assembly allowlist, reintroduces reflective enum indexers, or calls the removed native movement functions. The full Windows build was validated against the current Dalamud distribution before this release.
 
-          CI continues to enforce the zero-knowledge telemetry boundary: no hand-authored BossModule, state-machine, component, layout or preset answers are imported.
+          The supplied 22:35 crash dump shows an FFXIV Framework native callback but no Foretell managed frame; it also confirms that 0.5.3 was installed at crash time and 0.5.4 was fetched only after restart. This release therefore hardens the unsafe surfaces proven by earlier Foretell FlattenObject stacks without claiming a false one-to-one attribution for that final crash.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
