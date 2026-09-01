@@ -1,0 +1,445 @@
+using System.Collections;
+using System.Globalization;
+using System.Reflection;
+using System.Text;
+
+namespace BossMod.Foretell;
+
+// Generic, encounter-agnostic data ingestion. This deliberately refuses hand-authored BossModule/state-machine/
+// encounter-component knowledge: Foretell may consume the same raw game state, but never their authored answers.
+public sealed partial class ForetellEngine
+{
+    private const int MaxFabricEntriesPerObject = 768;
+    private DateTime _lastFabricSample;
+    private readonly Dictionary<ulong, string> _actorFabricFingerprint = [];
+    private readonly Dictionary<ulong, FabricActorTrack> _fabricActorTracks = [];
+    private Dictionary<string, double> _runtimeNumeric = [];
+    private Dictionary<string, string> _runtimeText = [];
+
+    private sealed class FabricActorTrack
+    {
+        public DateTime At;
+        public Vector2 Position;
+        public float Rotation;
+    }
+
+    private void ResetDataFabric()
+    {
+        _actorFabricFingerprint.Clear();
+        _fabricActorTracks.Clear();
+        _runtimeNumeric.Clear();
+        _runtimeText.Clear();
+        _lastFabricSample = default;
+    }
+
+    private void SampleDataFabric(bool force = false)
+    {
+        if (!force && (_ws.CurrentTime - _lastFabricSample).TotalMilliseconds < 500)
+            return;
+        _lastFabricSample = _ws.CurrentTime;
+        RefreshRuntimeContext();
+
+        foreach (var actor in _ws.Actors)
+        {
+            var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: actor.Type.ToString());
+            EnrichObservation(obs, actor);
+            var pos = new Vector2(actor.Position.X, actor.Position.Z);
+            if (_fabricActorTracks.TryGetValue(actor.InstanceID, out var previous))
+            {
+                var dt = Math.Max(.001, (_ws.CurrentTime - previous.At).TotalSeconds);
+                obs.Numeric["derived.actor.speed"] = Vector2.Distance(previous.Position, pos) / dt;
+                obs.Numeric["derived.actor.angularSpeed"] = Math.Abs(NormalizeAngle(actor.Rotation.Rad - previous.Rotation)) / dt;
+            }
+            _fabricActorTracks[actor.InstanceID] = new() { At = _ws.CurrentTime, Position = pos, Rotation = actor.Rotation.Rad };
+
+            var fingerprint = Fingerprint(obs, "actor.") + Fingerprint(obs, "derived.actor.");
+            if (_actorFabricFingerprint.GetValueOrDefault(actor.InstanceID) == fingerprint)
+                continue;
+            _actorFabricFingerprint[actor.InstanceID] = fingerprint;
+            ProcessObservation(obs);
+        }
+
+        foreach (var dead in _fabricActorTracks.Keys.Where(id => _ws.Actors.Find(id) == null).ToArray())
+        {
+            _fabricActorTracks.Remove(dead);
+            _actorFabricFingerprint.Remove(dead);
+        }
+    }
+
+    private static float NormalizeAngle(float angle)
+    {
+        while (angle > MathF.PI) angle -= MathF.Tau;
+        while (angle < -MathF.PI) angle += MathF.Tau;
+        return angle;
+    }
+
+    private void ProcessRichObservation(ForetellObservation observation, object? payload)
+    {
+        EnrichObservation(observation, payload);
+        ProcessObservation(observation);
+    }
+
+    private void EnrichObservation(ForetellObservation observation, object? payload = null)
+    {
+        observation.Numeric ??= [];
+        observation.Text ??= [];
+
+        foreach (var (k, v) in _runtimeNumeric)
+            observation.Numeric.TryAdd(k, v);
+        foreach (var (k, v) in _runtimeText)
+            observation.Text.TryAdd(k, v);
+
+        var actor = observation.ActorID != 0 ? _ws.Actors.Find(observation.ActorID) : null;
+        var target = observation.TargetID != 0 ? _ws.Actors.Find(observation.TargetID) : null;
+        if (actor != null)
+            FlattenRoot(actor, "actor", observation, 4);
+        if (target != null && target.InstanceID != actor?.InstanceID)
+            FlattenRoot(target, "target", observation, 3);
+        if (payload != null && !ReferenceEquals(payload, actor))
+            FlattenRoot(payload, "event", observation, 5);
+
+        if (observation.PrimaryID != 0 && observation.Kind is ObservationKind.CastStart or ObservationKind.CastFinish or ObservationKind.ActionResolved or ObservationKind.AffectedTarget)
+            TryFlattenRow<Lumina.Excel.Sheets.Action>(observation.PrimaryID, "static.action", observation);
+        if (observation.PrimaryID != 0 && observation.Kind is ObservationKind.StatusGain or ObservationKind.StatusLose)
+            TryFlattenRow<Lumina.Excel.Sheets.Status>(observation.PrimaryID, "static.status", observation);
+        if (observation.ActorOID != 0 && observation.SourceKind == SourceKind.Enemy)
+            TryFlattenRow<Lumina.Excel.Sheets.BNpcBase>(observation.ActorOID, "static.bnpcBase", observation);
+        if (actor != null)
+        {
+            var nameID = ToUInt(Member(actor, "NameID")) ?? ToUInt(Member(actor, "NameId")) ?? 0;
+            if (nameID != 0)
+                TryFlattenRow<Lumina.Excel.Sheets.BNpcName>(nameID, "static.bnpcName", observation);
+        }
+    }
+
+    private void RefreshRuntimeContext()
+    {
+        var obs = new ForetellObservation();
+        FlattenRoot(_ws, "runtime.worldState", obs, 3);
+        FlattenRoot(Service.ClientState, "runtime.clientState", obs, 2);
+        FlattenRoot(Service.PlayerState, "runtime.playerState", obs, 2);
+        FlattenRoot(Service.TargetManager, "runtime.targetManager", obs, 2);
+        FlattenRoot(Service.Condition, "runtime.condition", obs, 2);
+        FlattenRoot(Service.KeyState, "runtime.keyState", obs, 1);
+        FlattenRoot(Service.GameGui, "runtime.gameGui", obs, 1);
+        FlattenRoot(Service.GameConfig, "runtime.gameConfig", obs, 1);
+        FlattenRoot(Service.ObjectTable, "runtime.objectTable", obs, 1);
+        FlattenEnumIndexers(Service.Condition, "runtime.condition", obs);
+        FlattenEnumIndexers(Service.KeyState, "runtime.keyState", obs);
+        TryFlattenRow<Lumina.Excel.Sheets.TerritoryType>(_territory, "static.territory", obs);
+        _runtimeNumeric = obs.Numeric;
+        _runtimeText = obs.Text;
+    }
+
+    private void TryFlattenRow<T>(uint rowID, string prefix, ForetellObservation observation) where T : struct, Lumina.Excel.IExcelRow<T>
+    {
+        if (rowID == 0) return;
+        try
+        {
+            var sheet = Service.LuminaSheet<T>();
+            if (sheet == null)
+            {
+                RegisterCapability($"{prefix}.__sheet", typeof(T), "sheet", false, true, "sheet unavailable");
+                return;
+            }
+            object row = sheet.GetRow(rowID);
+            FlattenRoot(row, prefix, observation, 5);
+        }
+        catch (Exception e)
+        {
+            RegisterCapability($"{prefix}.__row", typeof(T), "row", false, true, $"row unavailable: {e.GetType().Name}");
+        }
+    }
+
+    private void FlattenRoot(object? value, string prefix, ForetellObservation observation, int maxDepth)
+    {
+        if (value == null) return;
+        var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var budget = MaxFabricEntriesPerObject;
+        FlattenObject(value, prefix, observation, 0, maxDepth, visited, ref budget);
+    }
+
+    private void FlattenObject(object? value, string path, ForetellObservation observation, int depth, int maxDepth,
+        HashSet<object> visited, ref int budget)
+    {
+        if (value == null || budget <= 0) return;
+        var type = value.GetType();
+        if (TryStoreScalar(value, type, path, observation))
+        {
+            --budget;
+            return;
+        }
+        if (IsEncounterAuthored(type))
+        {
+            RegisterCapability(path, type, path, false, true, "encounter-authored knowledge explicitly forbidden");
+            return;
+        }
+        if (IsOperationalType(type))
+        {
+            RegisterCapability(path, type, path, false, true, "operational/API plumbing; not game-state evidence");
+            return;
+        }
+        if (depth >= maxDepth)
+        {
+            RegisterCapability(path, type, path, false, true, "bounded traversal reached; parent identity already captured");
+            return;
+        }
+        if (!type.IsValueType && !visited.Add(value))
+        {
+            RegisterCapability(path, type, path, false, true, "reference cycle");
+            return;
+        }
+
+        if (value is IEnumerable enumerable and not string)
+        {
+            var n = 0;
+            foreach (var item in enumerable)
+            {
+                if (n >= 32 || budget <= 0) break;
+                FlattenObject(item, $"{path}[{n}]", observation, depth + 1, maxDepth, visited, ref budget);
+                ++n;
+            }
+            observation.Numeric[$"{path}.__sampledCount"] = n;
+            RegisterCapability($"{path}.__sampledCount", type, "IEnumerable", true, false, n >= 32 ? "collection sampled; dedicated sources cover high-cardinality actors" : "");
+        }
+
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        foreach (var p in type.GetProperties(flags).OrderBy(p => p.Name))
+        {
+            if (budget <= 0) break;
+            var memberPath = $"{path}.{p.Name}";
+            if (p.GetIndexParameters().Length != 0)
+            {
+                RegisterCapability(memberPath, type, p.Name, false, true, "indexer handled separately when enum-addressable");
+                continue;
+            }
+            if (p.GetMethod == null || p.GetMethod.IsStatic)
+            {
+                RegisterCapability(memberPath, type, p.Name, false, true, "not readable instance data");
+                continue;
+            }
+            try
+            {
+                FlattenObject(p.GetValue(value), memberPath, observation, depth + 1, maxDepth, visited, ref budget);
+            }
+            catch (Exception e)
+            {
+                RegisterCapability(memberPath, type, p.Name, false, true, $"getter rejected: {e.GetType().Name}");
+            }
+        }
+        foreach (var f in type.GetFields(flags).OrderBy(f => f.Name))
+        {
+            if (budget <= 0 || f.IsStatic) break;
+            var memberPath = $"{path}.{f.Name}";
+            try
+            {
+                FlattenObject(f.GetValue(value), memberPath, observation, depth + 1, maxDepth, visited, ref budget);
+            }
+            catch (Exception e)
+            {
+                RegisterCapability(memberPath, type, f.Name, false, true, $"field rejected: {e.GetType().Name}");
+            }
+        }
+    }
+
+    private bool TryStoreScalar(object value, Type type, string path, ForetellObservation observation)
+    {
+        if (type.IsEnum)
+        {
+            observation.Numeric[path] = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            observation.Text[path + ".name"] = value.ToString() ?? "";
+            RegisterCapability(path, type, path, true, false, "enum numeric+name");
+            return true;
+        }
+        if (value is bool b)
+        {
+            observation.Numeric[path] = b ? 1 : 0;
+            RegisterCapability(path, type, path, true, false, "bool");
+            return true;
+        }
+        if (value is byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal)
+        {
+            try { observation.Numeric[path] = Convert.ToDouble(value, CultureInfo.InvariantCulture); }
+            catch { observation.Text[path] = value.ToString() ?? ""; }
+            RegisterCapability(path, type, path, true, false, "numeric");
+            return true;
+        }
+        if (value is string s)
+        {
+            observation.Text[path] = s.Length <= 160 ? s : s[..160];
+            RegisterCapability(path, type, path, true, false, "text");
+            return true;
+        }
+        if (value is DateTime dt)
+        {
+            observation.Numeric[path] = dt.Ticks;
+            RegisterCapability(path, type, path, true, false, "time");
+            return true;
+        }
+        if (value is TimeSpan ts)
+        {
+            observation.Numeric[path] = ts.TotalSeconds;
+            RegisterCapability(path, type, path, true, false, "duration");
+            return true;
+        }
+        if (value is Guid guid)
+        {
+            observation.Text[path] = guid.ToString("N");
+            RegisterCapability(path, type, path, true, false, "guid");
+            return true;
+        }
+        if (type.IsPointer || value is IntPtr or UIntPtr)
+        {
+            RegisterCapability(path, type, path, false, true, "pointer/address deliberately not treated as evidence");
+            return true;
+        }
+        return false;
+    }
+
+    private void FlattenEnumIndexers(object? source, string prefix, ForetellObservation observation)
+    {
+        if (source == null) return;
+        var type = source.GetType();
+        foreach (var p in type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+        {
+            var pars = p.GetIndexParameters();
+            if (pars.Length != 1 || !pars[0].ParameterType.IsEnum || p.GetMethod == null) continue;
+            foreach (var key in Enum.GetValues(pars[0].ParameterType).Cast<object>().Take(512))
+            {
+                var path = $"{prefix}.{p.Name}[{key}]";
+                try
+                {
+                    var v = p.GetValue(source, [key]);
+                    if (v != null) TryStoreScalar(v, v.GetType(), path, observation);
+                }
+                catch (Exception e)
+                {
+                    RegisterCapability(path, type, p.Name, false, true, $"indexer rejected: {e.GetType().Name}");
+                }
+            }
+        }
+    }
+
+    private static bool IsEncounterAuthored(Type type)
+    {
+        var n = type.FullName ?? type.Name;
+        return n.Contains("BossMod.Modules.", StringComparison.Ordinal)
+            || n.Contains("BossModule", StringComparison.Ordinal)
+            || n.Contains("StateMachine", StringComparison.Ordinal)
+            || n.Contains("BossComponent", StringComparison.Ordinal);
+    }
+
+    private static bool IsOperationalType(Type type)
+    {
+        if (typeof(Delegate).IsAssignableFrom(type)) return true;
+        var n = type.FullName ?? type.Name;
+        return n.Contains("ImGui", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Window", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Logger", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("Texture", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("CommandManager", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("SigScanner", StringComparison.OrdinalIgnoreCase)
+            || n.Contains("InteropProvider", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RegisterCapability(string key, Type sourceType, string member, bool ingested, bool excluded, string reason)
+    {
+        var coverage = _store.Coverage ??= new();
+        if (!coverage.Items.TryGetValue(key, out var cap))
+        {
+            cap = new()
+            {
+                Key = key,
+                Category = key.Split('.', 2)[0],
+                SourceType = sourceType.FullName ?? sourceType.Name,
+                Member = member
+            };
+            coverage.Items[key] = cap;
+        }
+        ++cap.Seen;
+        cap.Ingested |= ingested;
+        cap.Excluded |= excluded;
+        if (!string.IsNullOrEmpty(reason)) cap.Reason = reason;
+    }
+
+    private void RegisterRecordedFeatures(ForetellObservation observation)
+    {
+        observation.Numeric ??= [];
+        observation.Text ??= [];
+        foreach (var key in observation.Numeric.Keys)
+            RegisterCapability(key, typeof(ForetellObservation), key, true, false, "replayed recorded feature");
+        foreach (var key in observation.Text.Keys)
+            RegisterCapability(key, typeof(ForetellObservation), key, true, false, "replayed recorded feature");
+    }
+
+    private void AccumulateDataFeatures(ForetellObservation observation)
+    {
+        MechanicEpisode? episode = _episodes.GetValueOrDefault(observation.Sequence);
+        episode ??= BestEpisode(observation);
+        if (episode == null) return;
+        if (observation.Kind == ObservationKind.ActorSnapshot && observation.ActorID != episode.Trigger.ActorID && !episode.ParticipantPositions.ContainsKey(observation.ActorID))
+            return;
+        episode.AccumulateFeatures(observation);
+    }
+
+    private double[] ExtendFeatureVector(double[] core, MechanicEpisode episode)
+    {
+        var result = new double[OnlineClassifier.FeatureCount];
+        Array.Copy(core, result, Math.Min(core.Length, OnlineClassifier.BaseFeatureCount));
+        foreach (var (key, sum) in episode.FeatureSums)
+        {
+            var count = Math.Max(1, episode.FeatureCounts.GetValueOrDefault(key));
+            var value = key.StartsWith("@text:", StringComparison.Ordinal) ? Math.Min(1d, sum / count) : NormalizeFeatureNumber(sum / count);
+            var canonical = key.StartsWith("@text:", StringComparison.Ordinal) ? key[6..] : key;
+            var hash = StableHash(canonical);
+            var slot = OnlineClassifier.BaseFeatureCount + (int)(hash % OnlineClassifier.FabricFeatureCount);
+            var sign = (hash & 0x80000000u) == 0 ? 1d : -1d;
+            result[slot] = Math.Clamp(result[slot] + sign * value, -4, 4);
+            MarkCapabilityUsed(canonical);
+        }
+        return result;
+    }
+
+    private static double NormalizeFeatureNumber(double value)
+    {
+        if (!double.IsFinite(value)) return 0;
+        var sign = Math.Sign(value);
+        return sign * Math.Tanh(Math.Log10(1 + Math.Abs(value)) / 3.5);
+    }
+
+    private static uint StableHash(string value)
+    {
+        unchecked
+        {
+            var hash = 2166136261u;
+            foreach (var c in value)
+            {
+                hash ^= c;
+                hash *= 16777619u;
+            }
+            return hash;
+        }
+    }
+
+    private void MarkCapabilityUsed(string feature)
+    {
+        var key = feature;
+        var eq = key.IndexOf('=');
+        if (eq > 0) key = key[..eq];
+        if (_store.Coverage.Items.TryGetValue(key, out var cap))
+        {
+            cap.Used = true;
+            ++cap.UsedCount;
+        }
+    }
+
+    private static string Fingerprint(ForetellObservation observation, string prefix)
+    {
+        var sb = new StringBuilder();
+        foreach (var (k, v) in observation.Numeric.Where(kv => kv.Key.StartsWith(prefix, StringComparison.Ordinal)).OrderBy(kv => kv.Key))
+            sb.Append(k).Append('=').Append(v.ToString("R", CultureInfo.InvariantCulture)).Append(';');
+        foreach (var (k, v) in observation.Text.Where(kv => kv.Key.StartsWith(prefix, StringComparison.Ordinal)).OrderBy(kv => kv.Key))
+            sb.Append(k).Append('=').Append(v).Append(';');
+        return StableHash(sb.ToString()).ToString("X8");
+    }
+}

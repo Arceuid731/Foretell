@@ -17,7 +17,26 @@ internal sealed class MechanicEpisode
     public Dictionary<ulong, float> MovementDistances { get; } = [];
     public HashSet<ulong> DeathTargets { get; } = [];
     public Dictionary<ObservationKind, int> Evidence { get; } = [];
+    public Dictionary<string, double> FeatureSums { get; } = [];
+    public Dictionary<string, int> FeatureCounts { get; } = [];
     public bool Finalized { get; set; }
+
+    public void AccumulateFeatures(ForetellObservation observation)
+    {
+        foreach (var (key, value) in observation.Numeric)
+        {
+            if (FeatureSums.Count >= 4096 && !FeatureSums.ContainsKey(key)) continue;
+            FeatureSums[key] = FeatureSums.GetValueOrDefault(key) + value;
+            FeatureCounts[key] = FeatureCounts.GetValueOrDefault(key) + 1;
+        }
+        foreach (var (key, value) in observation.Text)
+        {
+            var token = $"@text:{key}={value}";
+            if (FeatureSums.Count >= 4096 && !FeatureSums.ContainsKey(token)) continue;
+            FeatureSums[token] = FeatureSums.GetValueOrDefault(token) + 1;
+            FeatureCounts[token] = FeatureCounts.GetValueOrDefault(token) + 1;
+        }
+    }
 
     public string SignalKey => $"{Trigger.ActorOID:X}:{Trigger.Kind}:{Trigger.PrimaryID:X}";
 

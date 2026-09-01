@@ -17,11 +17,36 @@ public enum ObservationKind
     Icon, VFX, TetherStart, TetherEnd, StatusGain, StatusLose,
     EventObjectState, EventObjectAnimation, ActionTimelineEvent, ActionTimelineSync, NpcYell,
     MapEffect, LegacyMapEffect, DirectorUpdate,
-    PositionSample, Displacement,
-    ClientMetadata
+    PositionSample, Displacement, ActorSnapshot,
+    ClientMetadata, GenericFeature
 }
 
 public enum SourceKind { Unknown, Player, Pet, Enemy, EventObject, Environment }
+
+public sealed class DataCapability
+{
+    public string Key { get; set; } = "";
+    public string Category { get; set; } = "";
+    public string SourceType { get; set; } = "";
+    public string Member { get; set; } = "";
+    public long Seen { get; set; }
+    public bool Ingested { get; set; }
+    public bool Used { get; set; }
+    public long UsedCount { get; set; }
+    public bool Excluded { get; set; }
+    public string Reason { get; set; } = "";
+    [JsonIgnore] public bool Unaccounted => !Ingested && !Excluded;
+}
+
+public sealed class DataCoverage
+{
+    public Dictionary<string, DataCapability> Items { get; set; } = [];
+    [JsonIgnore] public int Discovered => Items.Count;
+    [JsonIgnore] public int Ingested => Items.Values.Count(v => v.Ingested);
+    [JsonIgnore] public int Used => Items.Values.Count(v => v.Used);
+    [JsonIgnore] public int Excluded => Items.Values.Count(v => v.Excluded);
+    [JsonIgnore] public int Unaccounted => Items.Values.Count(v => v.Unaccounted);
+}
 
 public sealed class LearnedMechanic
 {
@@ -215,12 +240,13 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 3;
+    public int Schema { get; set; } = 4;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
     public List<SessionSummary> Sessions { get; set; } = [];
     public MLState ML { get; set; } = new();
+    public DataCoverage Coverage { get; set; } = new();
 }
 
 public sealed class ForetellObservation
@@ -244,6 +270,8 @@ public sealed class ForetellObservation
     public float Value2 { get; set; }
     public bool Flag { get; set; }
     public string Detail { get; set; } = "";
+    public Dictionary<string, double> Numeric { get; set; } = [];
+    public Dictionary<string, string> Text { get; set; } = [];
 }
 
 public sealed class ReplayReport

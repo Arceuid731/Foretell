@@ -35,7 +35,7 @@ public sealed partial class ForetellEngine
         var action = ReadActionID(ev);
         if (action == 0) return;
         var targets = ExtractTargetIDs(ev);
-        ProcessObservation(Observation(ObservationKind.ActionResolved, actor, action, value1: targets.Count));
+        ProcessRichObservation(Observation(ObservationKind.ActionResolved, actor, action, value1: targets.Count), ev);
         foreach (var target in targets)
             ProcessObservation(Observation(ObservationKind.AffectedTarget, actor, action, target: target));
     }
@@ -85,7 +85,7 @@ public sealed partial class ForetellEngine
             obs.TargetX = affected.Position.X;
             obs.TargetZ = affected.Position.Z;
         }
-        ProcessObservation(obs);
+        ProcessRichObservation(obs, status);
     }
 
     private void OnStatusLose(Actor affected, int index)
@@ -100,7 +100,7 @@ public sealed partial class ForetellEngine
             obs.TargetX = affected.Position.X;
             obs.TargetZ = affected.Position.Z;
         }
-        ProcessObservation(obs);
+        ProcessRichObservation(obs, status);
     }
 
     private void OnIcon(Actor actor, uint icon, ulong target)
@@ -122,32 +122,32 @@ public sealed partial class ForetellEngine
     {
         if (events.Count == 0)
         {
-            ProcessObservation(Observation(ObservationKind.ActionTimelineSync, actor));
+            ProcessRichObservation(Observation(ObservationKind.ActionTimelineSync, actor), events);
             return;
         }
         foreach (var ev in events.Take(32))
-            ProcessObservation(Observation(ObservationKind.ActionTimelineSync, actor, ev.Item2, detail: ev.Item1.ToString("X")));
+            ProcessRichObservation(Observation(ObservationKind.ActionTimelineSync, actor, ev.Item2, detail: ev.Item1.ToString("X")), events);
     }
 
     private void OnNpcYell(Actor actor, ushort id)
         => ProcessObservation(Observation(ObservationKind.NpcYell, actor, id));
 
     private void OnMapEffect(WorldState.OpMapEffect op)
-        => ProcessObservation(Observation(ObservationKind.MapEffect, primary: ToUInt(op.Index) ?? 0, secondary: ToUInt(op.State) ?? 0));
+        => ProcessRichObservation(Observation(ObservationKind.MapEffect, primary: ToUInt(op.Index) ?? 0, secondary: ToUInt(op.State) ?? 0), op);
 
     private void OnLegacyMapEffect(WorldState.OpLegacyMapEffect op)
-        => ProcessObservation(Observation(ObservationKind.LegacyMapEffect,
+        => ProcessRichObservation(Observation(ObservationKind.LegacyMapEffect,
             primary: ToUInt(op.Sequence) ?? 0,
             secondary: ToUInt(op.Param) ?? 0,
-            value1: ToUInt(op.Data) ?? 0));
+            value1: ToUInt(op.Data) ?? 0), op);
 
     private void OnDirectorUpdate(WorldState.OpDirectorUpdate op)
-        => ProcessObservation(Observation(ObservationKind.DirectorUpdate,
+        => ProcessRichObservation(Observation(ObservationKind.DirectorUpdate,
             primary: ToUInt(op.UpdateID) ?? 0,
             secondary: ToUInt(op.Param1) ?? 0,
             value1: ToUInt(op.Param2) ?? 0,
             value2: ToUInt(op.Param3) ?? 0,
-            detail: (ToUInt(op.Param4) ?? 0).ToString("X")));
+            detail: (ToUInt(op.Param4) ?? 0).ToString("X")), op);
 
     private void SamplePartyPositions()
     {

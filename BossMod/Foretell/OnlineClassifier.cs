@@ -2,19 +2,35 @@ namespace BossMod.Foretell;
 
 public sealed class OnlineClassifier
 {
-    public const int FeatureCount = 10;
+    public const int BaseFeatureCount = 10;
+    public const int FabricFeatureCount = 128;
+    public const int FeatureCount = BaseFeatureCount + FabricFeatureCount;
     public const int ClassCount = 18;
     private readonly MLState _state;
 
     public OnlineClassifier(MLState state)
     {
         _state = state;
-        if (state.FeatureCount != FeatureCount || state.ClassCount != ClassCount || state.Weights.Length != ClassCount || state.Weights.Any(w => w.Length != FeatureCount + 1))
+        var oldFeatureCount = Math.Max(0, state.FeatureCount);
+        var validClasses = state.ClassCount == ClassCount && state.Weights?.Length == ClassCount;
+        if (!validClasses || state.Weights.Any(w => w == null || w.Length != oldFeatureCount + 1) || oldFeatureCount != FeatureCount)
         {
+            var old = state.Weights ?? [];
+            var migrated = NewWeights();
+            if (validClasses)
+            {
+                for (var c = 0; c < ClassCount; ++c)
+                {
+                    var row = old[c];
+                    var copy = Math.Min(oldFeatureCount, FeatureCount);
+                    Array.Copy(row, migrated[c], copy);
+                    if (row.Length > oldFeatureCount)
+                        migrated[c][FeatureCount] = row[oldFeatureCount];
+                }
+            }
             state.FeatureCount = FeatureCount;
             state.ClassCount = ClassCount;
-            state.Weights = NewWeights();
-            state.Updates = 0;
+            state.Weights = migrated;
         }
     }
 
@@ -28,7 +44,7 @@ public sealed class OnlineClassifier
         {
             var w = _state.Weights[c];
             var z = w[FeatureCount];
-            for (var i = 0; i < FeatureCount; ++i) z += w[i] * x[i];
+            for (var i = 0; i < FeatureCount && i < x.Length; ++i) z += w[i] * x[i];
             logits[c] = z;
             max = Math.Max(max, z);
         }
@@ -44,7 +60,7 @@ public sealed class OnlineClassifier
         return ((MechanicKind)best, (float)bestP);
     }
 
-    public void Train(ReadOnlySpan<double> x, MechanicKind label, double learningRate = .025)
+    public void Train(ReadOnlySpan<double> x, MechanicKind label, double learningRate = .018)
     {
         var y = Math.Clamp((int)label, 0, ClassCount - 1);
         Span<double> logits = stackalloc double[ClassCount];
@@ -53,7 +69,7 @@ public sealed class OnlineClassifier
         {
             var w = _state.Weights[c];
             var z = w[FeatureCount];
-            for (var i = 0; i < FeatureCount; ++i) z += w[i] * x[i];
+            for (var i = 0; i < FeatureCount && i < x.Length; ++i) z += w[i] * x[i];
             logits[c] = z;
             max = Math.Max(max, z);
         }
@@ -64,7 +80,7 @@ public sealed class OnlineClassifier
             var p = Math.Exp(logits[c] - max) / sum;
             var error = (c == y ? 1d : 0d) - p;
             var w = _state.Weights[c];
-            for (var i = 0; i < FeatureCount; ++i) w[i] += learningRate * error * x[i];
+            for (var i = 0; i < FeatureCount && i < x.Length; ++i) w[i] += learningRate * error * x[i];
             w[FeatureCount] += learningRate * error;
         }
         ++_state.Updates;

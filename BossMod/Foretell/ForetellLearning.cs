@@ -7,6 +7,7 @@ public sealed partial class ForetellEngine
         if (observation.Sequence == 0) observation.Sequence = ++_sequence;
         else _sequence = Math.Max(_sequence, observation.Sequence);
         if (observation.TerritoryID == 0) observation.TerritoryID = _territory;
+        if (replaying) RegisterRecordedFeatures(observation); else EnrichObservation(observation);
 
         FinalizeDue(observation.At);
         _session.Observe(observation);
@@ -42,6 +43,7 @@ public sealed partial class ForetellEngine
             StartEpisode(observation, encounter);
         if (observation.Kind == ObservationKind.CastStart)
             ApplyActionMetadataPrior(observation);
+        AccumulateDataFeatures(observation);
 
         _recentSignals.Enqueue(observation);
         TrimRecentSignals(observation.At.AddSeconds(-8));
@@ -349,6 +351,19 @@ public sealed partial class ForetellEngine
         var fit = FitNormalizedGeometry(mechanic.Samples);
         var kind = ClassifyEpisode(episode, affected, fit);
         var score = EvidenceScore(kind, fit);
+        var features = ExtendFeatureVector(BuildEpisodeFeatures(episode, affected, fit), episode);
+        var ml = _cfg.EnableML ? _classifier.Predict(features) : (MechanicKind.Unknown, 0f);
+        if (kind == MechanicKind.Unknown && ml.Item1 != MechanicKind.Unknown && ml.Item2 >= .72f)
+        {
+            kind = ml.Item1;
+            score = Math.Max(score, ml.Item2 * .62f);
+            episode.AddEvidence(ObservationKind.GenericFeature);
+        }
+        else if (kind != MechanicKind.Unknown && ml.Item1 == kind && ml.Item2 >= .55f)
+        {
+            score = Math.Clamp(score + (ml.Item2 - .5f) * .12f, 0, 1);
+            episode.AddEvidence(ObservationKind.GenericFeature);
+        }
 
         var previousKind = mechanic.Kind;
         var previousGeometry = mechanic.Geometry;
@@ -382,10 +397,8 @@ public sealed partial class ForetellEngine
         }
         mechanic.Score = mechanic.Observations == 1 ? score : mechanic.Score * .72f + score * .28f;
 
-        var features = BuildEpisodeFeatures(episode, affected, fit);
         if (_cfg.EnableLearning && _cfg.EnableML && kind != MechanicKind.Unknown)
             _classifier.Train(features, kind);
-        var ml = _cfg.EnableML ? _classifier.Predict(features) : (MechanicKind.Unknown, 0f);
 
         if (_cfg.EnableLearning && episode.Trigger.Kind == ObservationKind.CastStart && fit is FitResult globalFit)
             UpdateGlobalMechanic(episode, globalFit, kind);

@@ -250,6 +250,9 @@ public sealed partial class ForetellEngine
         ImGui.TextUnformatted($"Confidence gates: {visual} visualizable (>= {_cfg.VisualConfidence:F0}%) | {warnings} warning-grade (>= {_cfg.WarningConfidence:F0}%) | {safe} safe-guidance-grade (>= {_cfg.SafeConfidence:F0}%) | {ambiguous} with conflicting evidence");
         ImGui.TextUnformatted("Overlay/radar colors encode reliability: cyan = early/visual -> yellow = learned -> orange = high -> red = safe-guidance-grade. They do NOT encode damage severity.");
         ImGui.TextUnformatted($"ML updates: {_store.ML.Updates:N0} | current predictions: {_predictions.Count} | active candidates awaiting outcome: {_episodes.Values.Count(e => !e.Finalized)}");
+        var coverage = _store.Coverage;
+        ImGui.TextUnformatted($"DATA FABRIC: {coverage.Discovered} discovered | {coverage.Ingested} ingested | {coverage.Used} used by learner | {coverage.Excluded} explicitly excluded | {coverage.Unaccounted} UNACCOUNTED");
+        if (coverage.Unaccounted != 0) ImGui.TextUnformatted("WARNING: Data Fabric discovered fields that are neither ingested nor explicitly excluded. Export diagnostics and treat this build as incomplete.");
         ImGui.TextUnformatted($"Last inference: {_lastEvidence}");
         ImGui.Separator();
 
@@ -418,6 +421,8 @@ public sealed partial class ForetellEngine
         ImGui.TextUnformatted("WHAT FORETELL OBSERVES");
         ImGui.TextUnformatted("Casts and hit targets; statuses; icons; VFX; tethers; actor lifecycle/targetability/model state; event objects; action-timeline events; NPC yells; map effects; director updates; party positions and sudden displacement.");
         ImGui.TextUnformatted("For cast actions Foretell also reads local client Action metadata (CastType, EffectRange, XAxisModifier, TargetArea, Omen/VFX and actor hitbox) as a prior before outcome evidence is available.");
+        ImGui.TextWrapped("Data Fabric additionally flattens generic structured WorldState, actor/target state, full event payloads, runtime gameplay services and complete relevant Lumina rows into hashed learner features. Encounter-authored BossModule/state-machine/component knowledge is explicitly excluded.");
+        ImGui.TextUnformatted($"Coverage audit right now: {_store.Coverage.Discovered} discovered / {_store.Coverage.Ingested} ingested / {_store.Coverage.Used} used / {_store.Coverage.Excluded} excluded / {_store.Coverage.Unaccounted} unaccounted.");
         ImGui.TextUnformatted("Learning is contextual by territory, source OID and trigger, so the same numeric signal does not automatically mean the same mechanic everywhere.");
         ImGui.Separator();
 

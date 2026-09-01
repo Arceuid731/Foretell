@@ -95,6 +95,7 @@ public sealed partial class ForetellEngine : IDisposable
         foreach (var actor in _ws.Actors)
             OnActorAdded(actor);
         SamplePartyPositions();
+        SampleDataFabric(force: true);
     }
 
     public void Dispose()
@@ -116,6 +117,7 @@ public sealed partial class ForetellEngine : IDisposable
         if ((_ws.CurrentTime - _lastPositionSample).TotalMilliseconds >= 250)
         {
             SamplePartyPositions();
+            SampleDataFabric();
             _lastPositionSample = _ws.CurrentTime;
         }
 
@@ -159,6 +161,7 @@ public sealed partial class ForetellEngine : IDisposable
         CompleteSession();
         _episodes.Clear();
         _tracks.Clear();
+        ResetDataFabric();
         _predictions.Clear();
         _recentSignals.Clear();
         _previousAction = 0;
@@ -260,12 +263,14 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void NormalizeStore()
     {
-        _store.Schema = Math.Max(_store.Schema, 3);
+        _store.Schema = Math.Max(_store.Schema, 4);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
         _store.Sessions ??= [];
         _store.ML ??= new();
+        _store.Coverage ??= new();
+        _store.Coverage.Items ??= [];
         foreach (var encounter in _store.Encounters.Values)
         {
             encounter.ObservationCounts ??= [];
