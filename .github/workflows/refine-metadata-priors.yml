@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply semantic refinements
+      - name: Apply final consistency fixes
         shell: python
         run: |
           from pathlib import Path
@@ -42,44 +42,58 @@ jobs:
                   raise RuntimeError(f'regex anchor not found in {path}: {pattern!r}')
               save(path, s2)
 
-          # Schema migration for the new metadata-prior fields.
-          replace_once('BossMod/Foretell/ForetellEngine.cs',
-              '_store.Schema = Math.Max(_store.Schema, 2);',
-              '_store.Schema = Math.Max(_store.Schema, 3);')
+          # Put Rectangle and Cross fitting inside the same nested loop scope.
+          regex_once('BossMod/Foretell/ForetellLearning.cs',
+              r'''        for \(var length = 8f; length <= 50f; length \+= 4f\)\n            for \(var halfWidth = 1\.5f; halfWidth <= 12f; halfWidth \+= 1\.5f\)\n                Try\(GeometryKind\.Rectangle, length, halfWidth, p => p\.Forward >= 0 && p\.Forward <= length && MathF\.Abs\(p\.Side\) <= halfWidth\);\n                Try\(GeometryKind\.Cross, length, halfWidth, p =>\n                    \(MathF\.Abs\(p\.Side\) <= halfWidth && MathF\.Abs\(p\.Forward\) <= length\) \|\|\n                    \(MathF\.Abs\(p\.Forward\) <= halfWidth && MathF\.Abs\(p\.Side\) <= length\)\);''',
+              '''        for (var length = 8f; length <= 50f; length += 4f)
+            for (var halfWidth = 1.5f; halfWidth <= 12f; halfWidth += 1.5f)
+            {
+                Try(GeometryKind.Rectangle, length, halfWidth, p => p.Forward >= 0 && p.Forward <= length && MathF.Abs(p.Side) <= halfWidth);
+                Try(GeometryKind.Cross, length, halfWidth, p =>
+                    (MathF.Abs(p.Side) <= halfWidth && MathF.Abs(p.Forward) <= length) ||
+                    (MathF.Abs(p.Forward) <= halfWidth && MathF.Abs(p.Side) <= length));
+            }''')
 
-          # Metadata belongs in the common observation pipeline so Replay Lab exercises the same logic as live play.
-          replace_once('BossMod/Foretell/ForetellObserver.cs',
-              '        ProcessObservation(obs);\n        ApplyActionMetadataPrior(obs);',
-              '        ProcessObservation(obs);')
-
-          replace_once('BossMod/Foretell/ForetellLearning.cs',
-              '            StartEpisode(observation, encounter);\n\n        _recentSignals.Enqueue(observation);',
-              '            StartEpisode(observation, encounter);\n        if (observation.Kind == ObservationKind.CastStart)\n            ApplyActionMetadataPrior(observation);\n\n        _recentSignals.Enqueue(observation);')
-
-          # Crosses can now be validated/refined empirically instead of remaining metadata-only shapes.
-          replace_once('BossMod/Foretell/ForetellLearning.cs',
-              '                Try(GeometryKind.Rectangle, length, halfWidth, p => p.Forward >= 0 && p.Forward <= length && MathF.Abs(p.Side) <= halfWidth);',
-              '                Try(GeometryKind.Rectangle, length, halfWidth, p => p.Forward >= 0 && p.Forward <= length && MathF.Abs(p.Side) <= halfWidth);\n                Try(GeometryKind.Cross, length, halfWidth, p =>\n                    (MathF.Abs(p.Side) <= halfWidth && MathF.Abs(p.Forward) <= length) ||\n                    (MathF.Abs(p.Forward) <= halfWidth && MathF.Abs(p.Side) <= length));')
-
-          # Legacy/offline fitter gets the same shape family for consistency.
           regex_once('BossMod/Foretell/ForetellGeometry.cs',
-              r'(\s+Try\(new\(GeometryKind\.Rectangle, cast\.Origin, cast\.Rotation, length, halfWidth,\n\s+Score\(samples, p => InRect\(p, cast\.Origin, cast\.Rotation, length, halfWidth\)\)\)\);)',
-              r'\1\n                Try(new(GeometryKind.Cross, cast.Origin, cast.Rotation, length, halfWidth,\n                    Score(samples, p => InCross(p, cast.Origin, cast.Rotation, length, halfWidth))));')
+              r'''        for \(var length = 8f; length <= 50f; length \+= 4f\)\n            for \(var halfWidth = 1\.5f; halfWidth <= 12f; halfWidth \+= 1\.5f\)\n                Try\(new\(GeometryKind\.Rectangle, cast\.Origin, cast\.Rotation, length, halfWidth,\n                    Score\(samples, p => InRect\(p, cast\.Origin, cast\.Rotation, length, halfWidth\)\)\)\);\n                Try\(new\(GeometryKind\.Cross, cast\.Origin, cast\.Rotation, length, halfWidth,\n                    Score\(samples, p => InCross\(p, cast\.Origin, cast\.Rotation, length, halfWidth\)\)\)\);''',
+              '''        for (var length = 8f; length <= 50f; length += 4f)
+            for (var halfWidth = 1.5f; halfWidth <= 12f; halfWidth += 1.5f)
+            {
+                Try(new(GeometryKind.Rectangle, cast.Origin, cast.Rotation, length, halfWidth,
+                    Score(samples, p => InRect(p, cast.Origin, cast.Rotation, length, halfWidth))));
+                Try(new(GeometryKind.Cross, cast.Origin, cast.Rotation, length, halfWidth,
+                    Score(samples, p => InCross(p, cast.Origin, cast.Rotation, length, halfWidth))));
+            }''')
 
-          # A static prior must not own the empirical score; otherwise a wrong prior can become impossible to dislodge.
-          replace_once('BossMod/Foretell/ForetellActionMetadata.cs',
-              '                mechanic.Score = Math.Max(mechanic.Score, p.Confidence);\n',
-              '')
-
-          # CastType proves the donut family, but a verified inner radius is not exposed by the Action fields we trust.
+          # Once empirical observations exist, never let a static prior replace the learned geometry merely because
+          # the prior's nominal confidence number is higher. Metadata seeds; observations arbitrate.
           regex_once('BossMod/Foretell/ForetellActionMetadata.cs',
-              r'                case 10:.*?\n                    break;',
-              '                case 10: // donut family; inner radius is not safely derivable from verified Action fields alone\n                    confidence = .60f;\n                    why = "CastType identifies donut family; inner radius requires Omen/outcome evidence before drawing";\n                    break;',
-              re.S)
+              r'''        var confidence = mechanic\?\.Confidence \?\? p\.Confidence;\n        var geometry = mechanic is \{ Geometry: not GeometryKind\.Unknown \} && mechanic\.Confidence >= p\.Confidence \? mechanic\.Geometry : p\.Geometry;\n        var p1 = geometry == mechanic\?\.Geometry && mechanic\.P1 > 0 \? mechanic\.P1 : p\.P1;\n        var p2 = geometry == mechanic\?\.Geometry && mechanic\.P2 > 0 \? mechanic\.P2 : p\.P2;''',
+              '''        var preferLearned = mechanic is { Geometry: not GeometryKind.Unknown } && (mechanic.Observations > 0 || mechanic.Confidence >= p.Confidence);
+        var confidence = preferLearned ? mechanic!.Confidence : p.Confidence;
+        var geometry = preferLearned ? mechanic!.Geometry : p.Geometry;
+        var p1 = preferLearned && mechanic!.P1 > 0 ? mechanic.P1 : p.P1;
+        var p2 = preferLearned && mechanic!.P2 > 0 ? mechanic.P2 : p.P2;''')
 
-          # Prior confidence is reduced when empirical geometry or dimensions disagree.
+          regex_once('BossMod/Foretell/ForetellActionMetadata.cs',
+              r'''        if \(_predictions\.TryGetValue\(trigger\.Sequence, out var existing\)\)\n        \{\n            if \(existing\.Geometry != geometry && existing\.Confidence >= confidence\) return;\n            confidence = Math\.Max\(confidence, existing\.Confidence\);\n        \}''',
+              '''        if (_predictions.TryGetValue(trigger.Sequence, out var existing))
+        {
+            if (existing.Geometry != geometry)
+            {
+                // StartEpisode's prediction comes from persisted empirical memory. Never replace that with a
+                // disagreeing static prior after the learner has actual outcomes for this signal.
+                if (mechanic?.Observations > 0 || existing.Confidence >= confidence) return;
+            }
+            else
+            {
+                confidence = Math.Max(confidence, existing.Confidence);
+            }
+        }''')
+
+          # Reformat confidence fusion after the previous scripted edit; logic is unchanged here.
           regex_once('BossMod/Foretell/ForetellModel.cs',
-              r'            var empirical = EmpiricalConfidence;\n            if \(PriorConfidence <= 0\) return empirical;\n            if \(Observations == 0\) return PriorConfidence;\n\n.*?            return Math\.Clamp\(fused, 0, \.999f\);',
+              r'''            var empirical = EmpiricalConfidence;\n.*?            return Math\.Clamp\(fused, 0, \.999f\);''',
               '''            var empirical = EmpiricalConfidence;
             if (PriorConfidence <= 0) return empirical;
             if (Observations == 0) return PriorConfidence;
@@ -103,8 +117,8 @@ jobs:
                 }
             }
 
-            // Useful client metadata can make ordinary telegraphs useful on the first cast; repeated outcomes then
-            // confirm, refine, or overrule it. A prior can accelerate confidence but can never reach the 99% safe gate alone.
+            // Client metadata can make ordinary telegraphs useful on the first cast. It can accelerate confidence,
+            // but the 99% safe-guidance gate still requires corroborating empirical evidence.
             effectivePrior = Math.Min(effectivePrior, .98f);
             var fused = 1f - (1f - effectivePrior) * (1f - empirical);
             if (AmbiguousSamples > 0)
@@ -112,10 +126,10 @@ jobs:
             return Math.Clamp(fused, 0, .999f);''',
               re.S)
 
-          # Make the source of confidence obvious in the Inspector, not only exported JSON.
-          source_line = '            ImGui.TextUnformatted($"Source: OID {mechanic.SourceOID:X8} ({mechanic.SourceKind}) | trigger: {mechanic.TriggerKind} ID {mechanic.TriggerID:X}");'
-          replace_once('BossMod/Foretell/ForetellInspector.cs', source_line,
-              source_line + '''
+          # Tidy Inspector formatting and expose the new Cross family plus metadata/color semantics in Help.
+          regex_once('BossMod/Foretell/ForetellInspector.cs',
+              r'''            ImGui\.TextUnformatted\(\$"Source: OID \{mechanic\.SourceOID:X8\} \(\{mechanic\.SourceKind\}\) \| trigger: \{mechanic\.TriggerKind\} ID \{mechanic\.TriggerID:X\}"\);\n\s*if \(mechanic\.PriorConfidence > 0 \|\| mechanic\.PriorCastType != 0\)\n\s*\{\n\s*ImGui\.TextUnformatted\(\$"Client-data prior: \{mechanic\.PriorGeometry\} \{mechanic\.PriorConfidence:P0\} \| CastType=\{mechanic\.PriorCastType\} \| EffectRange=\{mechanic\.PriorEffectRange\} \| XAxis=\{mechanic\.PriorXAxisModifier\} \| TargetArea=\{mechanic\.PriorTargetArea\}"\);\n\s*ImGui\.TextUnformatted\(\$"Omen: \{mechanic\.PriorOmenID\}:\{mechanic\.PriorOmen\}"\);\n\s*ImGui\.TextWrapped\(\$"Prior rationale: \{mechanic\.PriorEvidence\}"\);\n\s*\}''',
+              '''            ImGui.TextUnformatted($"Source: OID {mechanic.SourceOID:X8} ({mechanic.SourceKind}) | trigger: {mechanic.TriggerKind} ID {mechanic.TriggerID:X}");
             if (mechanic.PriorConfidence > 0 || mechanic.PriorCastType != 0)
             {
                 ImGui.TextUnformatted($"Client-data prior: {mechanic.PriorGeometry} {mechanic.PriorConfidence:P0} | CastType={mechanic.PriorCastType} | EffectRange={mechanic.PriorEffectRange} | XAxis={mechanic.PriorXAxisModifier} | TargetArea={mechanic.PriorTargetArea}");
@@ -123,16 +137,24 @@ jobs:
                 ImGui.TextWrapped($"Prior rationale: {mechanic.PriorEvidence}");
             }''')
 
-          gate_line = '        ImGui.TextUnformatted($"Confidence gates: {visual} visualizable (>= {_cfg.VisualConfidence:F0}%) | {warnings} warning-grade (>= {_cfg.WarningConfidence:F0}%) | {safe} safe-guidance-grade (>= {_cfg.SafeConfidence:F0}%) | {ambiguous} with conflicting evidence");'
-          replace_once('BossMod/Foretell/ForetellInspector.cs', gate_line,
-              gate_line + '\n        ImGui.TextUnformatted("Overlay/radar colors encode reliability: cyan = early/visual -> yellow = learned -> orange = high -> red = safe-guidance-grade. They do NOT encode damage severity.");')
+          replace_once('BossMod/Foretell/ForetellInspector.cs',
+              '        GeometryKind.Rectangle => $"length {mechanic.P1:F1} yalms / half-width {mechanic.P2:F1} yalms",',
+              '        GeometryKind.Rectangle => $"length {mechanic.P1:F1} yalms / half-width {mechanic.P2:F1} yalms",\n        GeometryKind.Cross => $"four arms {mechanic.P1:F1} yalms / half-width {mechanic.P2:F1} yalms",')
 
-      - name: Commit refinements
+          replace_once('BossMod/Foretell/ForetellInspector.cs',
+              '        ImGui.TextUnformatted($"At least {_cfg.SafeConfidence:F0}%: eligible for safe-position guidance. This intentionally uses an extremely high Never Guess Lethal threshold.");',
+              '        ImGui.TextUnformatted($"At least {_cfg.SafeConfidence:F0}%: eligible for safe-position guidance. This intentionally uses an extremely high Never Guess Lethal threshold.");\n        ImGui.TextUnformatted("World/radar color encodes confidence, not damage: cyan -> yellow -> orange -> red as reliability increases. The radar also prints the percentage.");')
+
+          replace_once('BossMod/Foretell/ForetellInspector.cs',
+              '        ImGui.TextUnformatted("Casts and hit targets; statuses; icons; VFX; tethers; actor lifecycle/targetability/model state; event objects; action-timeline events; NPC yells; map effects; director updates; party positions and sudden displacement.");',
+              '        ImGui.TextUnformatted("Casts and hit targets; statuses; icons; VFX; tethers; actor lifecycle/targetability/model state; event objects; action-timeline events; NPC yells; map effects; director updates; party positions and sudden displacement.");\n        ImGui.TextUnformatted("For cast actions Foretell also reads local client Action metadata (CastType, EffectRange, XAxisModifier, TargetArea, Omen/VFX and actor hitbox) as a prior before outcome evidence is available.");')
+
+      - name: Commit final fixes
         shell: bash
         run: |
           git config user.name 'Foretell Bot'
           git config user.email 'actions@users.noreply.github.com'
           git add BossMod/Foretell
-          git commit -m 'Refine metadata priors and empirical override behavior'
+          git commit -m 'Finalize metadata priors and confidence UX'
           git pull --rebase origin main
           git push origin HEAD:main
