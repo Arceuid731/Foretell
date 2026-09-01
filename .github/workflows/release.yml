@@ -84,9 +84,13 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Adaptive encounter learning release with contextual multi-signal inference, persistent per-territory/source memory, confidence/ambiguity tracking, Replay Lab, diagnostics export, and the Foretell Inspector cockpit.
+          Adaptive encounter-intelligence update with metadata-first geometry priors, empirical override/correction, contextual multi-signal learning, and confidence-colored world/radar geometry.
 
-          Recommended first run: use Observe, then Compare, then Hybrid after reviewing learned mechanics.
+          Client Action data such as CastType, EffectRange, XAxisModifier, TargetArea, Omen/VFX and actor hitbox can seed ordinary telegraphs before hit/no-hit evidence exists. Metadata alone remains capped below the 99% safe-guidance gate, and observed outcomes can override a conflicting prior.
+
+          Radar and world overlay use the same reliability colors (cyan/blue -> yellow -> orange -> red) and render circle, donut, cone, rectangle and cross geometry. Color represents confidence, not damage severity.
+
+          Recommended first run: Observe, then Compare, then Hybrid after reviewing learned mechanics.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
