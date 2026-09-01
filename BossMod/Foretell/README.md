@@ -24,6 +24,6 @@ Foretell does not require ACT or IINACT for encounter telemetry. The inherited B
 
 BMR/Splatoon encounter-authored answers remain forbidden. Generic BMR primitives and algorithms (geometry, AOE mathematics, arena/pathfinding/constraint utilities, packet decoders and raw sensors) are allowed because they are encounter-agnostic machinery rather than manually authored mechanic knowledge.
 
-This raw-telemetry contract is build-validated in CI before release.
+This raw-telemetry contract is build-validated in CI before release and is the acceptance boundary for Data Fabric changes.
 
 ActionEffect handling is typed rather than reflection-only: all valid target effects retain Type, Param0..4, Value, derived damage/element fields and the exact original 8-byte effect record. Raw ActorControl retains command, p1..p8, target and replay flag; SystemLog retains every argument without the generic collection sampling cap.
