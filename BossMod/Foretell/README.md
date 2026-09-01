@@ -23,3 +23,5 @@ The Data Fabric contract is enforced at runtime and visible in the Inspector cov
 Foretell does not require ACT or IINACT for encounter telemetry. The inherited BMR sync layer already hooks/decodes native FFXIV client and network surfaces (casts, ActionEffect/EffectResult, ActorControl, statuses, map/director events, system logs, timelines, etc.). Foretell additionally consumes every non-frame `WorldState.Operation`, an unconditional lossless server/client IPC tap, and a direct EventObject animation/object-effect surface. Full binary payloads are retained in Foretell replay and every byte contributes to the compressed hashed learner feature space.
 
 BMR/Splatoon encounter-authored answers remain forbidden. Generic BMR primitives and algorithms (geometry, AOE mathematics, arena/pathfinding/constraint utilities, packet decoders and raw sensors) are allowed because they are encounter-agnostic machinery rather than manually authored mechanic knowledge.
+
+This raw-telemetry contract is build-validated in CI before release.
