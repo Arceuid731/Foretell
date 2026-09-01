@@ -17,3 +17,9 @@ Foretell ingests generic structured evidence available through BMR WorldState, D
 The one deliberate boundary is encounter-authored knowledge: BossModule implementations, state machines, encounter components/layouts/presets and equivalent hand-written answers are excluded. Foretell learns from the raw game data instead. The in-game coverage audit reports discovered, ingested, learner-used, explicitly excluded and unaccounted fields; unaccounted data is treated as a defect rather than silently ignored.
 
 The Data Fabric contract is enforced at runtime and visible in the Inspector coverage counters.
+
+### Raw event hierarchy
+
+Foretell does not require ACT or IINACT for encounter telemetry. The inherited BMR sync layer already hooks/decodes native FFXIV client and network surfaces (casts, ActionEffect/EffectResult, ActorControl, statuses, map/director events, system logs, timelines, etc.). Foretell additionally consumes every non-frame `WorldState.Operation`, an unconditional lossless server/client IPC tap, and a direct EventObject animation/object-effect surface. Full binary payloads are retained in Foretell replay and every byte contributes to the compressed hashed learner feature space.
+
+BMR/Splatoon encounter-authored answers remain forbidden. Generic BMR primitives and algorithms (geometry, AOE mathematics, arena/pathfinding/constraint utilities, packet decoders and raw sensors) are allowed because they are encounter-agnostic machinery rather than manually authored mechanic knowledge.

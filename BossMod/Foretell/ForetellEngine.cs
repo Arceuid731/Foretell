@@ -65,8 +65,13 @@ public sealed partial class ForetellEngine : IDisposable
         StartEncounterSession(_territory);
         SyncReplayWriter();
         InstallForetellCommand();
+        InitializeNativeHooks();
 
         _subscriptions = new(
+            _ws.Modified.Subscribe(OnWorldOperation),
+            _ws.SystemLogMessage.Subscribe(OnSystemLog),
+            _ws.Network.RawServerIPCReceived.Subscribe(OnRawServerIPC),
+            _ws.Network.RawClientIPCSent.Subscribe(OnRawClientIPC),
             _ws.Actors.Added.Subscribe(OnActorAdded),
             _ws.Actors.Removed.Subscribe(OnActorRemoved),
             _ws.Actors.CastStarted.Subscribe(OnCastStarted),
@@ -105,6 +110,7 @@ public sealed partial class ForetellEngine : IDisposable
         SaveStore();
         _replay?.Dispose();
         _subscriptions.Dispose();
+        DisposeNativeHooks();
     }
 
     public void Update()
@@ -263,7 +269,7 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void NormalizeStore()
     {
-        _store.Schema = Math.Max(_store.Schema, 4);
+        _store.Schema = Math.Max(_store.Schema, 5);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];

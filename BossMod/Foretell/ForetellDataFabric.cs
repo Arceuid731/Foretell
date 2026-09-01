@@ -83,11 +83,18 @@ public sealed partial class ForetellEngine
     {
         observation.Numeric ??= [];
         observation.Text ??= [];
+        observation.Binary ??= [];
 
-        foreach (var (k, v) in _runtimeNumeric)
-            observation.Numeric.TryAdd(k, v);
-        foreach (var (k, v) in _runtimeText)
-            observation.Text.TryAdd(k, v);
+        // Raw packet/operation observations arrive at high frequency; nearby actor snapshots and semantic events
+        // already carry the cached runtime context, so avoid duplicating it into every transport record.
+        var leanTransport = observation.Kind is ObservationKind.ServerIPC or ObservationKind.ClientIPC or ObservationKind.WorldOperation;
+        if (!leanTransport)
+        {
+            foreach (var (k, v) in _runtimeNumeric)
+                observation.Numeric.TryAdd(k, v);
+            foreach (var (k, v) in _runtimeText)
+                observation.Text.TryAdd(k, v);
+        }
 
         var actor = observation.ActorID != 0 ? _ws.Actors.Find(observation.ActorID) : null;
         var target = observation.TargetID != 0 ? _ws.Actors.Find(observation.TargetID) : null;
@@ -244,6 +251,30 @@ public sealed partial class ForetellEngine
 
     private bool TryStoreScalar(object value, Type type, string path, ForetellObservation observation)
     {
+        if (value is byte[] bytes)
+        {
+            observation.Binary[path] = bytes.ToArray();
+            RegisterCapability(path, type, path, true, false, $"binary {bytes.Length} bytes, lossless");
+            return true;
+        }
+        if (value is ReadOnlyMemory<byte> rom)
+        {
+            observation.Binary[path] = rom.ToArray();
+            RegisterCapability(path, type, path, true, false, $"binary {rom.Length} bytes, lossless");
+            return true;
+        }
+        if (value is Memory<byte> mem)
+        {
+            observation.Binary[path] = mem.ToArray();
+            RegisterCapability(path, type, path, true, false, $"binary {mem.Length} bytes, lossless");
+            return true;
+        }
+        if (value is ArraySegment<byte> segment)
+        {
+            observation.Binary[path] = segment.ToArray();
+            RegisterCapability(path, type, path, true, false, $"binary {segment.Count} bytes, lossless");
+            return true;
+        }
         if (type.IsEnum)
         {
             observation.Numeric[path] = Convert.ToDouble(value, CultureInfo.InvariantCulture);
@@ -366,10 +397,13 @@ public sealed partial class ForetellEngine
     {
         observation.Numeric ??= [];
         observation.Text ??= [];
+        observation.Binary ??= [];
         foreach (var key in observation.Numeric.Keys)
             RegisterCapability(key, typeof(ForetellObservation), key, true, false, "replayed recorded feature");
         foreach (var key in observation.Text.Keys)
             RegisterCapability(key, typeof(ForetellObservation), key, true, false, "replayed recorded feature");
+        foreach (var key in observation.Binary.Keys)
+            RegisterCapability(key, typeof(ForetellObservation), key, true, false, "replayed lossless binary feature");
     }
 
     private void AccumulateDataFeatures(ForetellObservation observation)
@@ -386,6 +420,19 @@ public sealed partial class ForetellEngine
     {
         var result = new double[OnlineClassifier.FeatureCount];
         Array.Copy(core, result, Math.Min(core.Length, OnlineClassifier.BaseFeatureCount));
+
+        if (episode.BinaryBytes > 0)
+        {
+            var scale = 1d / Math.Sqrt(Math.Max(1, episode.BinaryBytes));
+            for (var i = 0; i < episode.BinaryBuckets.Length; ++i)
+            {
+                var slot = OnlineClassifier.BaseFeatureCount + i;
+                result[slot] = Math.Clamp(result[slot] + Math.Tanh(episode.BinaryBuckets[i] * scale), -4, 4);
+            }
+            foreach (var key in episode.BinaryKeys)
+                MarkCapabilityUsed(key);
+        }
+
         foreach (var (key, sum) in episode.FeatureSums)
         {
             var count = Math.Max(1, episode.FeatureCounts.GetValueOrDefault(key));

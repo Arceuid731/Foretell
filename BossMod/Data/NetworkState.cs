@@ -1,4 +1,4 @@
-﻿namespace BossMod;
+namespace BossMod;
 
 public sealed class NetworkState
 {
@@ -33,6 +33,29 @@ public sealed class NetworkState
         public override readonly bool Equals(object? obj) => obj is IDScrambleFields other && Equals(other);
         public override readonly int GetHashCode() => (GameSessionRandom, ZoneRandom, Key0, Key1, Key2).GetHashCode();
     }
+
+    // Foretell raw transport taps. These are transient events rather than WorldState operations so the inherited
+    // BMR replay format/configuration keeps its original semantics; Foretell records them in its own replay stream.
+    public readonly struct RawServerIPC(Network.ServerIPC.PacketID id, ushort opcode, uint epoch, uint sourceServerActor, uint targetServerActor, DateTime sendTimestamp, byte[] payload)
+    {
+        public readonly Network.ServerIPC.PacketID ID = id;
+        public readonly ushort Opcode = opcode;
+        public readonly uint Epoch = epoch;
+        public readonly uint SourceServerActor = sourceServerActor;
+        public readonly uint TargetServerActor = targetServerActor;
+        public readonly DateTime SendTimestamp = sendTimestamp;
+        public readonly byte[] Payload = payload;
+    }
+
+    public readonly struct RawClientIPC(uint opcode, DateTime sendTimestamp, byte[] payload)
+    {
+        public readonly uint Opcode = opcode;
+        public readonly DateTime SendTimestamp = sendTimestamp;
+        public readonly byte[] Payload = payload;
+    }
+
+    public Event<RawServerIPC> RawServerIPCReceived = new();
+    public Event<RawClientIPC> RawClientIPCSent = new();
 
     public IDScrambleFields IDScramble;
 

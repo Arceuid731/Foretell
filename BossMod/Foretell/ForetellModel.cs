@@ -16,7 +16,8 @@ public enum ObservationKind
     CastStart, CastFinish, ActionResolved, AffectedTarget,
     Icon, VFX, TetherStart, TetherEnd, StatusGain, StatusLose,
     EventObjectState, EventObjectAnimation, ActionTimelineEvent, ActionTimelineSync, NpcYell,
-    MapEffect, LegacyMapEffect, DirectorUpdate,
+    MapEffect, LegacyMapEffect, DirectorUpdate, SystemLog, ObjectEffect,
+    WorldOperation, ServerIPC, ClientIPC,
     PositionSample, Displacement, ActorSnapshot,
     ClientMetadata, GenericFeature
 }
@@ -240,7 +241,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 4;
+    public int Schema { get; set; } = 5;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
@@ -272,6 +273,8 @@ public sealed class ForetellObservation
     public string Detail { get; set; } = "";
     public Dictionary<string, double> Numeric { get; set; } = [];
     public Dictionary<string, string> Text { get; set; } = [];
+    // Lossless opaque payloads (network packets and any future binary client structures). JSON serializes byte[] as base64.
+    public Dictionary<string, byte[]> Binary { get; set; } = [];
 }
 
 public sealed class ReplayReport

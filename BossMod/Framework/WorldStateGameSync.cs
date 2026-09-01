@@ -1,4 +1,4 @@
-﻿using Dalamud.Game.ClientState.Conditions;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Hooking;
 using Dalamud.Memory;
 using FFXIVClientStructs.FFXIV.Client.Game;
@@ -42,6 +42,8 @@ sealed class WorldStateGameSync : IDisposable
     private readonly Network.OpcodeMap _opcodeMap = new();
     private readonly Network.PacketInterceptor _interceptor = new();
     private readonly Network.PacketDecoderGame _decoder = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<NetworkState.RawServerIPC> _foretellRawServerPackets = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<NetworkState.RawClientIPC> _foretellRawClientPackets = new();
 
     private readonly ConfigListener<ReplayManagementConfig> _netConfig;
     private readonly EventSubscriptions _subscriptions;
@@ -102,10 +104,12 @@ sealed class WorldStateGameSync : IDisposable
         _interceptor.ServerIPCReceived += ServerIPCReceived;
         _interceptor.ClientIPCSent += ClientIPCSent;
 
-        _netConfig = Service.Config.GetAndSubscribe<ReplayManagementConfig>(config =>
+        _netConfig = Service.Config.GetAndSubscribe<ReplayManagementConfig>(_ =>
         {
-            _interceptor.ActiveRecv = config.RecordServerPackets || config.DumpServerPackets;
-            _interceptor.ActiveSend = config.DumpClientPackets;
+            // Foretell learns from the transport itself, even when BMR packet recording/dumping is disabled.
+            // The taps are passive: existing BMR replay/dump settings still decide their own output behavior.
+            _interceptor.ActiveRecv = true;
+            _interceptor.ActiveSend = true;
         });
         _subscriptions = new
         (
@@ -251,6 +255,11 @@ sealed class WorldStateGameSync : IDisposable
             _ws.Execute(_globalOps[i]);
         }
         _globalOps.Clear();
+
+        while (_foretellRawServerPackets.TryDequeue(out var rawServer))
+            _ws.Network.RawServerIPCReceived.Fire(rawServer);
+        while (_foretellRawClientPackets.TryDequeue(out var rawClient))
+            _ws.Network.RawClientIPCSent.Fire(rawClient);
 
         _playerEnmity.Clear();
         var uiState = UIState.Instance();
@@ -1226,8 +1235,12 @@ sealed class WorldStateGameSync : IDisposable
     private unsafe void ServerIPCReceived(DateTime sendTimestamp, uint sourceServerActor, uint targetServerActor, ushort opcode, uint epoch, Span<byte> payload)
     {
         var id = _opcodeMap.ID(opcode);
+        // Keep a lossless Foretell copy regardless of BMR recorder configuration. It is delivered on Update().
+        var rawPayload = payload.ToArray();
+        _foretellRawServerPackets.Enqueue(new(id, opcode, epoch, sourceServerActor, targetServerActor, sendTimestamp, rawPayload));
+
         // targetServerActor is always a player?..
-        var ipc = new NetworkState.ServerIPC(id, opcode, epoch, sourceServerActor, sendTimestamp, [.. payload]);
+        var ipc = new NetworkState.ServerIPC(id, opcode, epoch, sourceServerActor, sendTimestamp, rawPayload);
         if (_netConfig.Data.RecordServerPackets)
         {
             _globalOps.Add(new NetworkState.OpServerIPC(ipc));
@@ -1241,6 +1254,7 @@ sealed class WorldStateGameSync : IDisposable
 
     private unsafe void ClientIPCSent(uint opcode, Span<byte> payload)
     {
+        _foretellRawClientPackets.Enqueue(new(opcode, DateTime.UtcNow, payload.ToArray()));
         if (_netConfig.Data.DumpClientPackets)
         {
             var sb = new StringBuilder($"Client IPC [0x{opcode:X4}]: data=");

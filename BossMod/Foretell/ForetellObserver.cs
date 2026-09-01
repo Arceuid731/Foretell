@@ -149,6 +149,55 @@ public sealed partial class ForetellEngine
             value2: ToUInt(op.Param3) ?? 0,
             detail: (ToUInt(op.Param4) ?? 0).ToString("X")), op);
 
+    private void OnWorldOperation(WorldState.Operation op)
+    {
+        // FrameStart is deliberately represented by the sampled runtime fabric: recording it at render frequency
+        // would multiply replay size/CPU without adding a distinct state transition. This substitution is audited.
+        if (op is WorldState.OpFrameStart)
+        {
+            RegisterCapability("worldop.FrameStart", op.GetType(), "FrameStart", false, true, "represented by sampled runtime.worldState/frame/gauge/camera context");
+            return;
+        }
+        // If BMR packet recording is also enabled, don't duplicate the independent Foretell raw transport tap.
+        if (op is NetworkState.OpServerIPC)
+        {
+            RegisterCapability("worldop.ServerIPC", op.GetType(), "ServerIPC", false, true, "duplicate of Foretell unconditional raw server IPC tap");
+            return;
+        }
+
+        var actorID = ToULong(Member(op, "InstanceID")) ?? ToULong(Member(op, "ActorID")) ?? ToULong(Member(op, "SourceID")) ?? ToULong(Member(op, "CasterID")) ?? 0;
+        var actor = actorID != 0 ? _ws.Actors.Find(actorID) : null;
+        var typeName = op.GetType().FullName ?? op.GetType().Name;
+        var obs = Observation(ObservationKind.WorldOperation, actor, StableHash(typeName), detail: typeName);
+        if (actor == null && actorID != 0)
+        {
+            obs.ActorID = actorID;
+            obs.SourceKind = SourceKind.Unknown;
+        }
+        ProcessRichObservation(obs, op);
+    }
+
+    private void OnSystemLog(WorldState.OpSystemLogMessage op)
+        => ProcessRichObservation(Observation(ObservationKind.SystemLog, primary: op.MessageID), op);
+
+    private void OnRawServerIPC(NetworkState.RawServerIPC packet)
+    {
+        var actor = packet.SourceServerActor != 0 ? _ws.Actors.Find(packet.SourceServerActor) : null;
+        var obs = Observation(ObservationKind.ServerIPC, actor, packet.Opcode, ToUInt(packet.ID) ?? 0, packet.TargetServerActor, detail: packet.ID.ToString());
+        if (actor == null && packet.SourceServerActor != 0)
+        {
+            obs.ActorID = packet.SourceServerActor;
+            obs.SourceKind = SourceKind.Unknown;
+        }
+        ProcessRichObservation(obs, packet);
+    }
+
+    private void OnRawClientIPC(NetworkState.RawClientIPC packet)
+    {
+        var obs = Observation(ObservationKind.ClientIPC, primary: packet.Opcode, detail: "client->server");
+        ProcessRichObservation(obs, packet);
+    }
+
     private void SamplePartyPositions()
     {
         foreach (var (_, player) in _ws.Party.WithSlot())

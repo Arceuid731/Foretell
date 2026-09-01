@@ -19,6 +19,9 @@ internal sealed class MechanicEpisode
     public Dictionary<ObservationKind, int> Evidence { get; } = [];
     public Dictionary<string, double> FeatureSums { get; } = [];
     public Dictionary<string, int> FeatureCounts { get; } = [];
+    public double[] BinaryBuckets { get; } = new double[OnlineClassifier.FabricFeatureCount];
+    public HashSet<string> BinaryKeys { get; } = [];
+    public long BinaryBytes { get; private set; }
     public bool Finalized { get; set; }
 
     public void AccumulateFeatures(ForetellObservation observation)
@@ -35,6 +38,47 @@ internal sealed class MechanicEpisode
             if (FeatureSums.Count >= 4096 && !FeatureSums.ContainsKey(token)) continue;
             FeatureSums[token] = FeatureSums.GetValueOrDefault(token) + 1;
             FeatureCounts[token] = FeatureCounts.GetValueOrDefault(token) + 1;
+        }
+        foreach (var (key, bytes) in observation.Binary)
+        {
+            BinaryKeys.Add(key);
+            var lengthKey = $"binary.{key}.length";
+            FeatureSums[lengthKey] = FeatureSums.GetValueOrDefault(lengthKey) + bytes.Length;
+            FeatureCounts[lengthKey] = FeatureCounts.GetValueOrDefault(lengthKey) + 1;
+            BinaryBytes += bytes.LongLength;
+
+            // Signed feature hashing compresses an arbitrary-size opaque packet into the same fixed fabric space.
+            // Every byte participates; the raw bytes are still retained losslessly in Foretell replay.
+            var keyHash = StableBinaryHash(key);
+            for (var i = 0; i < bytes.Length; ++i)
+            {
+                unchecked
+                {
+                    var h = keyHash;
+                    h ^= (uint)i * 0x9E3779B9u;
+                    h *= 16777619u;
+                    h ^= bytes[i];
+                    h *= 16777619u;
+                    var slot = (int)(h % OnlineClassifier.FabricFeatureCount);
+                    var sign = (h & 0x80000000u) == 0 ? 1d : -1d;
+                    var centered = bytes[i] / 127.5d - 1d;
+                    BinaryBuckets[slot] += sign * centered;
+                }
+            }
+        }
+    }
+
+    private static uint StableBinaryHash(string value)
+    {
+        unchecked
+        {
+            var hash = 2166136261u;
+            foreach (var c in value)
+            {
+                hash ^= c;
+                hash *= 16777619u;
+            }
+            return hash;
         }
     }
 
