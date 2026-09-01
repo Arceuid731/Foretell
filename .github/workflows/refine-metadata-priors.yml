@@ -1,0 +1,182 @@
+name: Refine Foretell Metadata Priors
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'metadata-prior-refine.txt'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Apply semantic refinements
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8-sig')
+              if old not in s:
+                  raise RuntimeError(f'anchor not found in {path}: {old[:100]!r}')
+              s = s.replace(old, new, count)
+              p.write_text(s, encoding='utf-8')
+
+          # Schema migration for the new metadata-prior fields.
+          replace('BossMod/Foretell/ForetellEngine.cs',
+              '_store.Schema = Math.Max(_store.Schema, 2);',
+              '_store.Schema = Math.Max(_store.Schema, 3);')
+
+          # Metadata belongs in the common observation pipeline so Replay Lab exercises the same logic as live play.
+          replace('BossMod/Foretell/ForetellObserver.cs',
+              '        ProcessObservation(obs);\n        ApplyActionMetadataPrior(obs);',
+              '        ProcessObservation(obs);')
+
+          replace('BossMod/Foretell/ForetellLearning.cs',
+              '''        var correlated = CorrelateObservation(observation);
+          if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))
+              StartEpisode(observation, encounter);
+
+          _recentSignals.Enqueue(observation);''',
+              '''        var correlated = CorrelateObservation(observation);
+          if (observation.Kind == ObservationKind.CastStart || (IsEpisodeTrigger(observation) && !correlated))
+              StartEpisode(observation, encounter);
+          if (observation.Kind == ObservationKind.CastStart)
+              ApplyActionMetadataPrior(observation);
+
+          _recentSignals.Enqueue(observation);''')
+
+          # Crosses can now be validated/refined empirically instead of remaining a metadata-only shape.
+          replace('BossMod/Foretell/ForetellLearning.cs',
+              '''        for (var length = 8f; length <= 50f; length += 4f)
+              for (var halfWidth = 1.5f; halfWidth <= 12f; halfWidth += 1.5f)
+                  Try(GeometryKind.Rectangle, length, halfWidth, p => p.Forward >= 0 && p.Forward <= length && MathF.Abs(p.Side) <= halfWidth);
+
+          return best.Score >= .58f ? best : null;''',
+              '''        for (var length = 8f; length <= 50f; length += 4f)
+              for (var halfWidth = 1.5f; halfWidth <= 12f; halfWidth += 1.5f)
+              {
+                  Try(GeometryKind.Rectangle, length, halfWidth, p => p.Forward >= 0 && p.Forward <= length && MathF.Abs(p.Side) <= halfWidth);
+                  Try(GeometryKind.Cross, length, halfWidth, p =>
+                      (MathF.Abs(p.Side) <= halfWidth && MathF.Abs(p.Forward) <= length) ||
+                      (MathF.Abs(p.Forward) <= halfWidth && MathF.Abs(p.Side) <= length));
+              }
+
+          return best.Score >= .58f ? best : null;''')
+
+          replace('BossMod/Foretell/ForetellGeometry.cs',
+              '''        for (var length = 8f; length <= 50f; length += 4f)
+              for (var halfWidth = 1.5f; halfWidth <= 12f; halfWidth += 1.5f)
+                  Try(new(GeometryKind.Rectangle, cast.Origin, cast.Rotation, length, halfWidth,
+                      Score(samples, p => InRect(p, cast.Origin, cast.Rotation, length, halfWidth))));
+          return best;''',
+              '''        for (var length = 8f; length <= 50f; length += 4f)
+              for (var halfWidth = 1.5f; halfWidth <= 12f; halfWidth += 1.5f)
+              {
+                  Try(new(GeometryKind.Rectangle, cast.Origin, cast.Rotation, length, halfWidth,
+                      Score(samples, p => InRect(p, cast.Origin, cast.Rotation, length, halfWidth))));
+                  Try(new(GeometryKind.Cross, cast.Origin, cast.Rotation, length, halfWidth,
+                      Score(samples, p => InCross(p, cast.Origin, cast.Rotation, length, halfWidth))));
+              }
+          return best;''')
+
+          # A static prior must not own the empirical score; otherwise a wrong prior can become impossible to dislodge.
+          replace('BossMod/Foretell/ForetellActionMetadata.cs',
+              '                mechanic.Score = Math.Max(mechanic.Score, p.Confidence);\n',
+              '')
+
+          # CastType tells us this is a donut, but XAxisModifier-as-inner-radius is not sufficiently verified.
+          # Keep the semantic hint in diagnostics but do not invent a first-cast lethal geometry.
+          replace('BossMod/Foretell/ForetellActionMetadata.cs',
+              '''                case 10: // donut; EffectRange gives outer radius, X axis is useful only when it forms a sane inner radius
+                      if (effectRange > 0 && xAxis > 0 && xAxis < effectRange)
+                      {
+                          geometry = GeometryKind.Donut;
+                          p1 = xAxis;
+                          p2 = effectRange;
+                          confidence = .82f;
+                          why = "CastType donut + EffectRange + XAxisModifier candidate inner radius";
+                      }
+                      break;''',
+              '''                case 10: // donut family; inner radius is not safely derivable from verified Action fields alone
+                      confidence = .60f;
+                      why = "CastType identifies donut family; inner radius requires Omen/outcome evidence before drawing";
+                      break;''')
+
+          # Prior confidence is reduced when empirical geometry/parameters contradict it.
+          replace('BossMod/Foretell/ForetellModel.cs',
+              '''            var empirical = EmpiricalConfidence;
+              if (PriorConfidence <= 0) return empirical;
+              if (Observations == 0) return PriorConfidence;
+
+              // Independent-ish evidence fusion: the metadata gives a useful first-cast prior, while repeated outcomes
+              // rapidly dominate. Conflicting evidence is already penalized through EmpiricalConfidence.
+              var fused = 1f - (1f - PriorConfidence) * (1f - empirical);
+              if (AmbiguousSamples > 0)
+                  fused *= 1f / (1f + AmbiguousSamples * .08f);
+              return Math.Clamp(fused, 0, .999f);''',
+              '''            var empirical = EmpiricalConfidence;
+              if (PriorConfidence <= 0) return empirical;
+              if (Observations == 0) return PriorConfidence;
+
+              var effectivePrior = PriorConfidence;
+              if (PriorGeometry != GeometryKind.Unknown && Geometry != GeometryKind.Unknown)
+              {
+                  if (PriorGeometry != Geometry)
+                  {
+                      // A measured geometry-family contradiction is strong evidence that the static sheet entry is not
+                      // describing the actual encounter effect we correlated to this trigger.
+                      effectivePrior *= .20f;
+                  }
+                  else if (PriorP1 > 0 && P1 > 0)
+                  {
+                      var drift1 = MathF.Abs(P1 - PriorP1) / MathF.Max(1, PriorP1);
+                      var drift2 = PriorP2 > 0 && P2 > 0 ? MathF.Abs(P2 - PriorP2) / MathF.Max(1, PriorP2) : 0;
+                      var drift = MathF.Max(drift1, drift2);
+                      if (drift > .15f)
+                          effectivePrior *= Math.Clamp(1f - drift, .25f, .85f);
+                  }
+              }
+
+              // Independent-ish evidence fusion: useful client metadata can make an ordinary telegraph immediately
+              // useful, while repeated observed outcomes can confirm, refine, or overrule it.
+              var fused = 1f - (1f - effectivePrior) * (1f - empirical);
+              if (AmbiguousSamples > 0)
+                  fused *= 1f / (1f + AmbiguousSamples * .08f);
+              return Math.Clamp(fused, 0, .999f);''')
+
+          # Make the source of confidence obvious in the inspector, not only in exported JSON.
+          replace('BossMod/Foretell/ForetellInspector.cs',
+              '''            ImGui.TextUnformatted($"Source: OID {mechanic.SourceOID:X8} ({mechanic.SourceKind}) | trigger: {mechanic.TriggerKind} ID {mechanic.TriggerID:X}");
+              ImGui.TextUnformatted($"First seen: {mechanic.FirstSeen:u} | last seen: {mechanic.LastSeen:u}");''',
+              '''            ImGui.TextUnformatted($"Source: OID {mechanic.SourceOID:X8} ({mechanic.SourceKind}) | trigger: {mechanic.TriggerKind} ID {mechanic.TriggerID:X}");
+              if (mechanic.PriorConfidence > 0 || mechanic.PriorCastType != 0)
+              {
+                  ImGui.TextUnformatted($"Client-data prior: {mechanic.PriorGeometry} {mechanic.PriorConfidence:P0} | CastType={mechanic.PriorCastType} | EffectRange={mechanic.PriorEffectRange} | XAxis={mechanic.PriorXAxisModifier} | TargetArea={mechanic.PriorTargetArea}");
+                  ImGui.TextUnformatted($"Omen: {mechanic.PriorOmenID}:{mechanic.PriorOmen}");
+                  ImGui.TextWrapped($"Prior rationale: {mechanic.PriorEvidence}");
+              }
+              ImGui.TextUnformatted($"First seen: {mechanic.FirstSeen:u} | last seen: {mechanic.LastSeen:u}");''')
+
+          replace('BossMod/Foretell/ForetellInspector.cs',
+              '''        ImGui.TextUnformatted($"Confidence gates: {visual} visualizable (>= {_cfg.VisualConfidence:F0}%) | {warnings} warning-grade (>= {_cfg.WarningConfidence:F0}%) | {safe} safe-guidance-grade (>= {_cfg.SafeConfidence:F0}%) | {ambiguous} with conflicting evidence");''',
+              '''        ImGui.TextUnformatted($"Confidence gates: {visual} visualizable (>= {_cfg.VisualConfidence:F0}%) | {warnings} warning-grade (>= {_cfg.WarningConfidence:F0}%) | {safe} safe-guidance-grade (>= {_cfg.SafeConfidence:F0}%) | {ambiguous} with conflicting evidence");
+          ImGui.TextUnformatted("Overlay/radar confidence colors: cyan = early/visual hypothesis -> yellow = learned -> orange = high confidence -> red = safe-guidance-grade. Color is reliability, not damage severity.");''')
+
+      - name: Commit refinements
+        shell: bash
+        run: |
+          git config user.name 'Foretell Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add BossMod/Foretell
+          git commit -m 'Refine metadata priors and empirical override behavior'
+          git pull --rebase origin main
+          git push origin HEAD:main
