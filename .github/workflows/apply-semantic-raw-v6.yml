@@ -1,0 +1,29 @@
+name: Apply Foretell Semantic Raw v6
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'semantic-raw-v6.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply semantic raw completion
+        run: python .github/scripts/apply_semantic_raw_v6.py
+      - name: Commit engine changes
+        shell: bash
+        run: |
+          git config user.name 'Foretell Semantic Raw Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add BossMod/Foretell BossMod/Data/NetworkState.cs BossMod/Framework/WorldStateGameSync.cs
+          git commit -m 'Preserve raw ActorControl and complete ActionEffect details'
+          git pull --rebase origin main
+          git push origin HEAD:main
