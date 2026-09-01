@@ -32,6 +32,18 @@ public sealed partial class ForetellEngine
     private delegate nint ActorVFXCreateDelegate(nint path, nint caster, nint target, float a4, byte a5, ushort a6, byte a7);
     private delegate void ActorVFXDestroyDelegate(nint vfx);
 
+    private void ClassifyNativeTelemetryQuarantine()
+    {
+        const string reason = "quarantined: direct client hooks/readers require framework-thread queue isolation before live use";
+        RegisterCapability("native.objectEffect", typeof(FFXIVEventObject), "PlayAnimation", false, true, reason);
+        RegisterCapability("native.vfx.actor.lifecycle", typeof(NativeVFXTrack), "actor VFX", false, true, reason);
+        RegisterCapability("native.vfx.static.lifecycle", typeof(VfxObject), "static VFX", false, true, reason);
+        RegisterCapability("native.character", typeof(GameObject), "Character containers", false, true, reason);
+        RegisterCapability("native.environment", typeof(FFXIVClientStructs.FFXIV.Client.Graphics.Environment.EnvManager), "environment state", false, true, reason);
+        RegisterCapability("native.camera", typeof(Camera), "camera state", false, true, reason);
+        Service.Log("[Foretell] Direct native telemetry is quarantined; typed semantic, raw network and managed Data Fabric sensors remain active.");
+    }
+
     private unsafe void InitializeNativeHooks()
     {
         try

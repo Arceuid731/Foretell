@@ -18,7 +18,8 @@ requirements = {
         "RawClientIPCSent.Subscribe(OnRawClientIPC)",
         "RawActorControlReceived.Subscribe(OnRawActorControl)",
         "_ws.Actors.EffectResult.Subscribe(OnEffectResult)",
-        "InitializeNativeHooks()",
+        "private const bool NativeTelemetryEnabled = false",
+        "ClassifyNativeTelemetryQuarantine()",
         "InitializeDalamudSignals()",
         "private static DateTime NormalizeObservationTime",
         "At = ObservationNow()",
@@ -156,6 +157,12 @@ if "observation.ActorID == 0 && observation.TargetID == 0" not in episode_trigge
 engine = read("BossMod/Foretell/ForetellEngine.cs")
 if engine.find("SampleDataFabric(force: true)") > engine.find("InitializeNativeHooks()"):
     errors.append("Foretell installs native hooks before fallible initial Data Fabric sampling")
+if "if (NativeTelemetryEnabled)\n                InitializeNativeHooks();" not in engine:
+    errors.append("Foretell native hooks escaped the fail-closed startup gate")
+if "if (NativeTelemetryEnabled)\n                SampleNativeActorSlice(now);" not in fabric:
+    errors.append("Foretell direct native actor reads escaped the fail-closed telemetry gate")
+if "if (!NativeTelemetryEnabled)\n            return;" not in fabric:
+    errors.append("Foretell environment/camera native reads escaped the fail-closed telemetry gate")
 
 foretell_sources = "\n".join(
     path.read_text(encoding="utf-8-sig")

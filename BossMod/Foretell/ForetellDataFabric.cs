@@ -66,7 +66,8 @@ public sealed partial class ForetellEngine
             _lastFabricSample = now;
             RefreshRuntimeContextSlice();
             SampleGenericActorSlice();
-            SampleNativeActorSlice(now);
+            if (NativeTelemetryEnabled)
+                SampleNativeActorSlice(now);
 
             foreach (var dead in _fabricActorTracks.Keys.Where(id => _ws.Actors.Find(id) == null).ToArray())
             {
@@ -75,6 +76,9 @@ public sealed partial class ForetellEngine
                 _nativeActorFabricFingerprint.Remove(dead);
             }
         }
+
+        if (!NativeTelemetryEnabled)
+            return;
 
         // Environment and camera retain their original 2 Hz cadence. Character reads use a rotating bounded
         // queue above: every actor remains discoverable, while population size can no longer create a frame spike.

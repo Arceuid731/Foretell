@@ -7,6 +7,9 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine : IDisposable
 {
+    // Emergency fail-closed tier: direct client-memory readers and hooks remain quarantined until every detour
+    // only copies bounded primitives into a queue and all interpretation runs on the framework thread.
+    private const bool NativeTelemetryEnabled = false;
     private readonly WorldState _ws;
     private readonly ForetellConfig _cfg;
     private readonly string _storePath;
@@ -77,7 +80,10 @@ public sealed partial class ForetellEngine : IDisposable
         {
             SyncReplayWriter();
             InstallForetellCommand();
-            InitializeNativeHooks();
+            if (NativeTelemetryEnabled)
+                InitializeNativeHooks();
+            else
+                ClassifyNativeTelemetryQuarantine();
             SubscribeToWorldState();
             InitializeDalamudSignals();
         }
