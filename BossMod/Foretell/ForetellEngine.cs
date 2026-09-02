@@ -42,9 +42,13 @@ public sealed partial class ForetellEngine : IDisposable
     private PriorityQueue<long, long> _episodeCleanup = new();
     private Dictionary<ulong, ParticipantTrack> _tracks = [];
     private Dictionary<long, ActivePrediction> _predictions = [];
+    private Dictionary<long, PendingTimelineForecast> _timelineForecasts = [];
+    private long _nextForecastID = -1;
     private Dictionary<uint, long> _effectSequenceEpisodes = [];
     private long _episodeRejections;
     private long _learningEvictions;
+    private long _finalizationBudgetFrameTicks;
+    private int _finalizationsThisFrame;
 
     private uint _previousAction;
     private DateTime _previousActionTime;
@@ -73,6 +77,9 @@ public sealed partial class ForetellEngine : IDisposable
     private int _consecutiveUpdateOverruns;
     private DateTime _adaptiveThrottleUntil;
     private DateTime _lastUpdateFailureLog;
+    private DateTime _lastStorageMaintenance;
+    private Task<ForetellStorageMaintenanceResult>? _storageMaintenanceTask;
+    private ForetellStorageMaintenanceResult _lastStorageMaintenanceResult = new();
     private bool _disposed;
     internal bool PerformanceThrottled => DateTime.UtcNow < _adaptiveThrottleUntil;
 
@@ -177,7 +184,7 @@ public sealed partial class ForetellEngine : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        try { FinalizeDue(DateTime.MaxValue); CompleteSession(); SaveStore(); }
+        try { FinalizeDue(DateTime.MaxValue, exhaustive: true); CompleteSession(); SaveStore(); }
         catch (Exception e) { Service.Log($"[Foretell] Final save during dispose failed safely: {e.Message}"); }
         _ws.Network.CaptureRawTransport = false;
         DetachRawCapture();
@@ -237,6 +244,7 @@ public sealed partial class ForetellEngine : IDisposable
             OpenRawJournal();
         DrainRawFeatureWindows();
         DrainNativeCaptures();
+        PollStorageMaintenance();
         SampleNativeTopology();
         if ((now - _lastPositionSample).TotalMilliseconds >= 250)
         {
@@ -246,6 +254,7 @@ public sealed partial class ForetellEngine : IDisposable
         }
 
         FinalizeDue(now);
+        ExpireTimelineForecasts(now);
         foreach (var key in _predictions.Where(p => p.Value.Activation.AddSeconds(1.5) < now).Select(p => p.Key).ToArray())
             _predictions.Remove(key);
 
@@ -256,6 +265,9 @@ public sealed partial class ForetellEngine : IDisposable
         // history; saving after combat preserves it without creating a periodic gameplay hitch.
         if (!_inPull && (DateTime.UtcNow - _lastSave).TotalSeconds > 60)
             SaveStore();
+        if (!_inPull && _cfg.AutomaticStorageMaintenance && _storageMaintenanceTask == null
+            && (DateTime.UtcNow - _lastStorageMaintenance).TotalMinutes >= 10)
+            StartStorageMaintenance();
     }
 
     public void ToggleInspector() => _inspectorOpen = !_inspectorOpen;
@@ -281,7 +293,7 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void ChangeTerritory(uint territory)
     {
-        FinalizeDue(DateTime.MaxValue);
+        FinalizeDue(DateTime.MaxValue, exhaustive: true);
         CompleteSession();
         _episodes.Clear();
         _episodeFinalization.Clear();
@@ -290,7 +302,11 @@ public sealed partial class ForetellEngine : IDisposable
         ResetDataFabric();
         ResetTopology();
         _predictions.Clear();
+        _timelineForecasts.Clear();
+        _nextForecastID = -1;
         _effectSequenceEpisodes.Clear();
+        _finalizationBudgetFrameTicks = 0;
+        _finalizationsThisFrame = 0;
         _actorControlGates.Clear();
         _previousAction = 0;
         _previousSignal = "";
@@ -379,6 +395,10 @@ public sealed partial class ForetellEngine : IDisposable
         changed |= NormalizeFinite(ref _cfg.RadarSize, 220, 140, 600);
         var maxRendered = Math.Clamp(_cfg.MaxRenderedMechanics, 1, 32);
         if (maxRendered != _cfg.MaxRenderedMechanics) { _cfg.MaxRenderedMechanics = maxRendered; changed = true; }
+        var retentionDays = Math.Clamp(_cfg.RecordingRetentionDays, 1, 365);
+        if (retentionDays != _cfg.RecordingRetentionDays) { _cfg.RecordingRetentionDays = retentionDays; changed = true; }
+        var storageGiB = Math.Clamp(_cfg.MaximumRecordingStorageGiB, 1, 100);
+        if (storageGiB != _cfg.MaximumRecordingStorageGiB) { _cfg.MaximumRecordingStorageGiB = storageGiB; changed = true; }
         if (!float.IsFinite(_cfg.RadarPositionX) || !float.IsFinite(_cfg.RadarPositionY))
         {
             _cfg.RadarPositionX = _cfg.RadarPositionY = -1;
@@ -515,7 +535,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 12);
+        _store.Schema = Math.Max(_store.Schema, 13);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -552,6 +572,8 @@ public sealed partial class ForetellEngine : IDisposable
                 encounter.Phases ??= [];
                 encounter.PhaseBoundaries ??= [];
                 encounter.Composites ??= [];
+                encounter.CausalEdges ??= [];
+                encounter.RawOpcodes ??= [];
                 encounter.Topologies ??= [];
                 RemoveNullValues(encounter.Sources);
                 RemoveNullValues(encounter.Mechanics);
@@ -559,9 +581,31 @@ public sealed partial class ForetellEngine : IDisposable
                 RemoveNullValues(encounter.Phases);
                 RemoveNullValues(encounter.PhaseBoundaries);
                 RemoveNullValues(encounter.Composites);
+                RemoveNullValues(encounter.CausalEdges);
+                RemoveNullValues(encounter.RawOpcodes);
                 RemoveNullValues(encounter.Topologies);
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
+                foreach (var edge in encounter.CausalEdges.Values)
+                {
+                    edge.Cause ??= "";
+                    edge.Effect ??= "";
+                    edge.Count = Math.Max(0, edge.Count);
+                    edge.ExactLinks = Math.Clamp(edge.ExactLinks, 0, edge.Count);
+                    edge.MeanDelay = Finite(edge.MeanDelay, 0, 0, 120);
+                    edge.M2 = Finite(edge.M2, 0, 0, double.MaxValue);
+                }
+                foreach (var raw in encounter.RawOpcodes.Values)
+                {
+                    raw.Windows = Math.Max(0, raw.Windows);
+                    raw.Packets = Math.Max(0, raw.Packets);
+                    raw.PayloadBytes = Math.Max(0, raw.PayloadBytes);
+                    raw.MeanLength = Finite(raw.MeanLength, 0, 0, ForetellRawFormat.MaxPayloadBytes);
+                    raw.LengthM2 = Finite(raw.LengthM2, 0, 0, double.MaxValue);
+                    raw.MinLength = raw.MinLength == int.MaxValue ? 0 : Math.Clamp(raw.MinLength, 0, ForetellRawFormat.MaxPayloadBytes);
+                    raw.MaxLength = Math.Clamp(raw.MaxLength, raw.MinLength, ForetellRawFormat.MaxPayloadBytes);
+                    raw.StructuralChanges = Math.Max(0, raw.StructuralChanges);
+                }
                 foreach (var source in encounter.Sources.Values)
                 {
                     source.Name ??= "";
@@ -586,6 +630,9 @@ public sealed partial class ForetellEngine : IDisposable
                     composite.Count = Math.Max(0, composite.Count);
                     composite.MeanSkewSeconds = Finite(composite.MeanSkewSeconds, 0, 0, 120);
                     composite.M2 = Finite(composite.M2, 0, 0, double.MaxValue);
+                    composite.Forecasts = Math.Max(0, composite.Forecasts);
+                    composite.Hits = Math.Clamp(composite.Hits, 0, composite.Forecasts);
+                    composite.Misses = Math.Clamp(composite.Misses, 0, composite.Forecasts - composite.Hits);
                 }
                 foreach (var topologyKey in encounter.Topologies.Keys.ToArray())
                     if (!NormalizeTopology(encounter.Topologies[topologyKey])) encounter.Topologies.Remove(topologyKey);
@@ -611,7 +658,7 @@ public sealed partial class ForetellEngine : IDisposable
         if (encounter.Sources.Count > 8192)
             foreach (var key in encounter.Sources.OrderByDescending(item => item.Value.LastSeen).Skip(8192).Select(item => item.Key).ToArray()) encounter.Sources.Remove(key);
         if (encounter.Mechanics.Count > 2048)
-            foreach (var key in encounter.Mechanics.OrderByDescending(item => item.Value.Confidence).ThenByDescending(item => item.Value.LastSeen).Skip(2048).Select(item => item.Key).ToArray()) encounter.Mechanics.Remove(key);
+            foreach (var key in encounter.Mechanics.OrderByDescending(item => item.Value.GuidanceConfidence).ThenByDescending(item => item.Value.LastSeen).Skip(2048).Select(item => item.Key).ToArray()) encounter.Mechanics.Remove(key);
         if (encounter.Timeline.Count > 8192)
             foreach (var key in encounter.Timeline.OrderByDescending(item => item.Value.Count).Skip(8192).Select(item => item.Key).ToArray()) encounter.Timeline.Remove(key);
         if (encounter.Phases.Count > 512)
@@ -620,6 +667,10 @@ public sealed partial class ForetellEngine : IDisposable
             foreach (var key in encounter.PhaseBoundaries.OrderByDescending(item => item.Value.Accepted).ThenByDescending(item => item.Value.PullsSeen).Skip(512).Select(item => item.Key).ToArray()) encounter.PhaseBoundaries.Remove(key);
         if (encounter.Composites.Count > 2048)
             foreach (var key in encounter.Composites.OrderByDescending(item => item.Value.Count).Skip(2048).Select(item => item.Key).ToArray()) encounter.Composites.Remove(key);
+        if (encounter.CausalEdges.Count > 8192)
+            foreach (var key in encounter.CausalEdges.OrderByDescending(item => item.Value.Confidence).ThenByDescending(item => item.Value.Count).Skip(8192).Select(item => item.Key).ToArray()) encounter.CausalEdges.Remove(key);
+        if (encounter.RawOpcodes.Count > 4096)
+            foreach (var key in encounter.RawOpcodes.OrderByDescending(item => item.Value.Packets).Skip(4096).Select(item => item.Key).ToArray()) encounter.RawOpcodes.Remove(key);
         if (encounter.Topologies.Count > 8)
             foreach (var key in encounter.Topologies.OrderByDescending(item => item.Value.LastSeen).Skip(8).Select(item => item.Key).ToArray()) encounter.Topologies.Remove(key);
     }
@@ -648,7 +699,19 @@ public sealed partial class ForetellEngine : IDisposable
         mechanic.PriorP1 = Finite(mechanic.PriorP1, 0, 0, 200);
         mechanic.PriorP2 = Finite(mechanic.PriorP2, 0, 0, 200);
         mechanic.PriorConfidence = Finite(mechanic.PriorConfidence, 0, 0, .98f);
+        if (!Enum.IsDefined(mechanic.OriginKind)) mechanic.OriginKind = PredictionOriginKind.Source;
+        if (mechanic.AnchorSamples == 0 && mechanic.Geometry is GeometryKind.Circle or GeometryKind.Donut)
+            mechanic.OriginKind = PredictionOriginKind.Target;
         mechanic.MeanLeadSeconds = Finite(mechanic.MeanLeadSeconds, 0, 0, 120);
+        mechanic.MeanAnchorForward = Finite(mechanic.MeanAnchorForward, 0, -200, 200);
+        mechanic.MeanAnchorSide = Finite(mechanic.MeanAnchorSide, 0, -200, 200);
+        mechanic.AnchorForwardM2 = Finite(mechanic.AnchorForwardM2, 0, 0, double.MaxValue);
+        mechanic.AnchorSideM2 = Finite(mechanic.AnchorSideM2, 0, 0, double.MaxValue);
+        mechanic.AnchorSamples = Math.Max(0, mechanic.AnchorSamples);
+        mechanic.Forecasts = Math.Max(0, mechanic.Forecasts);
+        mechanic.ForecastHits = Math.Clamp(mechanic.ForecastHits, 0, mechanic.Forecasts);
+        mechanic.ForecastMisses = Math.Clamp(mechanic.ForecastMisses, 0, mechanic.Forecasts - mechanic.ForecastHits);
+        mechanic.BrierScoreSum = Finite(mechanic.BrierScoreSum, 0, 0, double.MaxValue);
         mechanic.Observations = Math.Max(0, mechanic.Observations);
         mechanic.Confirmations = Math.Clamp(mechanic.Confirmations, 0, mechanic.Observations);
         mechanic.AffectedSamples = Math.Max(0, mechanic.AffectedSamples);
@@ -674,6 +737,9 @@ public sealed partial class ForetellEngine : IDisposable
         edge.Count = Math.Max(0, edge.Count);
         edge.MeanDelay = Finite(edge.MeanDelay, 0, 0, 600);
         edge.M2 = Finite(edge.M2, 0, 0, double.MaxValue);
+        edge.Forecasts = Math.Max(0, edge.Forecasts);
+        edge.Hits = Math.Clamp(edge.Hits, 0, edge.Forecasts);
+        edge.Misses = Math.Clamp(edge.Misses, 0, edge.Forecasts - edge.Hits);
     }
 
     private static bool NormalizeTopology(ArenaTopologyMemory topology)

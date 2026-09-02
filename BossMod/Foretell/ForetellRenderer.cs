@@ -113,6 +113,40 @@ public sealed partial class ForetellEngine
                 DrawRect(cam, o, p.Rotation - MathF.PI * .5f, p.P1, p.P2, color, thickness);
                 break;
         }
+        DrawWorldGuidance(cam, p, o, color, thickness);
+    }
+
+    private void DrawWorldGuidance(Camera cam, ActivePrediction p, Vector3 origin, uint color, float thickness)
+    {
+        var targetActor = p.TargetID != 0 ? _ws.Actors.Find(p.TargetID) : null;
+        var target = targetActor != null
+            ? new Vector3(targetActor.Position.X, targetActor.PosRot.Y + .08f, targetActor.Position.Z)
+            : new Vector3(p.Target.X, origin.Y, p.Target.Y);
+        switch (p.Guidance)
+        {
+            case GuidanceKind.Stack:
+                cam.DrawWorldCircle(target, Math.Max(3, p.P1), color, thickness);
+                break;
+            case GuidanceKind.Spread:
+                cam.DrawWorldCircle(target, Math.Max(5, p.P1), color, thickness);
+                break;
+            case GuidanceKind.Soak:
+                cam.DrawWorldCircle(origin, Math.Max(2.5f, p.P1), color, thickness);
+                break;
+            case GuidanceKind.Tether when p.CasterID != 0 && (p.TargetID != 0 || p.Target != p.Origin):
+                cam.DrawWorldLine(origin, target, color, thickness);
+                break;
+            case GuidanceKind.LookAway:
+                cam.DrawWorldCircle(origin, 2, color, thickness);
+                cam.DrawWorldLine(origin + new Vector3(-1.5f, 0, -1.5f), origin + new Vector3(1.5f, 0, 1.5f), color, thickness);
+                cam.DrawWorldLine(origin + new Vector3(-1.5f, 0, 1.5f), origin + new Vector3(1.5f, 0, -1.5f), color, thickness);
+                break;
+            case GuidanceKind.Knockback:
+                var player = _ws.Party[PartyState.PlayerSlot];
+                if (player != null)
+                    cam.DrawWorldLine(origin, new(player.Position.X, player.PosRot.Y + .08f, player.Position.Z), color, thickness);
+                break;
+        }
     }
 
     private static void DrawCone(Camera cam, Vector3 o, float rot, float range, float half, uint color, float thickness)
@@ -150,13 +184,17 @@ public sealed partial class ForetellEngine
         var viewport = Camera.Instance?.ViewportSize ?? new Vector2(1920, 1080);
         if (!FiniteViewport(viewport)) viewport = new(1920, 1080);
         var y = viewport.Y * .18f;
-        var active = _predictions.Values.Where(ValidPrediction).OrderBy(p => p.Activation).FirstOrDefault();
-        if (active.ActionID != 0)
+        var active = _predictions.Values.Where(p => ValidPrediction(p) && p.Confidence >= _cfg.VisualConfidence / 100f)
+            .OrderBy(p => p.Activation).FirstOrDefault();
+        if (!string.IsNullOrEmpty(active.SignalKey) || active.ActionID != 0 || active.Guidance != GuidanceKind.None)
         {
             var remain = Math.Max(0, (active.Activation - _ws.CurrentTime).TotalSeconds);
             var actionName = LookupActionName(active.ActionID);
+            var label = !string.IsNullOrWhiteSpace(active.Label) ? active.Label
+                : !string.IsNullOrWhiteSpace(actionName) ? actionName
+                : active.Kind != MechanicKind.Unknown ? active.Kind.ToString() : "Learned signal";
             draw.AddText(new(viewport.X * .5f - 190, y), ConfidenceColor(active.Confidence),
-                $"FORETELL  {(string.IsNullOrWhiteSpace(actionName) ? active.Kind : actionName)}  {remain:F1}s  confidence {active.Confidence:P0}");
+                $"FORETELL  {label}  {remain:F1}s  verified {active.Confidence:P0}{(active.Anticipated ? " · anticipated" : "")}");
             y += 22;
         }
         var next = PredictNextContextual();
@@ -275,6 +313,7 @@ public sealed partial class ForetellEngine
             var col = ConfidenceColor(p.Confidence);
             var thickness = ConfidenceThickness(p.Confidence);
             DrawRadarGeometry(draw, p, playerPos, center, scale, col, thickness);
+            DrawRadarGuidance(draw, p, playerPos, center, scale, col, thickness);
             var c = RadarPoint(p.Origin, playerPos, center, scale);
             draw.AddText(c + new Vector2(5, -9), col, $"{p.Confidence:P0}");
         }
@@ -370,6 +409,51 @@ public sealed partial class ForetellEngine
         }
     }
 
+    private void DrawRadarGuidance(ImDrawListPtr draw, ActivePrediction p, Vector2 player, Vector2 center, float scale, uint color, float thickness)
+    {
+        var targetActor = p.TargetID != 0 ? _ws.Actors.Find(p.TargetID) : null;
+        var targetWorld = targetActor != null ? V(targetActor.Position) : p.Target;
+        var target = RadarPoint(targetWorld, player, center, scale);
+        var origin = RadarPoint(p.Origin, player, center, scale);
+        switch (p.Guidance)
+        {
+            case GuidanceKind.Stack:
+                draw.AddCircle(target, Math.Max(3, p.P1) * scale, color, 32, thickness);
+                draw.AddText(target + new Vector2(5, 5), color, "STACK");
+                break;
+            case GuidanceKind.Spread:
+                draw.AddCircle(target, Math.Max(5, p.P1) * scale, color, 32, thickness);
+                draw.AddText(target + new Vector2(5, 5), color, "SPREAD");
+                break;
+            case GuidanceKind.Soak:
+                draw.AddCircle(origin, Math.Max(2.5f, p.P1) * scale, color, 32, thickness);
+                draw.AddText(origin + new Vector2(5, 5), color, "SOAK");
+                break;
+            case GuidanceKind.Tether:
+                draw.AddLine(origin, target, color, thickness);
+                draw.AddText((origin + target) * .5f, color, "TETHER");
+                break;
+            case GuidanceKind.LookAway:
+                draw.AddCircle(origin, 8, color, 20, thickness);
+                draw.AddLine(origin - new Vector2(6), origin + new Vector2(6), color, thickness);
+                draw.AddLine(origin + new Vector2(-6, 6), origin + new Vector2(6, -6), color, thickness);
+                break;
+            case GuidanceKind.Knockback:
+                draw.AddLine(origin, center, color, thickness);
+                draw.AddText((origin + center) * .5f, color, "KNOCKBACK");
+                break;
+            case GuidanceKind.Raidwide:
+                draw.AddText(center + new Vector2(-35, -18), color, "RAIDWIDE");
+                break;
+            case GuidanceKind.Cleanse:
+                draw.AddText(center + new Vector2(-25, -18), color, "CLEANSE");
+                break;
+            case GuidanceKind.Move:
+                draw.AddText(center + new Vector2(-22, -18), color, "MOVE");
+                break;
+        }
+    }
+
     private static void DrawRadarCone(ImDrawListPtr draw, ActivePrediction p, Vector2 player, Vector2 center, float scale, uint color, float thickness)
     {
         const int n = 24;
@@ -406,7 +490,8 @@ public sealed partial class ForetellEngine
     {
         var player = _ws.Party[PartyState.PlayerSlot];
         if (player == null) return;
-        var dangers = _predictions.Values.Where(p => ValidPrediction(p) && p.Confidence >= _cfg.SafeConfidence / 100f).ToArray();
+        var dangers = _predictions.Values.Where(p => ValidPrediction(p) && (p.Guidance is GuidanceKind.Avoid or GuidanceKind.None)
+            && p.Geometry != GeometryKind.Unknown && p.Confidence >= _cfg.SafeConfidence / 100f).ToArray();
         if (dangers.Length == 0) return;
         var pp = V(player.Position);
         if (!FiniteVector(pp)) return;

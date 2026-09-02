@@ -53,6 +53,17 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("Record local Replay Lab stream", tooltip: "Optional high-volume diagnostic capture. Raw packets and normalized encounter observations are serialized on a background thread; this is never uploaded automatically.")]
     public bool RecordReplay;
 
+    [PropertyDisplay("Automatically prune old recordings", tooltip: "Optional. When enabled, Foretell removes only inactive files from its own raw/replay folders, outside combat and on a background worker. Active recordings and learned memory are always protected.")]
+    public bool AutomaticStorageMaintenance;
+
+    [PropertyDisplay("Recording retention (days)", tooltip: "Inactive raw/replay recordings older than this are eligible for automatic cleanup. Set automatic pruning above to ON to apply it.")]
+    [PropertySlider(1, 365, Speed = 1)]
+    public int RecordingRetentionDays = 30;
+
+    [PropertyDisplay("Maximum recording storage (GiB)", tooltip: "After retention cleanup, the oldest inactive recordings are removed until Foretell recordings fit this quota. Learned memory is not counted or deleted.")]
+    [PropertySlider(1, 100, Speed = 1)]
+    public int MaximumRecordingStorageGiB = 20;
+
     // Serialized migration marker; deliberately not shown in the configuration UI.
     public int ReplayPerformancePolicyVersion;
 

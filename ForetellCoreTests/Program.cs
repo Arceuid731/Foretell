@@ -20,12 +20,17 @@ static class ForetellCoreTests
         TopologyFuzzMaintainsInvariants();
         RawRoundTrip();
         RawLiveReplayDeterminism();
+        RawStructuralFeaturesAreDeterministic();
         RawSchemaOneCompatibility();
         RawRejectsCorruption();
         RawRejectsTruncation();
         RawFuzzDoesNotEscape();
         ClassifierMigrationPreservesFeatureFamilies();
         ClassifierRejectsNonFiniteStateAndInput();
+        InferenceReliabilityAndAbstention();
+        CausalAndTimelineConfidence();
+        GeometryValidationAndGuidance();
+        StorageMaintenanceProtectsActiveFiles();
         Console.WriteLine("Foretell core tests passed.");
     }
 
@@ -158,6 +163,39 @@ static class ForetellCoreTests
         finally { File.Delete(path); }
     }
 
+    private static void RawStructuralFeaturesAreDeterministic()
+    {
+        var now = DateTime.UtcNow;
+        var records = new[]
+        {
+            new ForetellRawRecord(ForetellRawRecordKind.ServerIPC, now.Ticks, 42, [0x123], 1, 2, 0, [10, 20, 30]),
+            new ForetellRawRecord(ForetellRawRecordKind.ServerIPC, now.AddMilliseconds(1).Ticks, 42, [0x123], 1, 2, 0, [10, 40, 30]),
+            new ForetellRawRecord(ForetellRawRecordKind.ClientIPC, now.AddMilliseconds(2).Ticks, 42, [0x456], 2, 1, 1, [99])
+        };
+        ForetellRawFeatureWindow Build()
+        {
+            var accumulator = new ForetellRawWindowAccumulator();
+            foreach (var record in records) accumulator.Add(record);
+            return accumulator.Finish();
+        }
+        var first = Build();
+        var second = Build();
+        Check.That(first.Transitions.OrderBy(pair => pair.Key).SequenceEqual(second.Transitions.OrderBy(pair => pair.Key)), "raw transition graph is not deterministic");
+        Check.That(first.OpcodeFeatures.Keys.Order().SequenceEqual(second.OpcodeFeatures.Keys.Order()), "raw structural opcode families differ");
+        foreach (var opcode in first.OpcodeFeatures.Keys)
+        {
+            var a = first.OpcodeFeatures[opcode];
+            var b = second.OpcodeFeatures[opcode];
+            Check.That(a == b || (a.Count == b.Count && a.PayloadBytes == b.PayloadBytes && a.MinLength == b.MinLength
+                && a.MaxLength == b.MaxLength && a.SequenceHash == b.SequenceHash
+                && a.ByteMeans.SequenceEqual(b.ByteMeans) && a.ByteVariances.SequenceEqual(b.ByteVariances)), "raw structural feature mismatch");
+        }
+        var serverKey = ((uint)ForetellRawRecordKind.ServerIPC << 24) | 0x123u;
+        Check.That(first.OpcodeFeatures[serverKey].ByteVariances[0] == 0, "stable payload byte reported variance");
+        Check.That(first.OpcodeFeatures[serverKey].ByteVariances[1] > 0, "changing payload byte was not detected");
+        Check.That(first.Transitions.Count == 2, "raw transition families were lost");
+    }
+
     private static void RawSchemaOneCompatibility()
     {
         var path = Path.Combine(Path.GetTempPath(), $"foretell-v1-{Guid.NewGuid():N}.ftraw.gz");
@@ -267,5 +305,72 @@ static class ForetellCoreTests
         var prediction = classifier.Predict(features);
         Check.That(float.IsFinite(prediction.Confidence) && prediction.Confidence is >= 0 and <= 1, "non-finite input escaped classifier guards");
         Check.That(state.Weights.SelectMany(row => row).All(double.IsFinite), "training introduced non-finite classifier state");
+    }
+
+    private static void InferenceReliabilityAndAbstention()
+    {
+        Check.That(Math.Abs(ForetellInferenceCore.GuidanceConfidence(.99f, 0, 0) - .94f) < .0001f, "unverified guidance crossed warning gate");
+        var perfect = ForetellInferenceCore.GuidanceConfidence(.99f, 20, 0);
+        var imperfect = ForetellInferenceCore.GuidanceConfidence(.99f, 19, 1);
+        Check.That(perfect > .80f && perfect < .99f, "verified lower bound is implausible");
+        Check.That(imperfect < perfect, "a forecast miss did not lower guidance confidence");
+        Check.That(ForetellInferenceCore.GuidanceConfidence(float.NaN, 20, 0) == 0, "non-finite evidence escaped abstention");
+    }
+
+    private static void CausalAndTimelineConfidence()
+    {
+        var weak = ForetellInferenceCore.CausalConfidence(1, 0, 2, 2);
+        var strong = ForetellInferenceCore.CausalConfidence(20, 20, 2, .05);
+        Check.That(strong > weak && strong > .90f, "exact stable causal evidence was not preferred");
+        var a = new SignalTimelineEdge { From = "A", To = "B", Phase = 1, Count = 7 };
+        var b = new SignalTimelineEdge { From = "A", To = "C", Phase = 1, Count = 3 };
+        Check.That(Math.Abs(ForetellInferenceCore.TimelineProbability(a, [a, b]) - .7f) < .0001f, "timeline branch probability is incorrect");
+        Check.That(ForetellInferenceCore.WilsonLowerBound(10, 10) > ForetellInferenceCore.WilsonLowerBound(5, 10), "reliability ordering regressed");
+    }
+
+    private static void GeometryValidationAndGuidance()
+    {
+        Check.That(ForetellInferenceCore.GeometryMatches(GeometryKind.Circle, 10, 0, GeometryKind.Circle, 11, 0), "near geometry was rejected");
+        Check.That(!ForetellInferenceCore.GeometryMatches(GeometryKind.Circle, 10, 0, GeometryKind.Circle, 15, 0), "large geometry drift was accepted");
+        Check.That(!ForetellInferenceCore.GeometryMatches(GeometryKind.Circle, 10, 0, GeometryKind.Cone, 10, 0), "different geometry families matched");
+        Check.That(ForetellInferenceCore.GuidanceFor(MechanicKind.Stack) == GuidanceKind.Stack, "stack guidance mapping missing");
+        Check.That(ForetellInferenceCore.GuidanceFor(MechanicKind.Proximity) == GuidanceKind.Move, "proximity guidance mapping missing");
+        var stable = new ContextualMechanic { AnchorSamples = 3, AnchorForwardM2 = 1, AnchorSideM2 = 1 };
+        var unstable = new ContextualMechanic { AnchorSamples = 3, AnchorForwardM2 = 30, AnchorSideM2 = 30 };
+        Check.That(stable.AnchorStdDev < 3 && unstable.AnchorStdDev > 3, "anchor stability gate is incorrect");
+    }
+
+    private static void StorageMaintenanceProtectsActiveFiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"foretell-storage-{Guid.NewGuid():N}");
+        var raw = Path.Combine(root, "raw");
+        var replay = Path.Combine(root, "replay");
+        Directory.CreateDirectory(raw);
+        Directory.CreateDirectory(replay);
+        try
+        {
+            var old = Path.Combine(raw, "old.ftraw.gz");
+            var active = Path.Combine(raw, "active.ftraw.gz");
+            var recent = Path.Combine(replay, "recent.jsonl");
+            File.WriteAllBytes(old, new byte[128]);
+            File.WriteAllBytes(active, new byte[128]);
+            File.WriteAllBytes(recent, new byte[128]);
+            File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-60));
+            File.SetLastWriteTimeUtc(active, DateTime.UtcNow.AddDays(-60));
+            var result = ForetellStorageMaintenance.Run(raw, replay, [active], DateTime.UtcNow, 30, 1024 * 1024);
+            Check.That(string.IsNullOrEmpty(result.Error) && result.Deleted == 1, "retention cleanup result is incorrect");
+            Check.That(!File.Exists(old) && File.Exists(active) && File.Exists(recent), "storage cleanup deleted the wrong file");
+
+            var quotaOld = Path.Combine(raw, "quota-old.ftraw.gz");
+            var quotaNew = Path.Combine(replay, "quota-new.jsonl");
+            File.WriteAllBytes(quotaOld, new byte[700 * 1024]);
+            File.WriteAllBytes(quotaNew, new byte[700 * 1024]);
+            File.SetLastWriteTimeUtc(quotaOld, DateTime.UtcNow.AddHours(-2));
+            File.SetLastWriteTimeUtc(quotaNew, DateTime.UtcNow.AddHours(-1));
+            result = ForetellStorageMaintenance.Run(raw, replay, [active], DateTime.UtcNow, 30, 1024 * 1024);
+            Check.That(result.Deleted == 1 && !File.Exists(quotaOld) && File.Exists(quotaNew), "quota cleanup did not remove the oldest inactive recording");
+            Check.That(File.Exists(active), "quota cleanup deleted the protected active recording");
+        }
+        finally { Directory.Delete(root, true); }
     }
 }

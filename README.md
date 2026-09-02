@@ -2,7 +2,7 @@
 
 Foretell is an experimental adaptive encounter-intelligence plugin for FFXIV, built on BossMod Reborn.
 
-It keeps the mature BMR world-state/rendering stack while adding local multi-signal observation, mechanic inference, confidence/ambiguity tracking, persistent contextual encounter memory, timeline and phase learning, Replay Lab diagnostics, native arena topology, and predictive world/radar/text guidance.
+It keeps the mature BMR world-state/rendering stack while adding local multi-signal observation, causal and structural protocol learning, calibrated forecast validation, persistent contextual encounter memory, timeline/phase/composite prediction, Replay Lab diagnostics, native arena topology, and predictive world/radar/text guidance.
 
 For cast actions, Foretell also consumes useful local FFXIV client metadata as an immediate prior: `CastType`, `EffectRange`, `XAxisModifier`, `TargetArea`, `Omen`/VFX information and actor hitbox. These priors can make ordinary telegraphs useful from the first cast, but they are never treated as unquestionable ground truth: observed outcomes can confirm, refine or override them, and metadata alone cannot reach the 99% safe-guidance threshold.
 
@@ -18,18 +18,24 @@ For cast actions, Foretell also consumes useful local FFXIV client metadata as a
 4. After a few pulls/runs, switch to **Compare** and review **Learned mechanics**.
 5. Move to **Hybrid** when the learned results match the fight. Use pure **Foretell** only when you intentionally want to hide legacy BMR encounter presentation.
 
-The dedicated in-game cockpit provides Dashboard, Knowledge explorer, Timeline, Live feed, Replay & storage, Settings and Help tabs. The Knowledge explorer is organized as content category → territory/duty → arena/environment/source → mechanic, with confirmed deletion at every useful level.
+The dedicated in-game cockpit provides Dashboard, Knowledge explorer, Timeline, Live feed, Replay & storage, Settings and Help tabs. The Knowledge explorer is organized as content category → territory/duty → arena/environment/source → mechanic, with confirmed deletion at every useful level. It also exposes learned causal links, raw protocol families, phase transitions and simultaneous patterns individually.
 
 ## Confidence visualization
 
-Foretell uses the same confidence encoding on the world overlay and mini radar. The actual inferred circle, donut, cone, rectangle or cross is drawn with a color that represents **reliability**, not damage severity:
+Foretell separates evidence confidence from verified guidance reliability. A candidate can therefore remain inspectable without being allowed into warning or safe-position gates. After forecasts resolve, a conservative lower confidence bound and prediction error update the guidance score. The actual inferred circle, donut, cone, rectangle or cross is drawn with a color that represents **verified reliability**, not damage severity:
 
 - cyan/blue — early visual hypothesis
 - yellow — learned
 - orange — high-confidence warning-grade inference
 - red — safe-guidance-grade danger (at the configured strict threshold)
 
-The radar also prints confidence percentages. Safe-position suggestions remain advisory and are only eligible at the strict safe-confidence gate.
+The radar also prints confidence percentages. Target-relative geometry is withheld from anticipated spatial drawing until repeated offsets are stable. Safe-position suggestions remain advisory and are only eligible at the strict safe-confidence gate.
+
+## Prediction pipeline
+
+Every eligible encounter signal—not only cast bars—can become a learned trigger: casts, icons, tethers, statuses, action timelines, event objects, map/director state, ActorControl, native VFX paths and NPC calls. Outcomes such as ActionEffect, sequence-linked EffectResult, displacement, statuses and deaths validate or reject the resulting mechanic hypothesis.
+
+Repeated signal transitions produce branch-aware timeline forecasts. Ambiguous branches cause Foretell to abstain. Stable simultaneous patterns can forecast their other components, while learned causal links improve assignment of later effects to the correct trigger. Each issued mechanic, timeline and composite forecast records hits and misses so reliability is measured rather than inferred from repetition alone.
 
 ## Foretell modes
 
@@ -56,7 +62,9 @@ The radar also prints confidence percentages. Safe-position suggestions remain a
 
 ## Replay Lab
 
-Foretell can record a compact normalized event stream locally. Independently of that optional setting, it always writes exact compressed raw journals for server IPC, client IPC and ActorControl. Replay Lab re-injects normalized observations and every raw journal overlapping the recorded session through the same learner in an isolated temporary store. It reports what was rediscovered, ambiguous or rejected, then restores the live learned memory. It is an inference replay, not a video or 3D recreation of FFXIV.
+Foretell can record a compact normalized event stream locally. Independently of that optional setting, it always writes exact compressed raw journals for server IPC, client IPC and ActorControl. The online raw learner derives bounded per-opcode length, byte-stability, sequence-hash and transition features while retaining the original bytes. Replay Lab re-injects normalized observations and every raw journal overlapping the recorded session through the same learner in an isolated temporary store. It reports what was rediscovered, ambiguous or rejected, then restores the live learned memory. It is an inference replay, not a video or 3D recreation of FFXIV.
+
+The storage page can delete individual inactive recordings or apply a retention/quota cleanup. Automatic cleanup is opt-in, runs outside combat on a background worker, and never deletes the active journal or learned memory.
 
 This makes recorded pulls reusable as a regression corpus while the inference engine evolves.
 

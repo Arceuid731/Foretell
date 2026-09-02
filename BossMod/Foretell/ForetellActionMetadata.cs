@@ -232,6 +232,7 @@ public sealed partial class ForetellEngine
         var geometry = preferLearned ? mechanic!.Geometry : p.Geometry;
         var p1 = preferLearned && mechanic!.P1 > 0 ? mechanic.P1 : p.P1;
         var p2 = preferLearned && mechanic!.P2 > 0 ? mechanic.P2 : p.P2;
+        confidence = ForetellInferenceCore.GuidanceConfidence(confidence, mechanic?.ForecastHits ?? 0, mechanic?.ForecastMisses ?? 0);
 
         // StartEpisode may already have emitted a learned prediction. Never downgrade it; when metadata agrees,
         // replace it with the fused confidence/evidence so first-cast priors and learned evidence reinforce each other.
@@ -250,7 +251,17 @@ public sealed partial class ForetellEngine
         }
 
         _predictions[trigger.Sequence] = new(trigger.ActorID, trigger.PrimaryID, geometry, MechanicKind.GroundAOE,
-            origin, target, trigger.Rotation, p1, p2, trigger.At.AddSeconds(float.IsFinite(trigger.Value1) ? Math.Clamp(trigger.Value1, 0, 120) : 0), confidence, p.Evidence);
+            origin, target, trigger.Rotation, p1, p2, trigger.At.AddSeconds(float.IsFinite(trigger.Value1) ? Math.Clamp(trigger.Value1, 0, 120) : 0), confidence, p.Evidence,
+            SignalKey(trigger), trigger.TargetID, GuidanceKind.Avoid, false, LookupActionName(trigger.PrimaryID) ?? $"Action 0x{trigger.PrimaryID:X}");
+        if (_episodes.GetValueOrDefault(trigger.Sequence) is { } episode)
+        {
+            episode.ForecastIssued = true;
+            episode.ForecastGeometry = geometry;
+            episode.ForecastKind = mechanic?.Kind ?? MechanicKind.GroundAOE;
+            episode.ForecastP1 = p1;
+            episode.ForecastP2 = p2;
+            episode.ForecastConfidence = confidence;
+        }
         _lastEvidence = $"Metadata prior AID {trigger.PrimaryID}: {geometry} {confidence:P0} | {p.Evidence}";
     }
 

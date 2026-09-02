@@ -168,6 +168,8 @@ public sealed partial class ForetellEngine
         var liveEpisodeCleanup = _episodeCleanup;
         var liveTracks = _tracks;
         var livePredictions = _predictions;
+        var liveTimelineForecasts = _timelineForecasts;
+        var liveNextForecastID = _nextForecastID;
         var liveEffectSequenceEpisodes = _effectSequenceEpisodes;
         var liveEpisodeRejections = _episodeRejections;
         var liveLearningEvictions = _learningEvictions;
@@ -198,6 +200,8 @@ public sealed partial class ForetellEngine
             _episodeCleanup = new();
             _tracks = [];
             _predictions = [];
+            _timelineForecasts = [];
+            _nextForecastID = -1;
             _effectSequenceEpisodes = [];
             _episodeRejections = 0;
             _learningEvictions = 0;
@@ -228,13 +232,15 @@ public sealed partial class ForetellEngine
                 ++semanticObservations;
                 if (observation.TerritoryID != _territory)
                 {
-                    FinalizeDue(DateTime.MaxValue);
+                    FinalizeDue(DateTime.MaxValue, exhaustive: true);
                     _territory = observation.TerritoryID;
                     _session = NewSession(_territory);
                     _episodes.Clear();
                     _episodeFinalization.Clear();
                     _episodeCleanup.Clear();
                     _tracks.Clear();
+                    _timelineForecasts.Clear();
+                    _predictions.Clear();
                     _previousAction = 0;
                     _previousSignal = "";
                     _inPull = false;
@@ -249,7 +255,7 @@ public sealed partial class ForetellEngine
                 }
                 ProcessObservation(observation, replaying: true);
             }
-            FinalizeDue(DateTime.MaxValue);
+            FinalizeDue(DateTime.MaxValue, exhaustive: true);
 
             report.RediscoveredMechanics = _store.Encounters.Values.Sum(e => e.Mechanics.Count);
             report.AmbiguousMechanics = _store.Encounters.Values.Sum(e => e.Mechanics.Values.Sum(m => m.AmbiguousSamples));
@@ -270,6 +276,8 @@ public sealed partial class ForetellEngine
             _episodeCleanup = liveEpisodeCleanup;
             _tracks = liveTracks;
             _predictions = livePredictions;
+            _timelineForecasts = liveTimelineForecasts;
+            _nextForecastID = liveNextForecastID;
             _effectSequenceEpisodes = liveEffectSequenceEpisodes;
             _episodeRejections = liveEpisodeRejections;
             _learningEvictions = liveLearningEvictions;
@@ -312,6 +320,22 @@ public sealed partial class ForetellEngine
         obs.Numeric["raw.window.payloadBytes"] = window.PayloadBytes;
         foreach (var (opcode, count) in window.Opcodes) obs.Numeric[$"raw.window.opcode[{opcode:X8}]"] = count;
         for (var i = 0; i < window.BinaryBuckets.Length; ++i) obs.Numeric[$"raw.window.binaryBucket[{i}]"] = window.BinaryBuckets[i];
+        foreach (var (opcode, feature) in window.OpcodeFeatures)
+        {
+            var prefix = $"raw.window.structure[{opcode:X8}]";
+            obs.Numeric[$"{prefix}.count"] = feature.Count;
+            obs.Numeric[$"{prefix}.payloadBytes"] = feature.PayloadBytes;
+            obs.Numeric[$"{prefix}.minLength"] = feature.MinLength;
+            obs.Numeric[$"{prefix}.maxLength"] = feature.MaxLength;
+            obs.Text[$"{prefix}.sequenceHash"] = feature.SequenceHash.ToString("X16");
+            for (var i = 0; i < feature.ByteMeans.Length; ++i)
+            {
+                obs.Numeric[$"{prefix}.byte[{i}].mean"] = feature.ByteMeans[i];
+                obs.Numeric[$"{prefix}.byte[{i}].variance"] = feature.ByteVariances[i];
+            }
+        }
+        foreach (var (transition, count) in window.Transitions)
+            obs.Numeric[$"raw.window.transition[{transition:X16}]"] = count;
         return obs;
     }
 

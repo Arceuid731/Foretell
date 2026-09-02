@@ -4,6 +4,8 @@ using System.Numerics;
 namespace BossMod.Foretell;
 
 public enum GeometryKind { Unknown, Circle, Donut, Cone, Rectangle, Cross }
+public enum GuidanceKind { None, Avoid, Stack, Spread, Soak, LookAway, Knockback, Tether, Raidwide, Cleanse, Move }
+public enum PredictionOriginKind { Source, Target }
 public enum MechanicKind
 {
     Unknown, GroundAOE, Raidwide, Tankbuster, Stack, Spread, Tower, Knockback, Gaze, Tether, Proximity,
@@ -98,6 +100,16 @@ public sealed class ContextualMechanic
     public int DeathSamples { get; set; }
     public int AmbiguousSamples { get; set; }
     public double MeanLeadSeconds { get; set; }
+    public PredictionOriginKind OriginKind { get; set; }
+    public int AnchorSamples { get; set; }
+    public double MeanAnchorForward { get; set; }
+    public double MeanAnchorSide { get; set; }
+    public double AnchorForwardM2 { get; set; }
+    public double AnchorSideM2 { get; set; }
+    public int Forecasts { get; set; }
+    public int ForecastHits { get; set; }
+    public int ForecastMisses { get; set; }
+    public double BrierScoreSum { get; set; }
     public DateTime FirstSeen { get; set; }
     public DateTime LastSeen { get; set; }
     public Dictionary<ObservationKind, int> Evidence { get; set; } = [];
@@ -164,6 +176,12 @@ public sealed class ContextualMechanic
             return Math.Clamp(fused, 0, .999f);
         }
     }
+
+    [JsonIgnore] public float GuidanceConfidence => ForetellInferenceCore.GuidanceConfidence(Confidence, ForecastHits, ForecastMisses);
+    [JsonIgnore] public float ForecastAccuracy => Forecasts == 0 ? 0 : ForecastHits / (float)Math.Max(1, Forecasts);
+    [JsonIgnore] public double AnchorStdDev => AnchorSamples > 1
+        ? Math.Sqrt(Math.Max(0, AnchorForwardM2 + AnchorSideM2) / (AnchorSamples - 1))
+        : 0;
 }
 
 public sealed class TimelineEdge
@@ -184,8 +202,40 @@ public sealed class SignalTimelineEdge
     public int Count { get; set; }
     public double MeanDelay { get; set; }
     public double M2 { get; set; }
+    public int Forecasts { get; set; }
+    public int Hits { get; set; }
+    public int Misses { get; set; }
     [JsonIgnore] public double StdDev => Count > 1 ? Math.Sqrt(M2 / (Count - 1)) : 0;
     [JsonIgnore] public float Stability => Count < 2 ? 0 : Math.Clamp(1f - (float)(StdDev / Math.Max(.5, MeanDelay)), 0, 1);
+    [JsonIgnore] public float ForecastReliability => ForetellInferenceCore.WilsonLowerBound(Hits, Hits + Misses);
+}
+
+public sealed class CausalEdgeMemory
+{
+    public string Cause { get; set; } = "";
+    public string Effect { get; set; } = "";
+    public int Count { get; set; }
+    public int ExactLinks { get; set; }
+    public double MeanDelay { get; set; }
+    public double M2 { get; set; }
+    public DateTime LastSeen { get; set; }
+    [JsonIgnore] public double StdDev => Count > 1 ? Math.Sqrt(Math.Max(0, M2) / (Count - 1)) : 0;
+    [JsonIgnore] public float Confidence => ForetellInferenceCore.CausalConfidence(Count, ExactLinks, MeanDelay, StdDev);
+}
+
+public sealed class RawOpcodeMemory
+{
+    public uint OpcodeFamily { get; set; }
+    public long Windows { get; set; }
+    public long Packets { get; set; }
+    public long PayloadBytes { get; set; }
+    public double MeanLength { get; set; }
+    public double LengthM2 { get; set; }
+    public int MinLength { get; set; } = int.MaxValue;
+    public int MaxLength { get; set; }
+    public ulong LastSequenceHash { get; set; }
+    public long StructuralChanges { get; set; }
+    [JsonIgnore] public double LengthStdDev => Packets > 1 ? Math.Sqrt(Math.Max(0, LengthM2) / (Packets - 1)) : 0;
 }
 
 public sealed class SourceMemory
@@ -217,7 +267,12 @@ public sealed class CompositeMechanicMemory
     public int Count { get; set; }
     public double MeanSkewSeconds { get; set; }
     public double M2 { get; set; }
+    public int Forecasts { get; set; }
+    public int Hits { get; set; }
+    public int Misses { get; set; }
     [JsonIgnore] public double StdDev => Count > 1 ? Math.Sqrt(M2 / (Count - 1)) : 0;
+    [JsonIgnore] public float Stability => Count < 2 ? 0 : Math.Clamp(1f - (float)(StdDev / Math.Max(.15, MeanSkewSeconds + .15)), 0, 1);
+    [JsonIgnore] public float ForecastReliability => ForetellInferenceCore.WilsonLowerBound(Hits, Hits + Misses);
 }
 
 public sealed class PhaseBoundaryMemory
@@ -263,6 +318,8 @@ public sealed class EncounterMemory
     public Dictionary<int, PhaseMemory> Phases { get; set; } = [];
     public Dictionary<string, PhaseBoundaryMemory> PhaseBoundaries { get; set; } = [];
     public Dictionary<string, CompositeMechanicMemory> Composites { get; set; } = [];
+    public Dictionary<string, CausalEdgeMemory> CausalEdges { get; set; } = [];
+    public Dictionary<uint, RawOpcodeMemory> RawOpcodes { get; set; } = [];
     public Dictionary<string, ArenaTopologyMemory> Topologies { get; set; } = [];
 }
 
@@ -309,7 +366,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 12;
+    public int Schema { get; set; } = 13;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
@@ -366,7 +423,9 @@ public sealed class ReplayReport
 public readonly record struct ActivePrediction(
     ulong CasterID, uint ActionID, GeometryKind Geometry, MechanicKind Kind,
     Vector2 Origin, Vector2 Target, float Rotation, float P1, float P2,
-    DateTime Activation, float Confidence, string Evidence);
+    DateTime Activation, float Confidence, string Evidence,
+    string SignalKey = "", ulong TargetID = 0, GuidanceKind Guidance = GuidanceKind.None,
+    bool Anticipated = false, string Label = "");
 
 internal readonly record struct ActionGeometryPrior(
     uint ActionID, GeometryKind Geometry, float P1, float P2, float Confidence,

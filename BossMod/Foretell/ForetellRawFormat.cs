@@ -7,8 +7,12 @@ namespace BossMod.Foretell;
 
 internal enum ForetellRawRecordKind : byte { ServerIPC = 1, ClientIPC = 2, ActorControl = 3 }
 
+internal sealed record ForetellRawOpcodeFeature(int Count, long PayloadBytes, int MinLength, int MaxLength,
+    ulong SequenceHash, double[] ByteMeans, double[] ByteVariances);
+
 internal sealed record ForetellRawFeatureWindow(DateTime At, uint TerritoryID, int ServerPackets, int ClientPackets,
-    int ActorControls, long PayloadBytes, Dictionary<uint, int> Opcodes, double[] BinaryBuckets);
+    int ActorControls, long PayloadBytes, Dictionary<uint, int> Opcodes, double[] BinaryBuckets,
+    Dictionary<uint, ForetellRawOpcodeFeature> OpcodeFeatures, Dictionary<ulong, int> Transitions);
 
 internal sealed record ForetellRawRecord(ForetellRawRecordKind Kind, long TimestampTicks, uint TerritoryID,
     uint[] Arguments, ulong SourceID, ulong TargetID, byte Flags, byte[] Payload);
@@ -35,12 +39,27 @@ internal sealed class ForetellRawReadReport
 internal sealed class ForetellRawWindowAccumulator
 {
     private const int BucketCount = 64;
+    private const int StructuralByteCount = 16;
+    private sealed class OpcodeAccumulator
+    {
+        public int Count;
+        public long Bytes;
+        public int MinLength = int.MaxValue;
+        public int MaxLength;
+        public ulong SequenceHash = 14695981039346656037UL;
+        public readonly double[] Sums = new double[StructuralByteCount];
+        public readonly double[] Squares = new double[StructuralByteCount];
+        public readonly int[] Samples = new int[StructuralByteCount];
+    }
     private readonly Dictionary<uint, int> _opcodes = [];
+    private readonly Dictionary<uint, OpcodeAccumulator> _opcodeFeatures = [];
+    private readonly Dictionary<ulong, int> _transitions = [];
     private readonly double[] _buckets = new double[BucketCount];
     private long _firstTicks, _lastTicks;
     private uint _territory;
     private int _server, _client, _control;
     private long _bytes;
+    private uint? _previousOpcode;
     public int Records => _server + _client + _control;
     public long DurationTicks => Math.Max(0, _lastTicks - _firstTicks);
 
@@ -55,6 +74,23 @@ internal sealed class ForetellRawWindowAccumulator
         var opcode = item.Arguments.Length == 0 ? 0 : item.Arguments[0];
         var opcodeKey = ((uint)item.Kind << 24) | (opcode & 0x00FFFFFFu);
         _opcodes[opcodeKey] = _opcodes.GetValueOrDefault(opcodeKey) + 1;
+        if (_previousOpcode is uint previous)
+        {
+            var transition = ((ulong)previous << 32) | opcodeKey;
+            _transitions[transition] = _transitions.GetValueOrDefault(transition) + 1;
+        }
+        _previousOpcode = opcodeKey;
+        if (!_opcodeFeatures.TryGetValue(opcodeKey, out var structural))
+            _opcodeFeatures[opcodeKey] = structural = new();
+        ++structural.Count;
+        structural.Bytes += item.Payload.LongLength;
+        structural.MinLength = Math.Min(structural.MinLength, item.Payload.Length);
+        structural.MaxLength = Math.Max(structural.MaxLength, item.Payload.Length);
+        unchecked
+        {
+            structural.SequenceHash ^= (uint)item.Payload.Length;
+            structural.SequenceHash *= 1099511628211UL;
+        }
         for (var i = 0; i < ForetellRawFormat.ArgumentCount; ++i)
             Mix(i < item.Arguments.Length ? item.Arguments[i] : 0);
         Mix(item.SourceID); Mix(item.TargetID); Mix(item.Flags);
@@ -62,6 +98,18 @@ internal sealed class ForetellRawWindowAccumulator
         {
             var bucket = (int)((opcode * 16777619u + (uint)i) % BucketCount);
             _buckets[bucket] += (item.Payload[i] - 127.5) / 127.5;
+            unchecked
+            {
+                structural.SequenceHash ^= item.Payload[i];
+                structural.SequenceHash *= 1099511628211UL;
+            }
+            if (i < StructuralByteCount)
+            {
+                var normalized = item.Payload[i] / 255d;
+                structural.Sums[i] += normalized;
+                structural.Squares[i] += normalized * normalized;
+                ++structural.Samples[i];
+            }
         }
     }
 
@@ -69,15 +117,34 @@ internal sealed class ForetellRawWindowAccumulator
     {
         if (Records == 0)
             throw new InvalidOperationException("cannot finish an empty raw feature window");
+        var opcodeFeatures = _opcodeFeatures.ToDictionary(pair => pair.Key, pair =>
+        {
+            var value = pair.Value;
+            var means = new double[StructuralByteCount];
+            var variances = new double[StructuralByteCount];
+            for (var i = 0; i < StructuralByteCount; ++i)
+            {
+                var count = Math.Max(1, value.Samples[i]);
+                means[i] = value.Sums[i] / count;
+                variances[i] = Math.Max(0, value.Squares[i] / count - means[i] * means[i]);
+            }
+            return new ForetellRawOpcodeFeature(value.Count, value.Bytes,
+                value.MinLength == int.MaxValue ? 0 : value.MinLength, value.MaxLength,
+                value.SequenceHash, means, variances);
+        });
         var result = new ForetellRawFeatureWindow(
             new DateTime(Math.Clamp(_lastTicks, DateTime.MinValue.Ticks, DateTime.MaxValue.Ticks), DateTimeKind.Utc),
-            _territory, _server, _client, _control, _bytes, new(_opcodes), _buckets.ToArray());
+            _territory, _server, _client, _control, _bytes, new(_opcodes), _buckets.ToArray(),
+            opcodeFeatures, new(_transitions));
         _opcodes.Clear();
+        _opcodeFeatures.Clear();
+        _transitions.Clear();
         Array.Clear(_buckets);
         _firstTicks = _lastTicks = 0;
         _territory = 0;
         _server = _client = _control = 0;
         _bytes = 0;
+        _previousOpcode = null;
         return result;
     }
 

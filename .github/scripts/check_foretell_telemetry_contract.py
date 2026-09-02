@@ -63,6 +63,15 @@ requirements = {
         "CaptureResolutionPose",
         "observation.Kind != ObservationKind.SystemLog || _inPull",
         "FiniteOrZero(observation.X)",
+        "IssueMechanicPrediction",
+        "ScheduleTimelineForecast",
+        "ScheduleCompositeForecasts",
+        "ResolveTimelineForecasts",
+        "RecordCausalEdge",
+        "UpdateRawProtocolMemory",
+        "mechanic.AnchorStdDev > 3",
+        "finalized >= 2",
+        "TotalMilliseconds >= .65",
     ],
     "BossMod/Foretell/ForetellDataFabric.cs": [
         'FlattenRoot(_ws.Frame, "runtime.frame"',
@@ -116,6 +125,9 @@ requirements = {
         "RadarPositionY",
         "public bool RecordReplay;",
         "ReplayPerformancePolicyVersion",
+        "AutomaticStorageMaintenance",
+        "RecordingRetentionDays",
+        "MaximumRecordingStorageGiB",
     ],
     "BossMod/Foretell/ForetellRenderer.cs": [
         "ForetellRadarWindow",
@@ -141,6 +153,8 @@ requirements = {
         "DrawStorageManager()",
         "Pause view",
         "PurgePhaseSignal",
+        "Learned causal graph",
+        "Raw protocol families",
     ],
     "BossMod/Foretell/ForetellKnowledge.cs": [
         "RefreshEncounterIdentity",
@@ -156,6 +170,8 @@ requirements = {
         "PurgeComposite",
         "PurgePhase",
         "PurgeSession",
+        "PurgeCausalEdge",
+        "PurgeRawOpcode",
         "DeleteStorageFile",
         "RemoveOrphanGlobalKnowledge",
     ],
@@ -233,6 +249,10 @@ requirements = {
         "MaxInMemoryWindows",
         "ForetellRawWindowAccumulator",
         "truncated payload",
+        "ForetellRawOpcodeFeature",
+        "SequenceHash",
+        "ByteVariances",
+        "Transitions",
     ],
     "BossMod/Foretell/ForetellReplay.cs": [
         "RawJournalsForReplay",
@@ -290,6 +310,24 @@ requirements = {
         "if (!double.IsFinite(normalizedWeights[c][i]))",
         "if (!double.IsFinite(x[i])) continue",
         "Math.Clamp(w[i] + learningRate * error * x[i], -20, 20)",
+    ],
+    "BossMod/Foretell/ForetellInferenceCore.cs": [
+        "WilsonLowerBound",
+        "GuidanceConfidence",
+        "CausalConfidence",
+        "TimelineProbability",
+        "GeometryMatches",
+    ],
+    "BossMod/Foretell/ForetellStorageCore.cs": [
+        "protectedFullPaths",
+        "SearchOption.TopDirectoryOnly",
+        "Math.Clamp(retentionDays",
+        "maximumBytes",
+    ],
+    "BossMod/Foretell/ForetellStorage.cs": [
+        "Task.Run",
+        "StartStorageMaintenance",
+        "PollStorageMaintenance",
     ],
 }
 
@@ -354,6 +392,8 @@ if "_ws.Network.CaptureRawTransport = true" not in engine:
     errors.append("Foretell data-complete raw transport capture is not always armed")
 if "if (!_inPull && (DateTime.UtcNow - _lastSave).TotalSeconds > 60)" not in engine:
     errors.append("Foretell persistent-store serialization can return to the active-combat frame path")
+if "!_inPull && _cfg.AutomaticStorageMaintenance" not in engine:
+    errors.append("Foretell storage maintenance can return to the active-combat frame path")
 
 plugin = read("BossMod/Framework/Plugin.cs")
 if plugin.find("_foretell = new(_ws") > plugin.find("_rsr = new(_dalamud)"):

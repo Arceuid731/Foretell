@@ -118,6 +118,8 @@ public sealed partial class ForetellEngine
             encounter.Timeline.Remove(edgeKey);
         foreach (var phase in encounter.Phases.Values)
             phase.Signals.Remove(key);
+        foreach (var causalKey in encounter.CausalEdges.Where(kv => kv.Value.Cause == key).Select(kv => kv.Key).ToArray())
+            encounter.CausalEdges.Remove(causalKey);
         foreach (var compositeKey in encounter.Composites.Where(kv => kv.Value.Signals.Contains(key)).Select(kv => kv.Key).ToArray())
             encounter.Composites.Remove(compositeKey);
 
@@ -127,6 +129,11 @@ public sealed partial class ForetellEngine
             _predictions.Remove(episodeID);
             foreach (var sequence in _effectSequenceEpisodes.Where(kv => kv.Value == episodeID).Select(kv => kv.Key).ToArray())
                 _effectSequenceEpisodes.Remove(sequence);
+        }
+        foreach (var forecast in _timelineForecasts.Values.Where(item => item.MechanicKey == key).ToArray())
+        {
+            _timelineForecasts.Remove(forecast.ID);
+            _predictions.Remove(forecast.ID);
         }
 
         RemoveOrphanGlobalKnowledge(mechanic.TriggerID);
@@ -148,6 +155,8 @@ public sealed partial class ForetellEngine
                 phase.Signals.Remove(signal);
         foreach (var compositeKey in encounter.Composites.Where(item => item.Value.Signals.Any(signal => signal.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))).Select(item => item.Key).ToArray())
             encounter.Composites.Remove(compositeKey);
+        foreach (var causalKey in encounter.CausalEdges.Where(item => item.Value.Cause.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).Select(item => item.Key).ToArray())
+            encounter.CausalEdges.Remove(causalKey);
         foreach (var episodeID in _episodes.Where(item => item.Value.Trigger.TerritoryID == territoryID && item.Value.Trigger.ActorOID == sourceOID).Select(item => item.Key).ToArray())
         {
             _episodes.Remove(episodeID);
@@ -171,6 +180,7 @@ public sealed partial class ForetellEngine
             _episodeCleanup.Clear();
             _predictions.Clear();
             _effectSequenceEpisodes.Clear();
+            _timelineForecasts.Clear();
             _tracks.Clear();
             _session = NewSession(_territory);
         }
@@ -194,12 +204,34 @@ public sealed partial class ForetellEngine
     {
         if (_store.Encounters.TryGetValue(territoryID, out var encounter))
             encounter.Timeline.Remove(key);
+        foreach (var forecast in _timelineForecasts.Values.Where(item => item.TerritoryID == territoryID && item.EdgeKey == key).ToArray())
+        {
+            _timelineForecasts.Remove(forecast.ID);
+            _predictions.Remove(forecast.ID);
+        }
     }
 
     private void PurgeComposite(uint territoryID, string key)
     {
         if (_store.Encounters.TryGetValue(territoryID, out var encounter))
             encounter.Composites.Remove(key);
+        foreach (var forecast in _timelineForecasts.Values.Where(item => item.TerritoryID == territoryID && item.CompositeKey == key).ToArray())
+        {
+            _timelineForecasts.Remove(forecast.ID);
+            _predictions.Remove(forecast.ID);
+        }
+    }
+
+    private void PurgeCausalEdge(uint territoryID, string key)
+    {
+        if (_store.Encounters.TryGetValue(territoryID, out var encounter))
+            encounter.CausalEdges.Remove(key);
+    }
+
+    private void PurgeRawOpcode(uint territoryID, uint opcode)
+    {
+        if (_store.Encounters.TryGetValue(territoryID, out var encounter))
+            encounter.RawOpcodes.Remove(opcode);
     }
 
     private void PurgePhase(uint territoryID, int phase)
@@ -207,7 +239,7 @@ public sealed partial class ForetellEngine
         if (!_store.Encounters.TryGetValue(territoryID, out var encounter)) return;
         encounter.Phases.Remove(phase);
         foreach (var key in encounter.Timeline.Where(item => item.Value.Phase == phase).Select(item => item.Key).ToArray())
-            encounter.Timeline.Remove(key);
+            PurgeTimelineEdge(territoryID, key);
         foreach (var key in encounter.Composites.Where(item => item.Value.Phase == phase).Select(item => item.Key).ToArray())
             encounter.Composites.Remove(key);
     }
@@ -218,9 +250,11 @@ public sealed partial class ForetellEngine
         if (encounter.Phases.TryGetValue(phase, out var phaseMemory))
             phaseMemory.Signals.Remove(signal);
         foreach (var key in encounter.Timeline.Where(item => item.Value.Phase == phase && (item.Value.From == signal || item.Value.To == signal)).Select(item => item.Key).ToArray())
-            encounter.Timeline.Remove(key);
+            PurgeTimelineEdge(territoryID, key);
         foreach (var key in encounter.Composites.Where(item => item.Value.Phase == phase && item.Value.Signals.Contains(signal)).Select(item => item.Key).ToArray())
             encounter.Composites.Remove(key);
+        foreach (var key in encounter.CausalEdges.Where(item => item.Value.Cause == signal).Select(item => item.Key).ToArray())
+            encounter.CausalEdges.Remove(key);
     }
 
     private void PurgePhaseBoundary(uint territoryID, string signature)

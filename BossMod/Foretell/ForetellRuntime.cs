@@ -26,6 +26,14 @@ internal sealed class MechanicEpisode
     public double[] BinaryBuckets { get; } = new double[OnlineClassifier.FabricFeatureCount];
     public HashSet<string> BinaryKeys { get; } = [];
     public long BinaryBytes { get; private set; }
+    public bool ResolutionObserved { get; set; }
+    public GeometryKind ForecastGeometry { get; set; }
+    public MechanicKind ForecastKind { get; set; }
+    public float ForecastP1 { get; set; }
+    public float ForecastP2 { get; set; }
+    public float ForecastConfidence { get; set; }
+    public bool ForecastIssued { get; set; }
+    public bool ForecastAnticipated { get; set; }
     public bool Finalized { get; set; }
 
     public void AccumulateFeatures(ForetellObservation observation)
@@ -133,6 +141,18 @@ internal sealed class ParticipantTrack
 }
 
 internal readonly record struct ParticipantPositionPoint(DateTime At, Vector2 Position, float Rotation);
+
+internal sealed class PendingTimelineForecast
+{
+    public long ID { get; init; }
+    public uint TerritoryID { get; init; }
+    public string EdgeKey { get; init; } = "";
+    public string CompositeKey { get; init; } = "";
+    public string ExpectedSignal { get; init; } = "";
+    public string MechanicKey { get; init; } = "";
+    public DateTime Due { get; init; }
+    public DateTime Expires { get; init; }
+}
 
 internal sealed class LiveSessionStats
 {

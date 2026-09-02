@@ -37,6 +37,8 @@ jobs:
           Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
           Expand-Archive -Force latest.zip -DestinationPath $dest
       - run: dotnet restore BossMod/BossModReborn.csproj
+      - name: Run deterministic Foretell core tests
+        run: dotnet run --project ForetellCoreTests/ForetellCoreTests.csproj -c Release
       - name: Build
         shell: pwsh
         run: |
