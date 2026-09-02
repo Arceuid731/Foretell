@@ -87,15 +87,15 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Emergency native-telemetry quarantine.
+          Live telemetry performance architecture rewrite.
 
-          The supplied 23:53 dump is an access violation in the NVIDIA user-mode driver nvwgf2umx.dll on its own worker thread while the FFXIV main thread waits in DeviceDX11.PostTick. It contains no Foretell managed frame, so the dump does not prove direct Foretell attribution. It does, however, make any Foretell detour on the VFX/render path unacceptable until its threading model is isolated.
+          Raw server/client IPC no longer enters Foretell's semantic enrichment, correlation or learning pipeline. Full payloads remain available through explicit Replay Lab recording, whose JSON serialization and disk writes now run on a dedicated background thread. When recording is disabled, the network hook no longer copies raw server/client payloads at all.
 
-          Foretell therefore no longer installs its native actor/static VFX or ObjectEffect hooks. Direct FFXIVClientStructs Character, environment and camera telemetry readers are also quarantined. Raw network IPC, ActorControl, complete ActionEffect and EffectResult sequencing, WorldState operations, typed Dalamud services, semantic casts/statuses/tethers/VFX IDs, movement and the managed Data Fabric remain active.
+          ActorControl keeps all p1-p8/target/replay fields in the optional raw stream while semantic learning is deduplicated and rate-limited per source/command. Party positions bypass generic actor/static reflection. The continuous generic Dalamud/actor reflection scanner is disabled in live play and replaced by a typed one-hertz runtime snapshot. UI toast and plugin-log streams are explicitly classified as non-gameplay diagnostics instead of entering the learner.
 
-          The quarantined sensors remain implemented but unreachable. They will only return after detours are reduced to bounded primitive capture into a concurrent queue and all interpretation is performed on the framework thread.
+          Existing installations are migrated once: Replay Lab recording is disabled by default and the old high-cardinality coverage audit index is rebuilt. Learned mechanics, timelines, encounter memories and classifier state are preserved.
 
-          CI now rejects unconditional native-hook startup and any direct actor/environment/camera read that bypasses the fail-closed gate. The telemetry contract and full Windows build were validated against the current Dalamud distribution before this release.
+          Native VFX/render hooks and direct client-memory sampling remain quarantined from 0.5.7. CI now rejects synchronous replay serialization, raw IPC re-entry into the learner, unconditional payload copying, generic live reflection, and position-sample enrichment regressions. The telemetry contract and full Windows build were validated against the current Dalamud distribution before this release.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
