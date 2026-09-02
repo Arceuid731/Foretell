@@ -39,6 +39,10 @@ public sealed partial class ForetellEngine
     private long _fabricRejectedGetters;
     private long _typedSnapshotFailures;
     private long _nativeSnapshotFailures;
+    private double _lastTypedSnapshotMilliseconds;
+    private double _peakTypedSnapshotMilliseconds;
+    private double _lastNativeActorMilliseconds;
+    private double _peakNativeActorMilliseconds;
     private string _coreRuntimeFingerprint = "";
 
     private sealed class FabricActorTrack
@@ -73,6 +77,7 @@ public sealed partial class ForetellEngine
         if (force || (now - _lastFabricSample).TotalMilliseconds >= 1000)
         {
             _lastFabricSample = now;
+            var typedStarted = Stopwatch.GetTimestamp();
             try { SampleCoreRuntimeSnapshot(); }
             catch (Exception e)
             {
@@ -80,6 +85,8 @@ public sealed partial class ForetellEngine
                 RegisterCapability("runtime.typedSnapshot", typeof(WorldState), "complete typed snapshot", false, false, $"snapshot rejected safely: {e.GetType().Name}");
                 Service.LogVerbose($"[Foretell] Typed runtime snapshot rejected safely: {e.Message}");
             }
+            _lastTypedSnapshotMilliseconds = Stopwatch.GetElapsedTime(typedStarted).TotalMilliseconds;
+            _peakTypedSnapshotMilliseconds = Math.Max(_peakTypedSnapshotMilliseconds, _lastTypedSnapshotMilliseconds);
             if (LiveReflectionTelemetryEnabled)
             {
                 RefreshRuntimeContextSlice();
@@ -201,6 +208,8 @@ public sealed partial class ForetellEngine
                 continue;
             sampledIDs[sampled++] = actor.InstanceID;
         }
+        _lastNativeActorMilliseconds = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        _peakNativeActorMilliseconds = Math.Max(_peakNativeActorMilliseconds, _lastNativeActorMilliseconds);
     }
 
     private bool TrySampleNativeActor(Actor actor, DateTime now)

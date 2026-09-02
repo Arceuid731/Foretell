@@ -24,6 +24,8 @@ public sealed partial class ForetellEngine
     private long _nativeHookProcessed;
     private long _nativeHookPending;
     private long _nativeHookFailures;
+    private double _lastNativeHookDrainMilliseconds;
+    private double _peakNativeHookDrainMilliseconds;
     private const int MaxNativeHookCapturesPerFrame = 96;
     private const double MaxNativeHookDrainMilliseconds = 0.75;
 
@@ -191,6 +193,8 @@ public sealed partial class ForetellEngine
                 Service.LogVerbose($"[Foretell] Deferred native capture rejected safely: {e.Message}");
             }
         }
+        _lastNativeHookDrainMilliseconds = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        _peakNativeHookDrainMilliseconds = Math.Max(_peakNativeHookDrainMilliseconds, _lastNativeHookDrainMilliseconds);
     }
 
     private void ProcessNativeObjectEffect(NativeObjectEffectCapture capture)
@@ -270,8 +274,17 @@ public sealed partial class ForetellEngine
 
     private unsafe VfxObject* ForetellStaticVFXCreateDetour(CStringPointer path, CStringPointer pool)
     {
-        var pathText = path.ToString();
-        var poolText = pool.ToString();
+        var pathText = "";
+        var poolText = "";
+        try
+        {
+            pathText = path.ToString();
+            poolText = pool.ToString();
+        }
+        catch
+        {
+            Interlocked.Increment(ref _nativeHookFailures);
+        }
         var result = _foretellStaticVFXCreateHook!.Original(path, pool);
         try
         {
