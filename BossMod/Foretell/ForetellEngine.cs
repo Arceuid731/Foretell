@@ -167,6 +167,7 @@ public sealed partial class ForetellEngine : IDisposable
             RefreshEncounterIdentity(currentEncounter, _ws.CurrentCFCID);
 
         SyncReplayWriter();
+        DrainRawFeatureWindows();
         DrainNativeCaptures();
         if ((now - _lastPositionSample).TotalMilliseconds >= 250)
         {

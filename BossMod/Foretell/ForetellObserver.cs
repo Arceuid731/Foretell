@@ -276,7 +276,7 @@ public sealed partial class ForetellEngine
         // Every payload enters the compact lossless journal. It deliberately does not re-enter semantic enrichment:
         // decoded WorldState events already feed the online learner, while raw bytes remain available for offline
         // feature discovery and future decoders without multiplying per-packet work on the framework thread.
-        _raw.EnqueueServer(_rawPath, packet);
+        _raw.EnqueueServer(_rawPath, _territory, packet);
         if (!_cfg.RecordReplay)
             return;
         var obs = RawTransportObservation(ObservationKind.ServerIPC, packet.Opcode, $"transport:server:{packet.ID}", packet.SendTimestamp);
@@ -291,7 +291,7 @@ public sealed partial class ForetellEngine
 
     private void OnRawClientIPC(NetworkState.RawClientIPC packet)
     {
-        _raw.EnqueueClient(_rawPath, packet);
+        _raw.EnqueueClient(_rawPath, _territory, packet);
         if (!_cfg.RecordReplay)
             return;
         var obs = RawTransportObservation(ObservationKind.ClientIPC, packet.Opcode, "transport:client", packet.SendTimestamp);
@@ -303,7 +303,7 @@ public sealed partial class ForetellEngine
     private void OnRawActorControl(NetworkState.RawActorControl control)
     {
         var captureAt = ObservationNow();
-        _raw.EnqueueActorControl(_rawPath, captureAt, control);
+        _raw.EnqueueActorControl(_rawPath, _territory, captureAt, control);
         if (_cfg.RecordReplay)
         {
             var raw = RawTransportObservation(ObservationKind.ActorControlRaw, control.Command, "transport:actor-control", captureAt);

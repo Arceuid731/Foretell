@@ -5,6 +5,9 @@ using System.Threading;
 
 namespace BossMod.Foretell;
 
+internal sealed record ForetellRawFeatureWindow(DateTime At, uint TerritoryID, int ServerPackets, int ClientPackets,
+    int ActorControls, long PayloadBytes, Dictionary<uint, int> Opcodes, double[] BinaryBuckets);
+
 // Lossless transport journal. Network callbacks only copy/enqueue immutable primitives; compression and disk I/O
 // are isolated on this background thread. The queue is deliberately unbounded: saturation is reported, never
 // hidden by dropping packets. Files are local, per territory session, and are never uploaded automatically.
@@ -12,11 +15,12 @@ internal sealed class ForetellRawWriter : IDisposable
 {
     private enum RecordKind : byte { ServerIPC = 1, ClientIPC = 2, ActorControl = 3 }
 
-    private readonly record struct Item(string Path, RecordKind Kind, long TimestampTicks,
+    private readonly record struct Item(string Path, uint TerritoryID, RecordKind Kind, long TimestampTicks,
         uint A0, uint A1, uint A2, uint A3, uint A4, uint A5, uint A6, uint A7, uint A8, uint A9,
         ulong U0, ulong U1, byte B0, byte[] Payload);
 
     private readonly BlockingCollection<Item> _queue = new(new ConcurrentQueue<Item>());
+    private readonly ConcurrentQueue<ForetellRawFeatureWindow> _features = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly Thread _thread;
     private long _pendingItems;
@@ -24,6 +28,7 @@ internal sealed class ForetellRawWriter : IDisposable
     private long _writtenItems;
     private long _writtenBytes;
     private long _rejectedItems;
+    private long _pendingFeatureWindows;
     private int _disposed;
     private int _failed;
     private string _failure = "";
@@ -33,6 +38,7 @@ internal sealed class ForetellRawWriter : IDisposable
     public long WrittenItems => Interlocked.Read(ref _writtenItems);
     public long WrittenBytes => Interlocked.Read(ref _writtenBytes);
     public long RejectedItems => Interlocked.Read(ref _rejectedItems);
+    public long PendingFeatureWindows => Interlocked.Read(ref _pendingFeatureWindows);
     public bool Failed => Volatile.Read(ref _failed) != 0;
     public string Failure => _failure;
 
@@ -42,23 +48,35 @@ internal sealed class ForetellRawWriter : IDisposable
         _thread.Start();
     }
 
-    public void EnqueueServer(string path, NetworkState.RawServerIPC packet)
-        => Enqueue(new(path, RecordKind.ServerIPC, SafeTicks(packet.SendTimestamp),
+    public void EnqueueServer(string path, uint territoryID, NetworkState.RawServerIPC packet)
+        => Enqueue(new(path, territoryID, RecordKind.ServerIPC, SafeTicks(packet.SendTimestamp),
             (uint)packet.ID, packet.Opcode, packet.Epoch, 0, 0, 0, 0, 0, 0, 0,
             packet.SourceServerActor, packet.TargetServerActor, 0, packet.Payload));
 
-    public void EnqueueClient(string path, NetworkState.RawClientIPC packet)
-        => Enqueue(new(path, RecordKind.ClientIPC, SafeTicks(packet.SendTimestamp),
+    public void EnqueueClient(string path, uint territoryID, NetworkState.RawClientIPC packet)
+        => Enqueue(new(path, territoryID, RecordKind.ClientIPC, SafeTicks(packet.SendTimestamp),
             packet.Opcode, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, packet.Payload));
 
-    public void EnqueueActorControl(string path, DateTime at, NetworkState.RawActorControl control)
-        => Enqueue(new(path, RecordKind.ActorControl, SafeTicks(at),
+    public void EnqueueActorControl(string path, uint territoryID, DateTime at, NetworkState.RawActorControl control)
+        => Enqueue(new(path, territoryID, RecordKind.ActorControl, SafeTicks(at),
             control.Command, control.P1, control.P2, control.P3, control.P4, control.P5, control.P6, control.P7, control.P8, 0,
             control.SourceID, control.TargetID, control.Replaying, Array.Empty<byte>()));
 
     // Preserve the source clock value without DateTime arithmetic: malformed/default client timestamps must never
     // reproduce the startup overflow that older Foretell builds hit while converting or subtracting DateTime.MinValue.
     private static long SafeTicks(DateTime value) => value == default ? DateTime.UtcNow.Ticks : value.Ticks;
+
+    public bool TryDequeueFeature(out ForetellRawFeatureWindow window)
+    {
+        if (_features.TryDequeue(out var found))
+        {
+            window = found;
+            Interlocked.Decrement(ref _pendingFeatureWindows);
+            return true;
+        }
+        window = null!;
+        return false;
+    }
 
     private void Enqueue(Item item)
     {
@@ -103,12 +121,14 @@ internal sealed class ForetellRawWriter : IDisposable
         BinaryWriter? writer = null;
         var path = "";
         var lastFlush = DateTime.UtcNow;
+        var aggregate = new RawAggregate();
         try
         {
             foreach (var item in _queue.GetConsumingEnumerable(_stop.Token))
             {
                 if (writer == null || !string.Equals(path, item.Path, StringComparison.Ordinal))
                 {
+                    FlushFeatures(aggregate);
                     writer?.Dispose();
                     gzip?.Dispose();
                     file?.Dispose();
@@ -127,6 +147,9 @@ internal sealed class ForetellRawWriter : IDisposable
                 writer.Write(item.U0); writer.Write(item.U1); writer.Write(item.B0);
                 writer.Write(item.Payload.Length);
                 writer.Write(item.Payload);
+                aggregate.Add(item);
+                if (aggregate.DurationTicks >= TimeSpan.TicksPerMillisecond * 250 || aggregate.Records >= 256)
+                    FlushFeatures(aggregate);
                 Interlocked.Decrement(ref _pendingItems);
                 Interlocked.Add(ref _pendingBytes, -item.Payload.Length);
                 Interlocked.Increment(ref _writtenItems);
@@ -148,9 +171,78 @@ internal sealed class ForetellRawWriter : IDisposable
         }
         finally
         {
+            FlushFeatures(aggregate);
             writer?.Dispose();
             gzip?.Dispose();
             file?.Dispose();
+        }
+    }
+
+    private void FlushFeatures(RawAggregate aggregate)
+    {
+        if (aggregate.Records == 0)
+            return;
+        _features.Enqueue(aggregate.Finish());
+        Interlocked.Increment(ref _pendingFeatureWindows);
+    }
+
+    private sealed class RawAggregate
+    {
+        private const int BucketCount = 64;
+        private readonly Dictionary<uint, int> _opcodes = [];
+        private readonly double[] _buckets = new double[BucketCount];
+        private long _firstTicks;
+        private long _lastTicks;
+        private uint _territory;
+        private int _server;
+        private int _client;
+        private int _control;
+        private long _bytes;
+        public int Records => _server + _client + _control;
+        public long DurationTicks => Math.Max(0, _lastTicks - _firstTicks);
+
+        public void Add(Item item)
+        {
+            if (Records == 0)
+            {
+                _firstTicks = item.TimestampTicks;
+                _territory = item.TerritoryID;
+            }
+            _lastTicks = item.TimestampTicks;
+            if (item.Kind == RecordKind.ServerIPC) ++_server;
+            else if (item.Kind == RecordKind.ClientIPC) ++_client;
+            else ++_control;
+            _bytes += item.Payload.Length;
+
+            var opcodeKey = ((uint)item.Kind << 24) | (item.A0 & 0x00FFFFFFu);
+            _opcodes[opcodeKey] = _opcodes.GetValueOrDefault(opcodeKey) + 1;
+            Mix(item.A0); Mix(item.A1); Mix(item.A2); Mix(item.A3); Mix(item.A4); Mix(item.A5); Mix(item.A6); Mix(item.A7); Mix(item.A8);
+            Mix(item.U0); Mix(item.U1); Mix(item.B0);
+            for (var i = 0; i < item.Payload.Length; ++i)
+            {
+                var bucket = (int)((item.A0 * 16777619u + (uint)i) % BucketCount);
+                _buckets[bucket] += (item.Payload[i] - 127.5) / 127.5;
+            }
+        }
+
+        private void Mix(ulong value)
+        {
+            var hash = value * 11400714819323198485UL;
+            var bucket = (int)(hash % BucketCount);
+            _buckets[bucket] += (hash & 0x8000000000000000UL) == 0 ? 1 : -1;
+        }
+
+        public ForetellRawFeatureWindow Finish()
+        {
+            var at = new DateTime(Math.Clamp(_lastTicks, DateTime.MinValue.Ticks, DateTime.MaxValue.Ticks), DateTimeKind.Utc);
+            var result = new ForetellRawFeatureWindow(at, _territory, _server, _client, _control, _bytes, new(_opcodes), (double[])_buckets.Clone());
+            _opcodes.Clear();
+            Array.Clear(_buckets);
+            _firstTicks = _lastTicks = 0;
+            _territory = 0;
+            _server = _client = _control = 0;
+            _bytes = 0;
+            return result;
         }
     }
 }

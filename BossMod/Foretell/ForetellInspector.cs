@@ -358,7 +358,7 @@ public sealed partial class ForetellEngine
     private void DrawTelemetryStatus()
     {
         var coverage = _store.Coverage;
-        var rawBacklogged = _raw.PendingItems > 4096 || _raw.PendingBytes > 16 * 1024 * 1024;
+        var rawBacklogged = _raw.PendingItems > 4096 || _raw.PendingBytes > 16 * 1024 * 1024 || _raw.PendingFeatureWindows > 256;
         var nativeBacklogged = _nativeHookPending > 2048;
         var healthy = !_raw.Failed && _raw.RejectedItems == 0 && !rawBacklogged && !nativeBacklogged && _nativeHookFailures == 0 && _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 && coverage.Unaccounted == 0;
         ImGui.Separator();
@@ -372,7 +372,7 @@ public sealed partial class ForetellEngine
             ImGui.TableSetupColumn("Critical-path policy");
             ImGui.TableHeadersRow();
             DrawTelemetryRow("World state + semantic network events", "ACTIVE", "Processed with bounded typed handlers");
-            DrawTelemetryRow("Raw server/client IPC + ActorControl", _raw.Failed ? "FAILED" : rawBacklogged ? "BACKLOG" : "LOSSLESS", $"Background gzip journal: {_raw.PendingItems:N0} queued / {_raw.WrittenItems:N0} written / {_raw.RejectedItems:N0} rejected");
+            DrawTelemetryRow("Raw server/client IPC + ActorControl", _raw.Failed ? "FAILED" : rawBacklogged ? "BACKLOG" : "LOSSLESS", $"Gzip: {_raw.PendingItems:N0} queued / {_raw.WrittenItems:N0} written / {_raw.RejectedItems:N0} rejected; features {_raw.PendingFeatureWindows:N0} queued / {_rawFeatureWindowsProcessed:N0} learned; drain {_lastRawFeatureDrainMilliseconds:F2} ms (peak {_peakRawFeatureDrainMilliseconds:F2})");
             DrawTelemetryRow("Typed runtime snapshots", _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 ? "ACTIVE" : "DEGRADED", $"1 Hz typed {_lastTypedSnapshotMilliseconds:F2} ms (peak {_peakTypedSnapshotMilliseconds:F2}); native {_lastNativeActorMilliseconds:F2} ms (peak {_peakNativeActorMilliseconds:F2}); {_typedSnapshotFailures + _nativeSnapshotFailures:N0} rejects");
             DrawTelemetryRow("Generic live reflection", "REPLACED", "Typed roots + WorldState deltas; no unmanaged getters on frame thread");
             DrawTelemetryRow("Native ObjectEffect + VFX lifecycle", _nativeHookFailures == 0 ? nativeBacklogged ? "BACKLOG" : "ACTIVE" : "DEGRADED", $"Primitive queue: {_nativeHookPending:N0} queued / {_nativeHookProcessed:N0} processed / {_nativeHookFailures:N0} rejected; drain {_lastNativeHookDrainMilliseconds:F2} ms (peak {_peakNativeHookDrainMilliseconds:F2})");
