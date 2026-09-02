@@ -66,6 +66,10 @@ public sealed partial class ForetellEngine
         }
         ++source.Observations;
         source.LastSeen = DateTime.UtcNow;
+        if (observation.Numeric.TryGetValue("actor.nameID", out var nameID) && nameID > 0 && nameID <= uint.MaxValue)
+            source.NameID = (uint)nameID;
+        if (observation.Text.TryGetValue("actor.name", out var name) && !string.IsNullOrWhiteSpace(name))
+            source.Name = name;
         if (observation.Kind == ObservationKind.CastStart) ++source.Casts;
         if (observation.Kind is ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart or ObservationKind.StatusGain or
             ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ActionTimelineEvent or

@@ -9,6 +9,13 @@ public enum ForetellMode
     Foretell
 }
 
+public enum ForetellRadarShape
+{
+    Auto,
+    Circle,
+    Square
+}
+
 [ConfigDisplay(Name = "Foretell", Order = 0)]
 public sealed class ForetellConfig : ConfigNode
 {
@@ -33,6 +40,9 @@ public sealed class ForetellConfig : ConfigNode
     // Normalized top-left viewport position. Negative values select the default top-right placement.
     public float RadarPositionX = -1;
     public float RadarPositionY = -1;
+
+    [PropertyDisplay("Radar arena frame", tooltip: "Auto uses a learned collision topology when one is available and otherwise falls back to a circle. Circle and Square force the presentation shape without changing learned mechanics.")]
+    public ForetellRadarShape RadarShape = ForetellRadarShape.Auto;
 
     [PropertyDisplay("Text hints", tooltip: "Show adaptive mechanic, countdown, confidence and likely-next information.")]
     public bool TextHints = true;
@@ -62,11 +72,11 @@ public sealed class ForetellConfig : ConfigNode
     [PropertySlider(1, 32, Speed = 1)]
     public int MaxRenderedMechanics = 12;
 
-    [PropertyDisplay("Mini radar radius (yalms)", tooltip: "World distance represented by the mini radar radius.")]
-    [PropertySlider(10, 80, Speed = 1)]
+    [PropertyDisplay("Radar zoom / visible radius (yalms)", tooltip: "Distance from your character to the edge of the radar. Lower values zoom in; higher values show more of the arena.")]
+    [PropertySlider(5, 120, Speed = 1)]
     public float RadarWorldRadius = 30;
 
     [PropertyDisplay("Mini radar size (pixels)")]
-    [PropertySlider(100, 500, Speed = 5)]
+    [PropertySlider(140, 600, Speed = 5)]
     public float RadarSize = 220;
 }

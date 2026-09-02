@@ -153,6 +153,8 @@ public sealed partial class ForetellEngine : IDisposable
         var territory = CurrentTerritory();
         if (territory != _territory)
             ChangeTerritory(territory);
+        else if (_store.Encounters.TryGetValue(_territory, out var currentEncounter) && _ws.CurrentCFCID != 0 && currentEncounter.ContentFinderConditionID != _ws.CurrentCFCID)
+            RefreshEncounterIdentity(currentEncounter, _ws.CurrentCFCID);
 
         SyncReplayWriter();
         if ((now - _lastPositionSample).TotalMilliseconds >= 250)
@@ -222,6 +224,7 @@ public sealed partial class ForetellEngine : IDisposable
     private void StartEncounterSession(uint territory)
     {
         var encounter = Encounter(territory);
+        RefreshEncounterIdentity(encounter, territory == _territory ? _ws.CurrentCFCID : encounter.ContentFinderConditionID);
         ++encounter.Sessions;
         if (encounter.FirstSeen == default) encounter.FirstSeen = DateTime.UtcNow;
         encounter.LastSeen = DateTime.UtcNow;
@@ -321,7 +324,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 7)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 7);
+        _store.Schema = Math.Max(_store.Schema, 8);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -331,6 +334,7 @@ public sealed partial class ForetellEngine : IDisposable
         _store.Coverage.Items ??= [];
         foreach (var encounter in _store.Encounters.Values)
         {
+            RefreshEncounterIdentity(encounter, encounter.TerritoryID == _territory && _ws.CurrentCFCID != 0 ? _ws.CurrentCFCID : encounter.ContentFinderConditionID);
             encounter.ObservationCounts ??= [];
             encounter.Sources ??= [];
             encounter.Mechanics ??= [];
@@ -341,6 +345,8 @@ public sealed partial class ForetellEngine : IDisposable
                 mechanic.Evidence ??= [];
                 mechanic.Samples ??= [];
             }
+            foreach (var source in encounter.Sources.Values)
+                source.Name ??= "";
         }
     }
 

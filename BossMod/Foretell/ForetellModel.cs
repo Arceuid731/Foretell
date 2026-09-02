@@ -189,6 +189,8 @@ public sealed class SignalTimelineEdge
 public sealed class SourceMemory
 {
     public uint OID { get; set; }
+    public uint NameID { get; set; }
+    public string Name { get; set; } = "";
     [JsonConverter(typeof(JsonStringEnumConverter))] public SourceKind Kind { get; set; }
     public int Observations { get; set; }
     public int Casts { get; set; }
@@ -222,6 +224,10 @@ public sealed class SessionSummary
 public sealed class EncounterMemory
 {
     public uint TerritoryID { get; set; }
+    public uint ContentFinderConditionID { get; set; }
+    public string TerritoryName { get; set; } = "";
+    public string ContentName { get; set; } = "";
+    public string ContentCategory { get; set; } = "";
     public int Sessions { get; set; }
     public int Pulls { get; set; }
     public DateTime FirstSeen { get; set; }
@@ -243,7 +249,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 7;
+    public int Schema { get; set; } = 8;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];

@@ -80,6 +80,8 @@ requirements = {
         "n is Foretell.ForetellConfig",
     ],
     "BossMod/Foretell/ForetellConfig.cs": [
+        "public enum ForetellRadarShape",
+        "RadarShape = ForetellRadarShape.Auto",
         "RadarUnlocked",
         "RadarPositionX",
         "RadarPositionY",
@@ -90,7 +92,28 @@ requirements = {
         "ForetellRadarWindow",
         "drag to move",
         "RadarPositionX",
+        "DrawRadarFrame",
+        "ForetellRadarShape.Square",
+        "RadarWorldRadius",
         "MaxRenderedMechanics",
+    ],
+    "BossMod/Foretell/ForetellInspector.cs": [
+        'BeginTabItem("Knowledge explorer")',
+        "DrawKnowledgeExplorer()",
+        "DrawPurgeConfirmation()",
+        "Delete learned data",
+        "DATA COMPLETE IN PROGRESS",
+    ],
+    "BossMod/Foretell/ForetellKnowledge.cs": [
+        "RefreshEncounterIdentity",
+        "EncounterDisplayName",
+        "SourceDisplayName",
+        "MechanicDisplayName",
+        "PurgeCategory",
+        "PurgeEncounter",
+        "PurgeSource",
+        "PurgeMechanic",
+        "RemoveOrphanGlobalKnowledge",
     ],
     "BossMod/Foretell/ForetellNativeState.cs": [
         'var tp = $"{p}.vfx.tether[{i}]"',
@@ -221,6 +244,7 @@ for forbidden, reason in {
     "MaxFabricEntriesPerObject": "shared monolithic object budget",
     "FeatureSums.Count >=": "learner silently discarding new generic features",
     "s[..160]": "semantic text truncation",
+    "ArenaBounds": "hand-authored encounter arena topology",
 }.items():
     if forbidden in foretell_sources:
         errors.append(f"Foretell sources contain {reason}: {forbidden!r}")

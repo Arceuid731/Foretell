@@ -223,10 +223,11 @@ public sealed partial class ForetellEngine
         var center = canvas + new Vector2(size * .5f + 4, size * .5f + 22);
         var radius = size * .5f;
         var draw = ImGui.GetWindowDrawList();
+        var shape = _cfg.RadarShape == ForetellRadarShape.Auto ? ForetellRadarShape.Circle : _cfg.RadarShape;
+        var shapeLabel = _cfg.RadarShape == ForetellRadarShape.Auto ? "auto / circle fallback" : shape.ToString().ToLowerInvariant();
         draw.AddText(canvas + new Vector2(4, 1), 0xFFE0E0E0u,
-            _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : "Foretell radar");
-        draw.AddCircleFilled(center, radius, Pack(12, 14, 20, 150), 64);
-        draw.AddCircle(center, radius, 0xAAE0E0E0u, 64, 1.5f);
+            _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : $"Foretell radar · {shapeLabel} · {_cfg.RadarWorldRadius:F0}y");
+        DrawRadarFrame(draw, center, radius, shape);
         draw.AddCircleFilled(center, 4, 0xFFFFFFFFu);
 
         var scale = radius / MathF.Max(1, _cfg.RadarWorldRadius);
@@ -248,6 +249,28 @@ public sealed partial class ForetellEngine
         draw.AddText(new(center.X - 22, legendY), ConfidenceColor(_cfg.WarningConfidence / 100f), $"{_cfg.WarningConfidence:F0}% high");
         draw.AddText(new(center.X + radius - 58, legendY), ConfidenceColor(_cfg.SafeConfidence / 100f), $"{_cfg.SafeConfidence:F0}% safe");
         ImGui.End();
+    }
+
+    private static void DrawRadarFrame(ImDrawListPtr draw, Vector2 center, float radius, ForetellRadarShape shape)
+    {
+        var min = center - new Vector2(radius, radius);
+        var max = center + new Vector2(radius, radius);
+        if (shape == ForetellRadarShape.Square)
+        {
+            draw.AddRectFilled(min, max, Pack(12, 14, 20, 150));
+            draw.AddRect(min, max, 0xAAE0E0E0u, 0, ImDrawFlags.None, 1.5f);
+            draw.AddLine(new(center.X - radius, center.Y), new(center.X + radius, center.Y), 0x354F5560u);
+            draw.AddLine(new(center.X, center.Y - radius), new(center.X, center.Y + radius), 0x354F5560u);
+            draw.AddRect(center - new Vector2(radius * .5f), center + new Vector2(radius * .5f), 0x354F5560u);
+        }
+        else
+        {
+            draw.AddCircleFilled(center, radius, Pack(12, 14, 20, 150), 64);
+            draw.AddCircle(center, radius, 0xAAE0E0E0u, 64, 1.5f);
+            draw.AddCircle(center, radius * .5f, 0x354F5560u, 48, 1f);
+            draw.AddLine(new(center.X - radius, center.Y), new(center.X + radius, center.Y), 0x354F5560u);
+            draw.AddLine(new(center.X, center.Y - radius), new(center.X, center.Y + radius), 0x354F5560u);
+        }
     }
 
     private static Vector2 RadarPoint(Vector2 world, Vector2 player, Vector2 center, float scale)
