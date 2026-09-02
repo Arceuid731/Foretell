@@ -14,7 +14,7 @@ public sealed partial class ForetellEngine
 {
     // Generic reflection remains available for controlled audits, but it is never allowed in the live frame loop.
     // Typed semantic sensors are the production path; native readers stay separately quarantined below.
-    private const bool LiveReflectionTelemetryEnabled = false;
+    private static readonly bool LiveReflectionTelemetryEnabled = false;
     // A root owns its own traversal budget. Runtime state is split into independent roots below, so a large
     // party/actor collection can never starve camera, client, network or environment state. The budget is a
     // recursion/bug guard, not a collection sampling policy.

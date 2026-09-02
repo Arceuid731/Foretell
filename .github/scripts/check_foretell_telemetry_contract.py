@@ -54,7 +54,7 @@ requirements = {
         "RefreshRuntimeContextSlice()",
         "SampleGenericActorSlice()",
         "SampleNativeActorSlice(now)",
-        "private const bool LiveReflectionTelemetryEnabled = false",
+        "private static readonly bool LiveReflectionTelemetryEnabled = false",
         "SampleCoreRuntimeSnapshot()",
         "ProcessObservation(obs, enriched: true)",
         "MaxFabricTraversalMilliseconds",
