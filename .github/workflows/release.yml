@@ -87,19 +87,17 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Data-complete telemetry architecture.
+          Data-complete raw evidence learning.
 
-          Full server/client IPC payloads and every ActorControl command are now retained continuously in a compact per-territory gzip journal. Network callbacks only copy immutable bytes and primitives; compression and disk I/O run on a dedicated background thread. Replay Lab remains an optional human-readable mirror and no longer controls whether raw evidence exists.
+          This release completes the 0.6 data-complete pipeline by making raw transport evidence available to online learning without returning packet-scale work to the game thread.
 
-          Native ObjectEffect and actor/static VFX lifecycle sensors are re-enabled behind an unbounded primitive capture queue. Detours never enrich, correlate or learn. Foretell drains the queue on the framework thread with both a 96-item ceiling and a 0.75 ms time budget per frame, preserving capture timestamps, VFX paths, caster/target identity, positions and lifecycle duration.
+          The lossless background raw-journal writer now aggregates server IPC, client IPC and ActorControl into 250 ms feature windows. Each window retains direction-specific opcode families, packet counts, payload volume, command metadata and 64 binary-content buckets. Full payload bytes remain unchanged in the compressed journal for later decoder/retraining improvements.
 
-          Direct Character memory snapshots are restored with both count and time budgets. Volatile player/cast/tether actors are prioritized at up to 4 Hz while a rotating cursor guarantees eventual coverage of every actor. Each snapshot includes both tether slots and progress, movement state, Timeline and sequencer arrays, ModelContainer, TransformationContainer, statuses, incoming ActionEffects and pending effects. Unchanged fingerprints never enter learning. Environment and complete camera matrices use a slower change-detected 2 Hz cadence.
+          Foretell drains at most four raw feature windows per frame with a strict 0.35 ms budget, then correlates them with the same mechanic episodes used by semantic and native evidence. This closes the gap where raw data was safely archived but did not yet influence live inference.
 
-          A reflection-free one-hertz snapshot covers all managed continuous state, including all 64 party/alliance/NPC slots, all 87 cooldown groups, complete waymarks/signs, gauges, combo, FATE, pets, companion, enmity, inventory, content values and every Deep Dungeon array. WorldState operations remain the lossless delta stream. Generic live reflection stays disabled; pointer/function and hand-authored BossMod/Splatoon knowledge remain excluded.
+          Dashboard and diagnostics now report pending and processed raw-feature windows together with drain time and peak time. A backlog therefore degrades the visible data-complete health state instead of silently weakening evidence.
 
-          The dashboard reports raw and native queue depth, written/rejected counts, snapshot/drain milliseconds and peaks, sensor failures, and unaccounted Dalamud services. Data-complete health fails visibly instead of silently claiming success when any source is unavailable. Diagnostics export the same counters.
-
-          CI now enforces 137 telemetry and performance markers, lossless raw journaling, typed full-array coverage, deferred native detours and the absence of hand-authored arena topology. Multiple complete Windows builds were validated against the current Dalamud distribution before publication; runtime counters remain the authority for in-game health.
+          All 0.6.0 guarantees remain: always-on lossless gzip journals; queued native VFX/ObjectEffect detours; bounded Character, environment and camera snapshots; complete 64-slot party, 87-cooldown and Deep Dungeon typed state; no generic live reflection; and no hand-authored BMR/Splatoon answers or ArenaBounds. CI now enforces 148 telemetry/performance markers, and the full Windows build was validated against current Dalamud before publication.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
