@@ -87,17 +87,19 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Hierarchical knowledge and radar controls.
+          Data-complete telemetry architecture.
 
-          The Foretell window now contains a Knowledge explorer organized by localized content category, duty or open-world territory, environment, mechanic-producing sources, other observed mobs/objects and individual learned mechanics. Sources and actions use their game-data names when available instead of exposing only IDs and offsets.
+          Full server/client IPC payloads and every ActorControl command are now retained continuously in a compact per-territory gzip journal. Network callbacks only copy immutable bytes and primitives; compression and disk I/O run on a dedicated background thread. Replay Lab remains an optional human-readable mirror and no longer controls whether raw evidence exists.
 
-          Every hierarchy level has a confirmed local-data purge action. Removing a category, territory/content, environmental branch, source or individual mechanic also removes dependent contextual timelines, phase signals, live predictions, session history where applicable, and orphaned global fallback knowledge. Active learning may rediscover deleted evidence later.
+          Native ObjectEffect and actor/static VFX lifecycle sensors are re-enabled behind an unbounded primitive capture queue. Detours never enrich, correlate or learn. Foretell drains the queue on the framework thread with both a 96-item ceiling and a 0.75 ms time budget per frame, preserving capture timestamps, VFX paths, caster/target identity, positions and lifecycle duration.
 
-          The mini radar can now be forced to Circle or Square, or left on Auto for future learned collision topology. Its on-screen size and player-to-edge visible radius are independently configurable, so zoom no longer depends on widget size. Auto deliberately uses a circular fallback until generic topology evidence is trustworthy; no hand-authored BossMod ArenaBounds are consumed.
+          Direct Character memory snapshots are restored with both count and time budgets. Volatile player/cast/tether actors are prioritized at up to 4 Hz while a rotating cursor guarantees eventual coverage of every actor. Each snapshot includes both tether slots and progress, movement state, Timeline and sequencer arrays, ModelContainer, TransformationContainer, statuses, incoming ActionEffects and pending effects. Unchanged fingerprints never enter learning. Environment and complete camera matrices use a slower change-detected 2 Hz cadence.
 
-          The dashboard now exposes the current telemetry safety tier instead of implying false completeness. Semantic WorldState/network events and bounded typed snapshots remain active; optional raw IPC is archived through Replay Lab; generic live reflection and direct native memory/VFX hooks remain visibly quarantined while their bounded capture-queue architecture is completed. This release preserves the 0.5.8 performance safeguards and does not claim data completeness.
+          A reflection-free one-hertz snapshot covers all managed continuous state, including all 64 party/alliance/NPC slots, all 87 cooldown groups, complete waymarks/signs, gauges, combo, FATE, pets, companion, enmity, inventory, content values and every Deep Dungeon array. WorldState operations remain the lossless delta stream. Generic live reflection stays disabled; pointer/function and hand-authored BossMod/Splatoon knowledge remain excluded.
 
-          CI now enforces the hierarchy, purge dependency cleanup, radar modes, absence of hand-authored arena topology, and the existing critical-path performance rules. The complete Windows build was validated against the current Dalamud distribution before publication.
+          The dashboard reports raw and native queue depth, written/rejected counts, snapshot/drain milliseconds and peaks, sensor failures, and unaccounted Dalamud services. Data-complete health fails visibly instead of silently claiming success when any source is unavailable. Diagnostics export the same counters.
+
+          CI now enforces 137 telemetry and performance markers, lossless raw journaling, typed full-array coverage, deferred native detours and the absence of hand-authored arena topology. Multiple complete Windows builds were validated against the current Dalamud distribution before publication; runtime counters remain the authority for in-game health.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
