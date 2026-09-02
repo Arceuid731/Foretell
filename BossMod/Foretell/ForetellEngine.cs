@@ -9,11 +9,13 @@ public sealed partial class ForetellEngine : IDisposable
 {
     // Emergency fail-closed tier: direct client-memory readers and hooks remain quarantined until every detour
     // only copies bounded primitives into a queue and all interpretation runs on the framework thread.
-    private const bool NativeTelemetryEnabled = false;
+    private const bool NativeHookTelemetryEnabled = true;
+    private const bool NativeSnapshotTelemetryEnabled = true;
     private readonly WorldState _ws;
     private readonly ForetellConfig _cfg;
     private readonly string _storePath;
     private readonly string _replayDir;
+    private readonly string _rawDir;
     private readonly EventSubscriptions _subscriptions;
     private readonly JsonSerializerOptions _json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
     private readonly JsonSerializerOptions _replayJson = new() { WriteIndented = false, Converters = { new JsonStringEnumConverter() } };
@@ -21,7 +23,9 @@ public sealed partial class ForetellEngine : IDisposable
     private ForetellStore _store;
     private OnlineClassifier _classifier;
     private ForetellReplayWriter? _replay;
+    private readonly ForetellRawWriter _raw;
     private string _replayPath = "";
+    private string _rawPath = "";
     private long _sequence;
     private DateTime _lastSave;
     private DateTime _lastPositionSample;
@@ -60,7 +64,10 @@ public sealed partial class ForetellEngine : IDisposable
         ApplyPerformancePolicyMigration();
         _storePath = Path.Combine(configDirectory, "foretell-memory.json");
         _replayDir = Path.Combine(configDirectory, "foretell-replays");
+        _rawDir = Path.Combine(configDirectory, "foretell-raw");
         Directory.CreateDirectory(_replayDir);
+        Directory.CreateDirectory(_rawDir);
+        _raw = new();
 
         _store = LoadStore();
         NormalizeStore();
@@ -74,6 +81,7 @@ public sealed partial class ForetellEngine : IDisposable
             OnActorAdded(actor);
         SamplePartyPositions();
         SampleDataFabric(force: true);
+        OpenRawJournal();
 
         // Perform all fallible initial sampling before installing passive native hooks or event callbacks. If a
         // future sensor rejects startup, the constructor cannot leave Foretell-owned hooks behind.
@@ -81,7 +89,7 @@ public sealed partial class ForetellEngine : IDisposable
         {
             SyncReplayWriter();
             InstallForetellCommand();
-            if (NativeTelemetryEnabled)
+            if (NativeHookTelemetryEnabled)
                 InitializeNativeHooks();
             else
                 ClassifyNativeTelemetryQuarantine();
@@ -95,6 +103,7 @@ public sealed partial class ForetellEngine : IDisposable
             DisposeNativeHooks();
             _replay?.Dispose();
             _replay = null;
+            _raw.Dispose();
             Service.CommandManager.RemoveHandler("/foretell");
             throw;
         }
@@ -142,6 +151,7 @@ public sealed partial class ForetellEngine : IDisposable
         _ws.Network.CaptureRawTransport = false;
         _replay?.Dispose();
         _replay = null;
+        _raw.Dispose();
         _subscriptions.Dispose();
         DisposeNativeHooks();
         Service.CommandManager.RemoveHandler("/foretell");
@@ -157,6 +167,7 @@ public sealed partial class ForetellEngine : IDisposable
             RefreshEncounterIdentity(currentEncounter, _ws.CurrentCFCID);
 
         SyncReplayWriter();
+        DrainNativeCaptures();
         if ((now - _lastPositionSample).TotalMilliseconds >= 250)
         {
             SamplePartyPositions();
@@ -216,6 +227,7 @@ public sealed partial class ForetellEngine : IDisposable
         _session = NewSession(territory);
         StartEncounterSession(territory);
         ReopenReplayWriter();
+        OpenRawJournal();
         _lastEvidence = $"Entered territory {territory}";
     }
 
@@ -280,7 +292,9 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void SyncReplayWriter()
     {
-        _ws.Network.CaptureRawTransport = _cfg.RecordReplay;
+        // Data-complete transport capture is always armed while Foretell is alive. Replay Lab is an optional
+        // human-readable JSON mirror; the compact compressed raw journal is the lossless production archive.
+        _ws.Network.CaptureRawTransport = true;
         if (_cfg.RecordReplay && _replay == null)
             OpenReplayWriter();
         else if (!_cfg.RecordReplay && _replay != null)
@@ -303,6 +317,11 @@ public sealed partial class ForetellEngine : IDisposable
         _replay ??= new(_replayJson);
     }
 
+    private void OpenRawJournal()
+    {
+        _rawPath = Path.Combine(_rawDir, $"foretell-T{_territory}-{DateTime.Now:yyyyMMdd-HHmmss-fff}.ftraw.gz");
+    }
+
     private ForetellStore LoadStore()
     {
         try
@@ -322,9 +341,9 @@ public sealed partial class ForetellEngine : IDisposable
     {
         // The old live reflection scanner generated hundreds of thousands of dynamic diagnostic paths. Coverage
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
-        if (_store.Schema < 7)
+        if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 8);
+        _store.Schema = Math.Max(_store.Schema, 9);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];

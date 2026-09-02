@@ -357,10 +357,14 @@ public sealed partial class ForetellEngine
 
     private void DrawTelemetryStatus()
     {
+        var coverage = _store.Coverage;
+        var rawBacklogged = _raw.PendingItems > 4096 || _raw.PendingBytes > 16 * 1024 * 1024;
+        var nativeBacklogged = _nativeHookPending > 2048;
+        var healthy = !_raw.Failed && _raw.RejectedItems == 0 && !rawBacklogged && !nativeBacklogged && _nativeHookFailures == 0 && _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 && coverage.Unaccounted == 0;
         ImGui.Separator();
-        ImGui.TextUnformatted("Telemetry safety tier");
+        ImGui.TextUnformatted("Telemetry completeness");
         ImGui.SameLine();
-        ImGui.TextDisabled("STABLE CAPTURE — DATA COMPLETE IN PROGRESS");
+        ImGui.TextUnformatted(healthy ? "DATA COMPLETE — HEALTHY" : "DATA COMPLETE — DEGRADED / AUDIT REQUIRED");
         if (ImGui.BeginTable("ForetellTelemetryStatus", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
         {
             ImGui.TableSetupColumn("Surface");
@@ -368,13 +372,16 @@ public sealed partial class ForetellEngine
             ImGui.TableSetupColumn("Critical-path policy");
             ImGui.TableHeadersRow();
             DrawTelemetryRow("World state + semantic network events", "ACTIVE", "Processed with bounded typed handlers");
-            DrawTelemetryRow("Raw server/client IPC payloads", _cfg.RecordReplay ? "ARCHIVED" : "ARMED", _cfg.RecordReplay ? "Copied to the background Replay Lab writer" : "No payload copy until Replay Lab is enabled");
-            DrawTelemetryRow("Typed runtime snapshots", "ACTIVE", "Core snapshot at a bounded cadence");
-            DrawTelemetryRow("Generic live reflection", "QUARANTINED", "Disabled after measured frame-thread stalls");
-            DrawTelemetryRow("Direct native memory + VFX detours", "QUARANTINED", "Re-enable only behind bounded capture queues");
+            DrawTelemetryRow("Raw server/client IPC + ActorControl", _raw.Failed ? "FAILED" : rawBacklogged ? "BACKLOG" : "LOSSLESS", $"Background gzip journal: {_raw.PendingItems:N0} queued / {_raw.WrittenItems:N0} written / {_raw.RejectedItems:N0} rejected");
+            DrawTelemetryRow("Typed runtime snapshots", _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 ? "ACTIVE" : "DEGRADED", $"1 Hz complete managed state; 4 Hz rotating native actors; {_typedSnapshotFailures + _nativeSnapshotFailures:N0} safe rejects");
+            DrawTelemetryRow("Generic live reflection", "REPLACED", "Typed roots + WorldState deltas; no unmanaged getters on frame thread");
+            DrawTelemetryRow("Native ObjectEffect + VFX lifecycle", _nativeHookFailures == 0 ? nativeBacklogged ? "BACKLOG" : "ACTIVE" : "DEGRADED", $"Primitive queue: {_nativeHookPending:N0} queued / {_nativeHookProcessed:N0} processed / {_nativeHookFailures:N0} rejected");
+            DrawTelemetryRow("Coverage ledger", coverage.Unaccounted == 0 ? "ACCOUNTED" : "INCOMPLETE", $"{coverage.Ingested} ingested / {coverage.Excluded} explicitly excluded / {coverage.Unaccounted} unaccounted");
             ImGui.EndTable();
         }
-        ImGui.TextWrapped("Data complete remains the target: every legitimate raw fact must be retained or explicitly classified, while decoding, correlation and persistence stay off the game-frame critical path.");
+        if (_raw.Failed)
+            ImGui.TextWrapped($"Raw journal failure: {_raw.Failure}. Foretell is explicitly degraded until storage is restored; the failure is not hidden as successful capture.");
+        ImGui.TextWrapped("Data-complete mode keeps unique events lossless and samples continuous state at bounded, change-detected cadences. Raw journals stay local in the Foretell configuration directory and are never uploaded automatically.");
     }
 
     private static void DrawTelemetryRow(string surface, string state, string policy)
@@ -719,6 +726,7 @@ public sealed partial class ForetellEngine
         ImGui.TextUnformatted("Foretell records its normalized encounter observations, then can feed them back through the same learner in an isolated sandbox. It is not a video replay and it never mutates your live memory.");
         ImGui.TextUnformatted("This lets us change the inference algorithm and retest the exact same pull without returning to the boss.");
         ImGui.TextUnformatted($"Current recording: {(string.IsNullOrEmpty(_replayPath) ? "none" : _replayPath)}");
+        ImGui.TextWrapped($"Lossless raw journal: {_rawPath} | {_raw.PendingItems:N0} queued records | {_raw.WrittenItems:N0} written | {_raw.WrittenBytes / (1024.0 * 1024.0):F1} MiB uncompressed payload");
         if (ImGui.Button("Replay latest in sandbox")) ReplayLatest();
         ImGui.SameLine();
         if (ImGui.Button("Export diagnostics snapshot"))
@@ -792,7 +800,8 @@ public sealed partial class ForetellEngine
         if (ImGui.CollapsingHeader("Files and privacy"))
         {
             ImGui.BulletText("foretell-memory.json: persistent learned memory.");
-            ImGui.BulletText("foretell-replays/*.jsonl: normalized and raw-binary local streams.");
+            ImGui.BulletText("foretell-raw/*.ftraw.gz: always-on compressed lossless IPC and ActorControl journal.");
+            ImGui.BulletText("foretell-replays/*.jsonl: optional human-readable Replay Lab stream.");
             ImGui.BulletText("No remote API, private player chat or process pointer addresses.");
         }
     }

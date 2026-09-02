@@ -179,6 +179,23 @@ public sealed partial class ForetellEngine
             mlUpdates = _store.ML.Updates,
             activeEpisodes = _episodes.Values.Count(e => !e.Finalized),
             activePredictions = _predictions.Count,
+            dataComplete = new
+            {
+                rawJournal = _rawPath,
+                rawPendingItems = _raw.PendingItems,
+                rawPendingBytes = _raw.PendingBytes,
+                rawWrittenItems = _raw.WrittenItems,
+                rawWrittenBytes = _raw.WrittenBytes,
+                rawRejectedItems = _raw.RejectedItems,
+                rawFailure = _raw.Failure,
+                nativeHookCaptured = _nativeHookCaptured,
+                nativeHookProcessed = _nativeHookProcessed,
+                nativeHookPending = _nativeHookPending,
+                nativeHookFailures = _nativeHookFailures,
+                typedSnapshotFailures = _typedSnapshotFailures,
+                nativeSnapshotFailures = _nativeSnapshotFailures,
+                coverageUnaccounted = _store.Coverage.Unaccounted
+            },
             replay = _lastReplayReport,
             lastEvidence = _lastEvidence
         };

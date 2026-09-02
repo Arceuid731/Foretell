@@ -18,8 +18,10 @@ requirements = {
         "RawClientIPCSent.Subscribe(OnRawClientIPC)",
         "RawActorControlReceived.Subscribe(OnRawActorControl)",
         "_ws.Actors.EffectResult.Subscribe(OnEffectResult)",
-        "private const bool NativeTelemetryEnabled = false",
-        "ClassifyNativeTelemetryQuarantine()",
+        "private const bool NativeHookTelemetryEnabled = true",
+        "private const bool NativeSnapshotTelemetryEnabled = true",
+        "DrainNativeCaptures()",
+        "_ws.Network.CaptureRawTransport = true",
         "ApplyPerformancePolicyMigration()",
         "InitializeDalamudSignals()",
         "private static DateTime NormalizeObservationTime",
@@ -36,6 +38,9 @@ requirements = {
         "WorldOperationSubstitution(op)",
         "ActorState.OpMove =>",
         "ClientState.OpActiveCompanionChange",
+        "_raw.EnqueueServer(_rawPath, packet)",
+        "_raw.EnqueueClient(_rawPath, packet)",
+        "_raw.EnqueueActorControl(_rawPath, captureAt, control)",
     ],
     "BossMod/Foretell/ForetellLearning.cs": [
         "observation.At = NormalizeObservationTime(observation.At)",
@@ -62,6 +67,7 @@ requirements = {
         "MaxNativeActorTraversalMilliseconds",
         "EnrichActorCore(observation, actor, \"actor\")",
         "EnrichActorCollections(obs, actor)",
+        "StoreTypedWorldSnapshot(obs)",
         "--budget",
         "live getter rejected before invocation",
         "CanInvokeFabricGetter(type)",
@@ -102,7 +108,9 @@ requirements = {
         "DrawKnowledgeExplorer()",
         "DrawPurgeConfirmation()",
         "Delete learned data",
-        "DATA COMPLETE IN PROGRESS",
+        "DATA COMPLETE — HEALTHY",
+        "rawBacklogged",
+        "nativeBacklogged",
     ],
     "BossMod/Foretell/ForetellKnowledge.cs": [
         "RefreshEncounterIdentity",
@@ -133,6 +141,11 @@ requirements = {
         "ObservationKind.NativeVFXSpawn",
         "ObservationKind.NativeVFXDestroy",
         'StoreNative(obs, "native.vfx.path"',
+        "ConcurrentQueue<NativeHookCapture>",
+        "MaxNativeHookCapturesPerFrame",
+        "MaxNativeHookDrainMilliseconds",
+        "EnqueueNativeCapture",
+        "DrainNativeCaptures",
     ],
     "BossMod/Foretell/ForetellDalamudSignals.cs": [
         "Service.DutyState.DutyWiped += OnDutyWiped",
@@ -148,6 +161,23 @@ requirements = {
         "IsBackground = true",
         "JsonSerializer.Serialize(item.Observation",
         "GetConsumingEnumerable(_stop.Token)",
+    ],
+    "BossMod/Foretell/ForetellRawWriter.cs": [
+        "BlockingCollection<Item>",
+        "CompressionLevel.Fastest",
+        "IsBackground = true",
+        "GetConsumingEnumerable(_stop.Token)",
+        "PendingItems",
+        "RejectedItems",
+        "packet.Payload",
+    ],
+    "BossMod/Foretell/ForetellTypedSnapshots.cs": [
+        "StoreTypedWorldSnapshot",
+        "runtime.party.capacity",
+        "runtime.client.cooldowns.capacity",
+        "runtime.client.hate.primary",
+        "runtime.deepDungeon.rooms",
+        "foreach (var (itemId, quantity) in client.Inventory)",
     ],
     "BossMod/Data/NetworkState.cs": [
         "public volatile bool CaptureRawTransport",
@@ -205,16 +235,14 @@ if "observation.ActorID == 0 && observation.TargetID == 0" not in episode_trigge
 engine = read("BossMod/Foretell/ForetellEngine.cs")
 if engine.find("SampleDataFabric(force: true)") > engine.find("InitializeNativeHooks()"):
     errors.append("Foretell installs native hooks before fallible initial Data Fabric sampling")
-if "if (NativeTelemetryEnabled)\n                InitializeNativeHooks();" not in engine:
-    errors.append("Foretell native hooks escaped the fail-closed startup gate")
-if "if (NativeTelemetryEnabled)\n                SampleNativeActorSlice(now);" not in fabric:
-    errors.append("Foretell direct native actor reads escaped the fail-closed telemetry gate")
-if "if (!NativeTelemetryEnabled)\n            return;" not in fabric:
-    errors.append("Foretell environment/camera native reads escaped the fail-closed telemetry gate")
+if "if (NativeHookTelemetryEnabled)\n                InitializeNativeHooks();" not in engine:
+    errors.append("Foretell native hooks escaped their explicit data-complete gate")
+if "if (!NativeSnapshotTelemetryEnabled)\n            return;" not in fabric:
+    errors.append("Foretell native snapshots escaped their explicit data-complete gate")
 if "_replay.Enqueue(_replayPath, observation)" not in engine or "_replay.WriteLine" in engine:
     errors.append("Foretell replay serialization can run synchronously on the framework thread")
-if "_ws.Network.CaptureRawTransport = _cfg.RecordReplay" not in engine:
-    errors.append("Foretell raw packet copying is not tied to explicit replay opt-in")
+if "_ws.Network.CaptureRawTransport = true" not in engine:
+    errors.append("Foretell data-complete raw transport capture is not always armed")
 
 observer = read("BossMod/Foretell/ForetellObserver.cs")
 server_handler = observer[observer.find("private void OnRawServerIPC"):observer.find("private void OnRawClientIPC")]
@@ -222,12 +250,29 @@ client_handler = observer[observer.find("private void OnRawClientIPC"):observer.
 for name, handler in [("server", server_handler), ("client", client_handler)]:
     if "ProcessObservation(" in handler or "ProcessRichObservation(" in handler:
         errors.append(f"Foretell raw {name} transport re-entered the semantic learner")
+    if "_raw.Enqueue" not in handler:
+        errors.append(f"Foretell raw {name} transport is not retained by the lossless journal")
 if "ProcessObservation(obs, enriched: true)" not in observer[observer.find("private void SamplePartyPositions"):observer.find("private static uint ReadActionID")]:
     errors.append("Foretell position sampling re-entered full actor/static enrichment")
 
 config = read("BossMod/Foretell/ForetellConfig.cs")
 if "public bool RecordReplay = true" in config:
     errors.append("Foretell high-volume replay recording became default-on again")
+
+native_hooks = read("BossMod/Foretell/ForetellNativeHooks.cs")
+for start, end, name in [
+    ("private unsafe void ForetellObjectEffectDetour", "private unsafe nint ForetellActorVFXCreateDetour", "ObjectEffect"),
+    ("private unsafe nint ForetellActorVFXCreateDetour", "private void ForetellActorVFXDestroyDetour", "actor VFX create"),
+    ("private void ForetellActorVFXDestroyDetour", "private unsafe VfxObject* ForetellStaticVFXCreateDetour", "actor VFX destroy"),
+    ("private unsafe VfxObject* ForetellStaticVFXCreateDetour", "private unsafe void ForetellStaticVFXDestroyDetour", "static VFX create"),
+    ("private unsafe void ForetellStaticVFXDestroyDetour", "private void EmitNativeVFX", "static VFX destroy"),
+]:
+    body = native_hooks[native_hooks.find(start):native_hooks.find(end)]
+    for forbidden_call in ["ProcessObservation(", "ProcessRichObservation(", "EmitNativeVFX("]:
+        if forbidden_call in body:
+            errors.append(f"Foretell {name} detour performs deferred work directly: {forbidden_call}")
+    if "EnqueueNativeCapture" not in body:
+        errors.append(f"Foretell {name} detour does not enqueue its primitive capture")
 
 foretell_sources = "\n".join(
     path.read_text(encoding="utf-8-sig")

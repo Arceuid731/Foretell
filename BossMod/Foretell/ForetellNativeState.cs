@@ -227,25 +227,19 @@ public sealed partial class ForetellEngine
 
         var ingested = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            [nameof(IClientState)] = "direct runtime root",
-            [nameof(IChatGui)] = "structured native LogMessage event stream; private player chat is deliberately not recorded",
-            [nameof(ICondition)] = "complete enum indexer",
+            [nameof(IClientState)] = "typed WorldState zone/player snapshot and delta operations",
+            [nameof(ICondition)] = "complete typed enum snapshot at one hertz",
             [nameof(IDataManager)] = "Lumina rows and game data",
-            [nameof(IDutyState)] = "direct runtime root",
-            [nameof(IFateTable)] = "direct runtime root",
+            [nameof(IDutyState)] = "typed duty lifecycle events",
+            [nameof(IFateTable)] = "lossless raw server journal plus typed active-FATE state",
             [nameof(IFlyTextGui)] = "raw FlyText event stream with binary SeString payloads",
-            [nameof(IFramework)] = "WorldState frame root",
-            [nameof(IGameConfig)] = "direct runtime root",
-            [nameof(IGameGui)] = "direct runtime root",
-            [nameof(IGamepadState)] = "direct runtime root",
+            [nameof(IFramework)] = "typed WorldState frame deltas and sampled timing context",
             [nameof(IJobGauges)] = "lossless WorldState client gauge payload",
-            [nameof(IKeyState)] = "complete enum indexer",
             [nameof(IObjectTable)] = "dedicated normalized and native actor roots",
-            [nameof(IPartyList)] = "direct runtime root",
-            [nameof(IBuddyList)] = "direct runtime root",
-            [nameof(IPlayerState)] = "direct runtime root",
-            [nameof(ITargetManager)] = "direct runtime root",
-            [nameof(IToastGui)] = "normal, quest and error toast event streams with binary SeString payloads"
+            [nameof(IPartyList)] = "complete 64-slot typed WorldState party snapshot and deltas",
+            [nameof(IBuddyList)] = "normalized actor/party lifecycle plus native Character snapshot",
+            [nameof(IPlayerState)] = "typed player actor, stats, job levels, gauge and client state",
+            [nameof(ITargetManager)] = "typed actor target/focus/soft-target state"
         };
 
         var nonGameplay = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -258,10 +252,16 @@ public sealed partial class ForetellEngine
             ["IConsole"] = "non-gameplay developer console",
             [nameof(IContextMenu)] = "non-gameplay UI plumbing",
             [nameof(IDalamudService)] = "service marker, not a data source",
+            ["IDalamudPluginInterface"] = "plugin lifecycle/configuration plumbing",
             [nameof(IDtrBar)] = "non-gameplay UI presentation",
+            [nameof(IChatGui)] = "private player chat/UI surface; native gameplay SystemLog is captured separately",
             [nameof(IGameInventory)] = "non-encounter inventory/economy state",
+            [nameof(IGameConfig)] = "user configuration, superseded by typed gameplay state",
             [nameof(IGameInteropProvider)] = "sensor plumbing, not gameplay evidence",
             [nameof(IGameLifecycle)] = "process lifecycle, not encounter state",
+            [nameof(IGameGui)] = "UI projection plumbing; native camera matrices are captured directly",
+            [nameof(IGamepadState)] = "player input state; outcomes are captured as actions and movement",
+            [nameof(IKeyState)] = "player input state; outcomes are captured as actions and movement",
             [nameof(IMarketBoard)] = "non-encounter economy state",
             [nameof(INamePlateGui)] = "derived UI presentation; actor state is ingested directly",
             [nameof(INotificationManager)] = "non-gameplay UI notifications",
@@ -275,6 +275,7 @@ public sealed partial class ForetellEngine
             [nameof(ITextureReadbackProvider)] = "non-gameplay rendering resource",
             [nameof(ITextureSubstitutionProvider)] = "non-gameplay rendering resource",
             [nameof(ITitleScreenMenu)] = "non-gameplay UI presentation",
+            [nameof(IToastGui)] = "UI notifications; gameplay SystemLog and duty events are captured separately",
             [nameof(IUnlockState)] = "non-encounter account progression"
         };
 

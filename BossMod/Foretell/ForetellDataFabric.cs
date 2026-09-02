@@ -24,6 +24,7 @@ public sealed partial class ForetellEngine
     private const int MaxNativeActorsPerSlice = 6;
     private const double MaxNativeActorTraversalMilliseconds = 0.75;
     private DateTime _lastFabricSample;
+    private DateTime _lastNativeActorSample;
     private DateTime _lastNativeFabricSample;
     private int _runtimeRootCursor;
     private int _actorFabricCursor;
@@ -36,6 +37,8 @@ public sealed partial class ForetellEngine
     private readonly Dictionary<Type, FieldInfo[]> _fabricFieldCache = [];
     private long _fabricDeferredTraversals;
     private long _fabricRejectedGetters;
+    private long _typedSnapshotFailures;
+    private long _nativeSnapshotFailures;
     private string _coreRuntimeFingerprint = "";
 
     private sealed class FabricActorTrack
@@ -56,6 +59,7 @@ public sealed partial class ForetellEngine
         _nativeActorCursor = 0;
         ResetNativeDataFabric();
         _lastFabricSample = default;
+        _lastNativeActorSample = default;
         _lastNativeFabricSample = default;
         _coreRuntimeFingerprint = "";
     }
@@ -69,16 +73,19 @@ public sealed partial class ForetellEngine
         if (force || (now - _lastFabricSample).TotalMilliseconds >= 1000)
         {
             _lastFabricSample = now;
-            SampleCoreRuntimeSnapshot();
+            try { SampleCoreRuntimeSnapshot(); }
+            catch (Exception e)
+            {
+                ++_typedSnapshotFailures;
+                RegisterCapability("runtime.typedSnapshot", typeof(WorldState), "complete typed snapshot", false, false, $"snapshot rejected safely: {e.GetType().Name}");
+                Service.LogVerbose($"[Foretell] Typed runtime snapshot rejected safely: {e.Message}");
+            }
             if (LiveReflectionTelemetryEnabled)
             {
                 RefreshRuntimeContextSlice();
                 SampleGenericActorSlice();
             }
-            if (NativeTelemetryEnabled)
-                SampleNativeActorSlice(now);
-
-            if (LiveReflectionTelemetryEnabled || NativeTelemetryEnabled)
+            if (LiveReflectionTelemetryEnabled || NativeSnapshotTelemetryEnabled)
             {
                 foreach (var dead in _fabricActorTracks.Keys.Where(id => _ws.Actors.Find(id) == null).ToArray())
                 {
@@ -89,16 +96,34 @@ public sealed partial class ForetellEngine
             }
         }
 
-        if (!NativeTelemetryEnabled)
+        if (!NativeSnapshotTelemetryEnabled)
             return;
 
-        // Environment and camera retain their original 2 Hz cadence. Character reads use a rotating bounded
-        // queue above: every actor remains discoverable, while population size can no longer create a frame spike.
+        // Character containers are sampled through a rotating cursor at up to 4 Hz. Every actor is eventually
+        // visited, but total work is bounded by both item count and elapsed time; unchanged snapshots are removed
+        // by fingerprints before they reach learning.
+        if (force || (now - _lastNativeActorSample).TotalMilliseconds >= 250)
+        {
+            _lastNativeActorSample = now;
+            SampleNativeActorSlice(now);
+        }
+
+        // Environment and camera use a slower 2 Hz change-detected cadence.
         if (!force && (now - _lastNativeFabricSample).TotalMilliseconds < 500)
             return;
         _lastNativeFabricSample = now;
-        SampleNativeEnvironment();
-        SampleNativeCamera();
+        try { SampleNativeEnvironment(); }
+        catch (Exception e)
+        {
+            ++_nativeSnapshotFailures;
+            RegisterCapability("native.environment", typeof(object), "EnvManager", false, false, $"snapshot rejected safely: {e.GetType().Name}");
+        }
+        try { SampleNativeCamera(); }
+        catch (Exception e)
+        {
+            ++_nativeSnapshotFailures;
+            RegisterCapability("native.camera", typeof(object), "Camera", false, false, $"snapshot rejected safely: {e.GetType().Name}");
+        }
     }
 
     private void SampleCoreRuntimeSnapshot()
@@ -111,8 +136,10 @@ public sealed partial class ForetellEngine
         StoreFabric(obs, "runtime.core.partyMemberCount", _ws.Party.Members.Count(member => member.IsValid()));
         StoreFabric(obs, "runtime.core.limitBreakCurrent", _ws.Party.LimitBreakCur);
         StoreFabric(obs, "runtime.core.limitBreakMaximum", _ws.Party.LimitBreakMax);
+        StoreTypedWorldSnapshot(obs);
+        AuditDalamudPluginServices();
 
-        var fingerprint = Fingerprint(obs, "runtime.core.");
+        var fingerprint = Fingerprint(obs, "runtime.");
         if (fingerprint == _coreRuntimeFingerprint)
             return;
         _coreRuntimeFingerprint = fingerprint;
@@ -147,20 +174,53 @@ public sealed partial class ForetellEngine
             _nativeActorCursor = 0;
 
         var started = Stopwatch.GetTimestamp();
-        var examined = 0;
         var sampled = 0;
+        Span<ulong> sampledIDs = stackalloc ulong[MaxNativeActorsPerSlice];
+        var playerID = _ws.Party[PartyState.PlayerSlot]?.InstanceID ?? 0;
+
+        // Reserve half the slice for volatile actors. This gives casts, tethers and the player a 4 Hz chance to
+        // expose timeline/transformation/tether progress while the rotating pass still guarantees full coverage.
+        for (var i = 0; i < actors.Length && sampled < MaxNativeActorsPerSlice / 2 && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxNativeActorTraversalMilliseconds; ++i)
+        {
+            var actor = actors[i];
+            if (actor.InstanceID != playerID && actor.CastInfo == null && actor.Tether.ID == 0)
+                continue;
+            if (!TrySampleNativeActor(actor, now))
+                continue;
+            sampledIDs[sampled++] = actor.InstanceID;
+        }
+
+        var examined = 0;
         while (examined < actors.Length && sampled < MaxNativeActorsPerSlice && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxNativeActorTraversalMilliseconds)
         {
             var actor = actors[_nativeActorCursor++];
             if (_nativeActorCursor >= actors.Length)
                 _nativeActorCursor = 0;
             ++examined;
-            if (!HasNativeCharacterLayout(actor.Type))
+            if (sampledIDs[..sampled].Contains(actor.InstanceID) || !TrySampleNativeActor(actor, now))
                 continue;
-            ++sampled;
-            var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:native");
+            sampledIDs[sampled++] = actor.InstanceID;
+        }
+    }
+
+    private bool TrySampleNativeActor(Actor actor, DateTime now)
+    {
+        if (!HasNativeCharacterLayout(actor.Type))
+            return false;
+        var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:native");
+        try
+        {
+            EnrichActorCore(obs, actor, "actor");
+            EnrichActorCollections(obs, actor);
             EnrichNativeCharacter(obs, actor);
-            var pos = new Vector2(actor.Position.X, actor.Position.Z);
+        }
+        catch (Exception e)
+        {
+            ++_nativeSnapshotFailures;
+            RegisterCapability("native.character", actor.GetType(), actor.Type.ToString(), false, false, $"snapshot rejected safely: {e.GetType().Name}");
+            return false;
+        }
+        var pos = new Vector2(actor.Position.X, actor.Position.Z);
             if (_fabricActorTracks.TryGetValue(actor.InstanceID, out var previous))
             {
                 var dt = Math.Max(.001, (now - previous.At).TotalSeconds);
@@ -169,12 +229,12 @@ public sealed partial class ForetellEngine
             }
             _fabricActorTracks[actor.InstanceID] = new() { At = now, Position = pos, Rotation = actor.Rotation.Rad };
 
-            var fingerprint = Fingerprint(obs, "native.character.") + Fingerprint(obs, "derived.actor.");
-            if (_nativeActorFabricFingerprint.GetValueOrDefault(actor.InstanceID) == fingerprint)
-                continue;
-            _nativeActorFabricFingerprint[actor.InstanceID] = fingerprint;
-            ProcessObservation(obs, enriched: true);
-        }
+        var fingerprint = Fingerprint(obs, "actor.") + Fingerprint(obs, "native.character.") + Fingerprint(obs, "derived.actor.");
+        if (_nativeActorFabricFingerprint.GetValueOrDefault(actor.InstanceID) == fingerprint)
+            return true;
+        _nativeActorFabricFingerprint[actor.InstanceID] = fingerprint;
+        ProcessObservation(obs, enriched: true);
+        return true;
     }
 
     private static float NormalizeAngle(float angle)
@@ -856,8 +916,15 @@ public sealed partial class ForetellEngine
             coverage.Items[key] = cap;
         }
         ++cap.Seen;
-        cap.Ingested |= ingested;
-        cap.Excluded |= excluded;
+        if (ingested)
+        {
+            cap.Ingested = true;
+            cap.Excluded = false;
+        }
+        else if (excluded && !cap.Ingested)
+        {
+            cap.Excluded = true;
+        }
         if (!string.IsNullOrEmpty(reason)) cap.Reason = reason;
     }
 

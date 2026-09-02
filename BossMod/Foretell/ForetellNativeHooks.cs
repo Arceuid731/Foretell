@@ -3,6 +3,9 @@ using Dalamud.Memory;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Scene;
 using InteropGenerator.Runtime;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Threading;
 using FFXIVEventObject = FFXIVClientStructs.FFXIV.Client.Game.Object.EventObject;
 
 namespace BossMod.Foretell;
@@ -15,7 +18,14 @@ public sealed partial class ForetellEngine
     private Hook<VfxObject.Delegates.Create>? _foretellStaticVFXCreateHook;
     private Hook<VfxObject.Delegates.CleanupRender>? _foretellStaticVFXDestroyHook;
     private readonly ConcurrentDictionary<nint, NativeVFXTrack> _nativeVFXTracks = [];
+    private readonly ConcurrentQueue<NativeHookCapture> _nativeHookCaptures = [];
     private long _nativeVFXSequence;
+    private long _nativeHookCaptured;
+    private long _nativeHookProcessed;
+    private long _nativeHookPending;
+    private long _nativeHookFailures;
+    private const int MaxNativeHookCapturesPerFrame = 96;
+    private const double MaxNativeHookDrainMilliseconds = 0.75;
 
     // Signatures independently verified against the current client. The generic hook mechanism was cross-checked
     // with ECommons (MIT, NightmareXIV) rather than copying Splatoon's AGPL implementation.
@@ -28,6 +38,10 @@ public sealed partial class ForetellEngine
         ulong TargetID, uint TargetOID, float TargetX, float TargetY, float TargetZ, float TargetRotation, float TargetRadius,
         DateTime Created);
     private readonly record struct NativeActorRef(ulong ID, uint OID, float X, float Y, float Z, float Rotation, float Radius);
+    private abstract record NativeHookCapture(DateTime At);
+    private sealed record NativeObjectEffectCapture(DateTime CapturedAt, ulong InstanceID, uint OID, uint EntityID, uint ActionID, ulong Arg4,
+        float X, float Y, float Z, float Rotation, float Radius) : NativeHookCapture(CapturedAt);
+    private sealed record NativeVFXCapture(DateTime CapturedAt, ObservationKind Kind, NativeVFXTrack Track, float A4 = 0, byte A5 = 0, ushort A6 = 0, byte A7 = 0) : NativeHookCapture(CapturedAt);
 
     private delegate nint ActorVFXCreateDelegate(nint path, nint caster, nint target, float a4, byte a5, ushort a6, byte a7);
     private delegate void ActorVFXDestroyDelegate(nint vfx);
@@ -141,28 +155,78 @@ public sealed partial class ForetellEngine
         _nativeVFXTracks.Clear();
     }
 
+    private void EnqueueNativeCapture(NativeHookCapture capture)
+    {
+        _nativeHookCaptures.Enqueue(capture);
+        Interlocked.Increment(ref _nativeHookCaptured);
+        Interlocked.Increment(ref _nativeHookPending);
+    }
+
+    private void DrainNativeCaptures()
+    {
+        var started = Stopwatch.GetTimestamp();
+        var processed = 0;
+        while (processed < MaxNativeHookCapturesPerFrame
+            && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxNativeHookDrainMilliseconds
+            && _nativeHookCaptures.TryDequeue(out var capture))
+        {
+            Interlocked.Decrement(ref _nativeHookPending);
+            ++processed;
+            try
+            {
+                switch (capture)
+                {
+                    case NativeObjectEffectCapture effect:
+                        ProcessNativeObjectEffect(effect);
+                        break;
+                    case NativeVFXCapture vfx:
+                        EmitNativeVFX(vfx.Kind, vfx.Track, vfx.At, vfx.A4, vfx.A5, vfx.A6, vfx.A7);
+                        break;
+                }
+                Interlocked.Increment(ref _nativeHookProcessed);
+            }
+            catch (Exception e)
+            {
+                Interlocked.Increment(ref _nativeHookFailures);
+                Service.LogVerbose($"[Foretell] Deferred native capture rejected safely: {e.Message}");
+            }
+        }
+    }
+
+    private void ProcessNativeObjectEffect(NativeObjectEffectCapture capture)
+    {
+        var actor = capture.InstanceID != 0 ? _ws.Actors.Find(capture.InstanceID) : null;
+        var obs = Observation(ObservationKind.ObjectEffect, actor, capture.EntityID, capture.ActionID);
+        obs.At = NormalizeObservationTime(capture.At);
+        obs.ActorID = capture.InstanceID;
+        obs.ActorOID = capture.OID;
+        obs.X = capture.X;
+        obs.Z = capture.Z;
+        obs.Rotation = capture.Rotation;
+        if (actor == null)
+            obs.SourceKind = SourceKind.EventObject;
+        obs.Numeric["native.objectEffect.arg4"] = capture.Arg4;
+        obs.Numeric["native.objectEffect.y"] = capture.Y;
+        obs.Numeric["native.objectEffect.hitboxRadius"] = capture.Radius;
+        ProcessObservation(obs);
+    }
+
     private unsafe void ForetellObjectEffectDetour(FFXIVEventObject* self, uint entityId, uint actionId, ulong arg4)
     {
-        _foretellObjectEffectHook!.Original(self, entityId, actionId, arg4);
+        NativeObjectEffectCapture? capture = null;
         try
         {
-            if (self == null) return;
-            var instanceID = (ulong)self->EntityId;
-            var actor = _ws.Actors.Find(instanceID);
-            var obs = Observation(ObservationKind.ObjectEffect, actor, entityId, actionId);
-            if (actor == null)
-            {
-                obs.ActorID = instanceID;
-                obs.ActorOID = self->BaseId;
-                obs.SourceKind = SourceKind.EventObject;
-            }
-            obs.Numeric["native.objectEffect.arg4"] = arg4;
-            ProcessObservation(obs);
+            if (self != null)
+                capture = new(DateTime.UtcNow, (ulong)self->EntityId, self->BaseId, entityId, actionId, arg4,
+                    self->Position.X, self->Position.Y, self->Position.Z, self->Rotation, self->HitboxRadius);
         }
-        catch (Exception e)
+        catch
         {
-            Service.LogVerbose($"[Foretell] ObjectEffect observation failed: {e.Message}");
+            Interlocked.Increment(ref _nativeHookFailures);
         }
+        _foretellObjectEffectHook!.Original(self, entityId, actionId, arg4);
+        if (capture != null)
+            EnqueueNativeCapture(capture);
     }
 
     private unsafe nint ForetellActorVFXCreateDetour(nint pathAddress, nint casterAddress, nint targetAddress, float a4, byte a5, ushort a6, byte a7)
@@ -176,9 +240,9 @@ public sealed partial class ForetellEngine
             if (result == 0) return result;
             var track = new NativeVFXTrack(System.Threading.Interlocked.Increment(ref _nativeVFXSequence), "actor", path, "",
                 caster.ID, caster.OID, caster.X, caster.Y, caster.Z, caster.Rotation, caster.Radius,
-                target.ID, target.OID, target.X, target.Y, target.Z, target.Rotation, target.Radius, ObservationNow());
+                target.ID, target.OID, target.X, target.Y, target.Z, target.Rotation, target.Radius, DateTime.UtcNow);
             _nativeVFXTracks[result] = track;
-            EmitNativeVFX(ObservationKind.NativeVFXSpawn, track, a4, a5, a6, a7);
+            EnqueueNativeCapture(new NativeVFXCapture(track.Created, ObservationKind.NativeVFXSpawn, track, a4, a5, a6, a7));
         }
         catch (Exception e)
         {
@@ -192,7 +256,7 @@ public sealed partial class ForetellEngine
         try
         {
             if (_nativeVFXTracks.TryRemove(vfx, out var track))
-                EmitNativeVFX(ObservationKind.NativeVFXDestroy, track);
+                EnqueueNativeCapture(new NativeVFXCapture(DateTime.UtcNow, ObservationKind.NativeVFXDestroy, track));
         }
         catch (Exception e)
         {
@@ -214,9 +278,9 @@ public sealed partial class ForetellEngine
             if (result == null) return result;
             var position = result->Position;
             var track = new NativeVFXTrack(System.Threading.Interlocked.Increment(ref _nativeVFXSequence), "static", pathText, poolText,
-                0, 0, position.X, position.Y, position.Z, 0, 0, 0, 0, 0, 0, 0, 0, 0, ObservationNow());
+                0, 0, position.X, position.Y, position.Z, 0, 0, 0, 0, 0, 0, 0, 0, 0, DateTime.UtcNow);
             _nativeVFXTracks[(nint)result] = track;
-            EmitNativeVFX(ObservationKind.NativeVFXSpawn, track);
+            EnqueueNativeCapture(new NativeVFXCapture(track.Created, ObservationKind.NativeVFXSpawn, track));
         }
         catch (Exception e)
         {
@@ -230,7 +294,7 @@ public sealed partial class ForetellEngine
         try
         {
             if (_nativeVFXTracks.TryRemove((nint)vfx, out var track))
-                EmitNativeVFX(ObservationKind.NativeVFXDestroy, track);
+                EnqueueNativeCapture(new NativeVFXCapture(DateTime.UtcNow, ObservationKind.NativeVFXDestroy, track));
         }
         catch (Exception e)
         {
@@ -242,26 +306,21 @@ public sealed partial class ForetellEngine
         }
     }
 
-    private void EmitNativeVFX(ObservationKind kind, NativeVFXTrack track, float a4 = 0, byte a5 = 0, ushort a6 = 0, byte a7 = 0)
+    private void EmitNativeVFX(ObservationKind kind, NativeVFXTrack track, DateTime capturedAt, float a4 = 0, byte a5 = 0, ushort a6 = 0, byte a7 = 0)
     {
         var actor = track.CasterID != 0 ? _ws.Actors.Find(track.CasterID) : null;
         var obs = Observation(kind, actor, StableHash(track.Path), target: track.TargetID, detail: track.Path);
-        if (actor == null && track.CasterID != 0)
-        {
-            obs.ActorID = track.CasterID;
-            obs.ActorOID = track.CasterOID;
-            obs.SourceKind = SourceKind.Unknown;
-        }
+        obs.At = NormalizeObservationTime(capturedAt);
+        obs.ActorID = track.CasterID;
+        obs.ActorOID = track.CasterOID;
+        obs.X = track.CasterX;
+        obs.Z = track.CasterZ;
+        obs.Rotation = track.CasterRotation;
+        obs.TargetID = track.TargetID;
+        obs.TargetX = track.TargetX;
+        obs.TargetZ = track.TargetZ;
         if (actor == null)
-        {
-            obs.X = track.CasterX;
-            obs.Z = track.CasterZ;
-        }
-        if (track.TargetID != 0 && _ws.Actors.Find(track.TargetID) == null)
-        {
-            obs.TargetX = track.TargetX;
-            obs.TargetZ = track.TargetZ;
-        }
+            obs.SourceKind = SourceKind.Unknown;
         StoreNative(obs, "native.vfx.instance", track.Token);
         StoreNative(obs, "native.vfx.kind", track.Kind);
         StoreNative(obs, "native.vfx.path", track.Path);
@@ -285,7 +344,7 @@ public sealed partial class ForetellEngine
         StoreNative(obs, "native.vfx.arg6", a6);
         StoreNative(obs, "native.vfx.arg7", a7);
         if (kind == ObservationKind.NativeVFXDestroy)
-            StoreNative(obs, "native.vfx.lifetimeSeconds", Math.Max(0, (ObservationNow() - track.Created).TotalSeconds));
+            StoreNative(obs, "native.vfx.lifetimeSeconds", Math.Max(0, (capturedAt - track.Created).TotalSeconds));
         ProcessObservation(obs);
     }
 
