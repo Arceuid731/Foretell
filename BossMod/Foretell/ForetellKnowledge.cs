@@ -1,11 +1,18 @@
+using System.IO;
+
 namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
     private void RefreshEncounterIdentity(EncounterMemory encounter, uint cfcID)
     {
-        var territoryName = Service.LuminaRow<Lumina.Excel.Sheets.TerritoryType>(encounter.TerritoryID)
-            ?.PlaceName.ValueNullable?.NameNoArticle.ToString();
+        string? territoryName = null;
+        try
+        {
+            territoryName = Service.LuminaRow<Lumina.Excel.Sheets.TerritoryType>(encounter.TerritoryID)
+                ?.PlaceName.ValueNullable?.NameNoArticle.ToString();
+        }
+        catch (Exception e) { Service.LogVerbose($"[Foretell] Territory name lookup rejected safely: {e.Message}"); }
         if (!string.IsNullOrWhiteSpace(territoryName))
             encounter.TerritoryName = territoryName;
         if (string.IsNullOrWhiteSpace(encounter.TerritoryName))
@@ -22,19 +29,23 @@ public sealed partial class ForetellEngine
         }
 
         encounter.ContentFinderConditionID = cfcID;
-        if (Service.LuminaRow<Lumina.Excel.Sheets.ContentFinderCondition>(cfcID) is { } cfc)
+        try
         {
-            var contentName = cfc.Name.ToString();
-            if (!string.IsNullOrWhiteSpace(contentName))
-                encounter.ContentName = contentName;
+            if (Service.LuminaRow<Lumina.Excel.Sheets.ContentFinderCondition>(cfcID) is { } cfc)
+            {
+                var contentName = cfc.Name.ToString();
+                if (!string.IsNullOrWhiteSpace(contentName))
+                    encounter.ContentName = contentName;
 
-            var contentTypeLink = Member(cfc, "ContentType");
-            var contentTypeID = ToUInt(Member(contentTypeLink, "RowId")) ?? 0;
-            var contentTypeName = contentTypeID != 0
-                ? Service.LuminaRow<Lumina.Excel.Sheets.ContentType>(contentTypeID)?.Name.ToString()
-                : null;
-            encounter.ContentCategory = string.IsNullOrWhiteSpace(contentTypeName) ? "Instanced content" : contentTypeName;
+                var contentTypeLink = Member(cfc, "ContentType");
+                var contentTypeID = ToUInt(Member(contentTypeLink, "RowId")) ?? 0;
+                var contentTypeName = contentTypeID != 0
+                    ? Service.LuminaRow<Lumina.Excel.Sheets.ContentType>(contentTypeID)?.Name.ToString()
+                    : null;
+                encounter.ContentCategory = string.IsNullOrWhiteSpace(contentTypeName) ? "Instanced content" : contentTypeName;
+            }
         }
+        catch (Exception e) { Service.LogVerbose($"[Foretell] Content name lookup rejected safely: {e.Message}"); }
 
         if (string.IsNullOrWhiteSpace(encounter.ContentName))
             encounter.ContentName = encounter.TerritoryName;
@@ -52,7 +63,9 @@ public sealed partial class ForetellEngine
 
         if (source.NameID != 0)
         {
-            var learnedName = Service.LuminaRow<Lumina.Excel.Sheets.BNpcName>(source.NameID)?.Singular.ToString();
+            string? learnedName = null;
+            try { learnedName = Service.LuminaRow<Lumina.Excel.Sheets.BNpcName>(source.NameID)?.Singular.ToString(); }
+            catch { }
             if (!string.IsNullOrWhiteSpace(learnedName))
                 return learnedName;
         }
@@ -70,13 +83,30 @@ public sealed partial class ForetellEngine
     {
         if (mechanic.TriggerID != 0 && mechanic.TriggerKind is ObservationKind.CastStart or ObservationKind.CastFinish or ObservationKind.ActionResolved or ObservationKind.AffectedTarget)
         {
-            var actionName = Service.LuminaRow<Lumina.Excel.Sheets.Action>(mechanic.TriggerID)?.Name.ToString();
+            var actionName = LookupActionName(mechanic.TriggerID);
             if (!string.IsNullOrWhiteSpace(actionName))
                 return actionName;
         }
+        if (!string.IsNullOrWhiteSpace(mechanic.TriggerDetail))
+        {
+            var detail = mechanic.TriggerDetail.Replace('\\', '/');
+            var leaf = detail[(detail.LastIndexOf('/') + 1)..];
+            if (leaf.EndsWith(".avfx", StringComparison.OrdinalIgnoreCase)) leaf = leaf[..^5];
+            if (leaf.Length > 0 && mechanic.TriggerKind is ObservationKind.NativeVFXSpawn or ObservationKind.NativeVFXDestroy or ObservationKind.VFX)
+                return $"Visual effect · {leaf}";
+            if (mechanic.TriggerKind == ObservationKind.NpcYell)
+                return $"NPC call · {DisplayText(detail, 60)}";
+        }
+        var label = ObservationLabel(mechanic.TriggerKind);
         return mechanic.TriggerID == 0
-            ? mechanic.TriggerKind.ToString()
-            : $"{mechanic.TriggerKind} 0x{mechanic.TriggerID:X}";
+            ? label
+            : $"{label} · 0x{mechanic.TriggerID:X}";
+    }
+
+    private static string? LookupActionName(uint actionID)
+    {
+        try { return Service.LuminaRow<Lumina.Excel.Sheets.Action>(actionID)?.Name.ToString(); }
+        catch { return null; }
     }
 
     private void PurgeMechanic(uint territoryID, string key)
@@ -88,6 +118,8 @@ public sealed partial class ForetellEngine
             encounter.Timeline.Remove(edgeKey);
         foreach (var phase in encounter.Phases.Values)
             phase.Signals.Remove(key);
+        foreach (var compositeKey in encounter.Composites.Where(kv => kv.Value.Signals.Contains(key)).Select(kv => kv.Key).ToArray())
+            encounter.Composites.Remove(compositeKey);
 
         foreach (var episodeID in _episodes.Where(kv => kv.Value.SignalKey == key).Select(kv => kv.Key).ToArray())
         {
@@ -114,6 +146,15 @@ public sealed partial class ForetellEngine
         foreach (var phase in encounter.Phases.Values)
             foreach (var signal in phase.Signals.Keys.Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).ToArray())
                 phase.Signals.Remove(signal);
+        foreach (var compositeKey in encounter.Composites.Where(item => item.Value.Signals.Any(signal => signal.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))).Select(item => item.Key).ToArray())
+            encounter.Composites.Remove(compositeKey);
+        foreach (var episodeID in _episodes.Where(item => item.Value.Trigger.TerritoryID == territoryID && item.Value.Trigger.ActorOID == sourceOID).Select(item => item.Key).ToArray())
+        {
+            _episodes.Remove(episodeID);
+            _predictions.Remove(episodeID);
+            foreach (var sequence in _effectSequenceEpisodes.Where(item => item.Value == episodeID).Select(item => item.Key).ToArray())
+                _effectSequenceEpisodes.Remove(sequence);
+        }
     }
 
     private void PurgeEncounter(uint territoryID)
@@ -126,14 +167,85 @@ public sealed partial class ForetellEngine
         if (territoryID == _territory)
         {
             _episodes.Clear();
+            _episodeFinalization.Clear();
+            _episodeCleanup.Clear();
             _predictions.Clear();
             _effectSequenceEpisodes.Clear();
-            _recentSignals.Clear();
             _tracks.Clear();
             _session = NewSession(_territory);
         }
         foreach (var actionID in actionIDs)
             RemoveOrphanGlobalKnowledge(actionID);
+    }
+
+    private void PurgeTopology(uint territoryID, string fingerprint)
+    {
+        if (!_store.Encounters.TryGetValue(territoryID, out var encounter)) return;
+        encounter.Topologies.Remove(fingerprint);
+        if (territoryID == _territory && _topologyFingerprint == fingerprint)
+        {
+            _topologyFingerprint = "";
+            _topologyAnalysis = null;
+            InvalidateTopology();
+        }
+    }
+
+    private void PurgeTimelineEdge(uint territoryID, string key)
+    {
+        if (_store.Encounters.TryGetValue(territoryID, out var encounter))
+            encounter.Timeline.Remove(key);
+    }
+
+    private void PurgeComposite(uint territoryID, string key)
+    {
+        if (_store.Encounters.TryGetValue(territoryID, out var encounter))
+            encounter.Composites.Remove(key);
+    }
+
+    private void PurgePhase(uint territoryID, int phase)
+    {
+        if (!_store.Encounters.TryGetValue(territoryID, out var encounter)) return;
+        encounter.Phases.Remove(phase);
+        foreach (var key in encounter.Timeline.Where(item => item.Value.Phase == phase).Select(item => item.Key).ToArray())
+            encounter.Timeline.Remove(key);
+        foreach (var key in encounter.Composites.Where(item => item.Value.Phase == phase).Select(item => item.Key).ToArray())
+            encounter.Composites.Remove(key);
+    }
+
+    private void PurgePhaseSignal(uint territoryID, int phase, string signal)
+    {
+        if (!_store.Encounters.TryGetValue(territoryID, out var encounter)) return;
+        if (encounter.Phases.TryGetValue(phase, out var phaseMemory))
+            phaseMemory.Signals.Remove(signal);
+        foreach (var key in encounter.Timeline.Where(item => item.Value.Phase == phase && (item.Value.From == signal || item.Value.To == signal)).Select(item => item.Key).ToArray())
+            encounter.Timeline.Remove(key);
+        foreach (var key in encounter.Composites.Where(item => item.Value.Phase == phase && item.Value.Signals.Contains(signal)).Select(item => item.Key).ToArray())
+            encounter.Composites.Remove(key);
+    }
+
+    private void PurgePhaseBoundary(uint territoryID, string signature)
+    {
+        if (_store.Encounters.TryGetValue(territoryID, out var encounter))
+            encounter.PhaseBoundaries.Remove(signature);
+        if (territoryID == _territory)
+            _phaseBoundariesThisPull.Remove(signature);
+    }
+
+    private void PurgeSession(string sessionID)
+        => _store.Sessions.RemoveAll(session => string.Equals(session.SessionID, sessionID, StringComparison.Ordinal));
+
+    private void DeleteStorageFile(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var rawRoot = Path.GetFullPath(_rawDir) + Path.DirectorySeparatorChar;
+        var replayRoot = Path.GetFullPath(_replayDir) + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(rawRoot, StringComparison.OrdinalIgnoreCase) && !fullPath.StartsWith(replayRoot, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("path is outside Foretell storage");
+        if (string.Equals(fullPath, Path.GetFullPath(_rawPath), StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fullPath, Path.GetFullPath(_replayPath), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("active recording cannot be deleted");
+        File.Delete(fullPath);
+        _lastStorageRefresh = default;
     }
 
     private void PurgeCategory(string category)

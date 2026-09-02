@@ -60,6 +60,9 @@ jobs:
       - name: Restore
         run: dotnet restore BossMod/BossModReborn.csproj
 
+      - name: Run deterministic Foretell core tests
+        run: dotnet run --project ForetellCoreTests/ForetellCoreTests.csproj -c Release
+
       - name: Build release
         shell: pwsh
         run: |
@@ -87,17 +90,17 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Data-complete raw evidence learning.
+          Data-complete, bounded and inspectable learning pipeline.
 
-          This release completes the 0.6 data-complete pipeline by making raw transport evidence available to online learning without returning packet-scale work to the game thread.
+          Foretell now retains exact server/client IPC and ActorControl in rotating compressed journals while feeding bounded 250 ms raw feature windows into the same learner as semantic and native evidence. Replay Lab correlates every raw journal overlapping a session and restores live state after its isolated run.
 
-          The lossless background raw-journal writer now aggregates server IPC, client IPC and ActorControl into 250 ms feature windows. Each window retains direction-specific opcode families, packet counts, payload volume, command metadata and 64 binary-content buckets. Full payload bytes remain unchanged in the compressed journal for later decoder/retraining improvements.
+          Native coverage includes queued actor/static VFX paths and ObjectEffect, rotating Character snapshots with both tether slots and progress, timeline/model/transformation state, environment and camera state, plus a watchdog-protected collision sweep that learns reachable arena contours. ActionEffect bytes remain complete and EffectResult is linked by GlobalSequence.
 
-          Foretell drains at most four raw feature windows per frame with a strict 0.35 ms budget, then correlates them with the same mechanic episodes used by semantic and native evidence. This closes the gap where raw data was safely archived but did not yet influence live inference.
+          The dedicated cockpit now exposes a named content hierarchy, learned arenas, environment, bosses/mobs, mechanics, phases, timelines, simultaneous patterns and session/storage files. Each useful level has confirmed deletion. The movable radar supports Auto collision topology, circle or square frames, screen size and world-distance zoom.
 
-          Dashboard and diagnostics now report pending and processed raw-feature windows together with drain time and peak time. A backlog therefore degrades the visible data-complete health state instead of silently weakening evidence.
+          Packet callbacks only copy/enqueue raw evidence; compression and replay serialization stay off the game thread. Typed and native state use change detection, rotating slices, time/count budgets, bounded queues and persistent-memory limits. Autosave stays outside combat. The health dashboard reports every backlog, rejection, eviction, sensor failure and frame/topology timing instead of silently weakening completeness.
 
-          All 0.6.0 guarantees remain: always-on lossless gzip journals; queued native VFX/ObjectEffect detours; bounded Character, environment and camera snapshots; complete 64-slot party, 87-cooldown and Deep Dungeon typed state; no generic live reflection; and no hand-authored BMR/Splatoon answers or ArenaBounds. CI now enforces 148 telemetry/performance markers, and the full Windows build was validated against current Dalamud before publication.
+          Loading and unloading are transactional, malformed timestamps/configuration/store/classifier data are normalized, native hook work is deferred, and corrupted or interrupted stores are preserved or recovered safely. Deterministic topology, raw replay, corruption/fuzz, migration and non-finite classifier tests run before the release build. CI also enforces the zero-knowledge boundary: no authored BossModule mechanics, state machines, layouts, presets or safe spots are imported.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 

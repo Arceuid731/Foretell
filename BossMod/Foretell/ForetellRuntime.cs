@@ -8,6 +8,9 @@ internal sealed class MechanicEpisode
     public DateTime FinalizeAt { get; set; }
     public double LeadSeconds { get; set; }
     public Dictionary<ulong, Vector2> ParticipantPositions { get; } = [];
+    public Dictionary<ulong, float> ParticipantRotations { get; } = [];
+    public Dictionary<ulong, Vector2> ResolutionPositions { get; } = [];
+    public Dictionary<ulong, float> ResolutionRotations { get; } = [];
     public Dictionary<ulong, uint> ParticipantRoles { get; } = [];
     public Dictionary<ulong, string> ParticipantRoleNames { get; } = [];
     public HashSet<ulong> AffectedTargets { get; } = [];
@@ -15,6 +18,7 @@ internal sealed class MechanicEpisode
     public HashSet<ulong> TetherTargets { get; } = [];
     public HashSet<ulong> MovementTargets { get; } = [];
     public Dictionary<ulong, float> MovementDistances { get; } = [];
+    public Dictionary<ulong, double> DamageByTarget { get; } = [];
     public HashSet<ulong> DeathTargets { get; } = [];
     public Dictionary<ObservationKind, int> Evidence { get; } = [];
     public Dictionary<string, double> FeatureSums { get; } = [];
@@ -28,6 +32,7 @@ internal sealed class MechanicEpisode
     {
         foreach (var (key, value) in observation.Numeric)
         {
+            if (!double.IsFinite(value)) continue;
             FeatureSums[key] = FeatureSums.GetValueOrDefault(key) + value;
             FeatureCounts[key] = FeatureCounts.GetValueOrDefault(key) + 1;
         }
@@ -84,6 +89,12 @@ internal sealed class MechanicEpisode
 
     public void AddEvidence(ObservationKind kind)
         => Evidence[kind] = Evidence.GetValueOrDefault(kind) + 1;
+
+    public Vector2 PositionFor(ulong id)
+        => ResolutionPositions.GetValueOrDefault(id, ParticipantPositions.GetValueOrDefault(id));
+
+    public float RotationFor(ulong id)
+        => ResolutionRotations.GetValueOrDefault(id, ParticipantRotations.GetValueOrDefault(id));
 }
 
 internal sealed class ParticipantTrack
@@ -92,7 +103,36 @@ internal sealed class ParticipantTrack
     public Vector2 Position { get; set; }
     public uint Role { get; set; }
     public string RoleName { get; set; } = "";
+    public float Rotation { get; set; }
+    public Queue<ParticipantPositionPoint> History { get; } = new();
+
+    public void Add(DateTime at, Vector2 position, float rotation, uint role, string roleName)
+    {
+        At = at;
+        Position = position;
+        Rotation = rotation;
+        Role = role;
+        RoleName = roleName;
+        History.Enqueue(new(at, position, rotation));
+        var cutoff = at.AddSeconds(-15);
+        while (History.TryPeek(out var point) && point.At < cutoff)
+            History.Dequeue();
+    }
+
+    public ParticipantPositionPoint Nearest(DateTime at)
+    {
+        var best = new ParticipantPositionPoint(At, Position, Rotation);
+        var distance = Math.Abs((best.At - at).Ticks);
+        foreach (var point in History)
+        {
+            var candidate = Math.Abs((point.At - at).Ticks);
+            if (candidate < distance) { best = point; distance = candidate; }
+        }
+        return best;
+    }
 }
+
+internal readonly record struct ParticipantPositionPoint(DateTime At, Vector2 Position, float Rotation);
 
 internal sealed class LiveSessionStats
 {

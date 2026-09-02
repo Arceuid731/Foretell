@@ -5,17 +5,29 @@ using System.Threading;
 
 namespace BossMod.Foretell;
 
-// Replay serialization and disk I/O must never run on the framework/render thread. The queue is intentionally
-// unbounded: recording is explicit opt-in and raw transport payloads must not be silently truncated or dropped.
+// Replay serialization and disk I/O must never run on the framework/render thread. This optional readable stream
+// contains normalized events only; exact transport bytes live in the independently bounded raw journal.
 internal sealed class ForetellReplayWriter : IDisposable
 {
     private readonly record struct Item(string Path, ForetellObservation Observation);
 
-    private readonly BlockingCollection<Item> _queue = new(new ConcurrentQueue<Item>());
+    private const int MaxQueuedObservations = 16384;
+    private readonly BlockingCollection<Item> _queue = new(new ConcurrentQueue<Item>(), MaxQueuedObservations);
     private readonly CancellationTokenSource _stop = new();
     private readonly JsonSerializerOptions _json;
     private readonly Thread _thread;
     private int _disposed;
+    private long _pending;
+    private long _written;
+    private long _rejected;
+    private int _failed;
+    private string _failure = "";
+
+    public long Pending => Interlocked.Read(ref _pending);
+    public long Written => Interlocked.Read(ref _written);
+    public long Rejected => Interlocked.Read(ref _rejected);
+    public bool Failed => Volatile.Read(ref _failed) != 0;
+    public string Failure => _failure;
 
     public ForetellReplayWriter(JsonSerializerOptions json)
     {
@@ -30,17 +42,26 @@ internal sealed class ForetellReplayWriter : IDisposable
 
     public void Enqueue(string path, ForetellObservation observation)
     {
-        if (Volatile.Read(ref _disposed) != 0)
+        if (Volatile.Read(ref _disposed) != 0 || Failed)
+        {
+            Interlocked.Increment(ref _rejected);
             return;
-        try { _queue.Add(new(path, observation)); }
+        }
+        Interlocked.Increment(ref _pending);
+        try
+        {
+            if (_queue.TryAdd(new(path, observation))) return;
+        }
         catch (InvalidOperationException) { }
+        Interlocked.Decrement(ref _pending);
+        Interlocked.Increment(ref _rejected);
     }
 
     // Used only by the explicit Replay Lab action, never by the per-frame update path.
     public void Drain(TimeSpan timeout)
     {
         var until = DateTime.UtcNow + timeout;
-        while (_queue.Count != 0 && DateTime.UtcNow < until)
+        while (Pending != 0 && DateTime.UtcNow < until)
             Thread.Sleep(5);
     }
 
@@ -76,12 +97,19 @@ internal sealed class ForetellReplayWriter : IDisposable
                     writer = new(path, append: true) { AutoFlush = true };
                 }
                 writer.WriteLine(JsonSerializer.Serialize(item.Observation, _json));
+                Interlocked.Decrement(ref _pending);
+                Interlocked.Increment(ref _written);
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception e)
         {
-            Service.Log($"[Foretell] Background replay writer stopped: {e.Message}");
+            _failure = $"{e.GetType().Name}: {e.Message}";
+            Volatile.Write(ref _failed, 1);
+            var uncommitted = Interlocked.Exchange(ref _pending, 0);
+            while (_queue.TryTake(out _)) { }
+            Interlocked.Add(ref _rejected, uncommitted);
+            Service.Log($"[Foretell] Background replay writer stopped: {e.Message}; {uncommitted:N0} queued observations were released and counted as rejected.");
         }
         finally
         {

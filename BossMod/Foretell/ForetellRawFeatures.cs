@@ -19,23 +19,9 @@ public sealed partial class ForetellEngine
             && _raw.TryDequeueFeature(out var window))
         {
             ++processed;
-            var obs = new ForetellObservation
-            {
-                Sequence = ++_sequence,
-                At = NormalizeObservationTime(window.At),
-                TerritoryID = window.TerritoryID,
-                Kind = ObservationKind.GenericFeature,
-                SourceKind = SourceKind.Environment,
-                Detail = "raw:250ms-window"
-            };
-            obs.Numeric["raw.window.serverPackets"] = window.ServerPackets;
-            obs.Numeric["raw.window.clientPackets"] = window.ClientPackets;
-            obs.Numeric["raw.window.actorControls"] = window.ActorControls;
-            obs.Numeric["raw.window.payloadBytes"] = window.PayloadBytes;
-            foreach (var (opcode, count) in window.Opcodes)
-                obs.Numeric[$"raw.window.opcode[{opcode:X8}]"] = count;
-            for (var i = 0; i < window.BinaryBuckets.Length; ++i)
-                obs.Numeric[$"raw.window.binaryBucket[{i}]"] = window.BinaryBuckets[i];
+            var obs = RawWindowObservation(window);
+            obs.Sequence = ++_sequence;
+            RegisterRecordedFeatures(obs);
             ProcessObservation(obs, enriched: true);
             ++_rawFeatureWindowsProcessed;
         }

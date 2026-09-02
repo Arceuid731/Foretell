@@ -44,6 +44,12 @@ public sealed class Plugin : IAsyncDalamudPlugin
     private DateTime _throttleInteract;
     private DateTime _throttleFateSync;
     private DateTime _throttleLeaveDuty;
+    private Action? _openMainUiHandler;
+    private Action? _openConfigUiHandler;
+    private int _disposed;
+    private bool _frameworkEventsInstalled;
+    private bool _dx11Initialized;
+    private readonly EventSubscriptions _pluginSubscriptions = new();
 
     // windows
     private ConfigUI _configUI = null!; // TODO: should be a proper window!
@@ -73,12 +79,25 @@ public sealed class Plugin : IAsyncDalamudPlugin
 
         InteropGenerator.Runtime.Resolver.GetInstance.Setup(sigScanner.SearchBase, _gameVersion, new(dalamud.ConfigDirectory.FullName + "/cs.json"));
         FFXIVClientStructs.Interop.Generated.Addresses.Register();
-        Dx11ArenaRenderer.Initialize(_dalamud.UiBuilder.DeviceHandle);
-        dalamud.Create<Service>();
-        Service.LogHandlerDebug = msg => Service.Logger.Debug(msg);
-        Service.LogHandlerVerbose = msg => Service.Logger.Verbose(msg);
-        Service.LuminaGameData = dataManager.GameData;
-        Service.WindowSystem = new("bmr");
+        try
+        {
+            Dx11ArenaRenderer.Initialize(_dalamud.UiBuilder.DeviceHandle);
+            _dx11Initialized = true;
+            dalamud.Create<Service>();
+            Service.LogHandlerDebug = msg => Service.Logger.Debug(msg);
+            Service.LogHandlerVerbose = msg => Service.Logger.Verbose(msg);
+            Service.LuminaGameData = dataManager.GameData;
+            Service.WindowSystem = new("bmr");
+        }
+        catch
+        {
+            if (_dx11Initialized)
+            {
+                try { Dx11ArenaRenderer.Shutdown(); } catch { }
+                _dx11Initialized = false;
+            }
+            throw;
+        }
     }
 
     public async Task LoadAsync(CancellationToken cancellationToken)
@@ -100,21 +119,26 @@ public sealed class Plugin : IAsyncDalamudPlugin
 
     private unsafe void InitOnFrameworkThread()
     {
-        //Service.Device = pluginInterface.UiBuilder.Device;
-        Service.Condition.ConditionChange += OnConditionChanged;
-        MultiboxUnlock.Exec();
-        Camera.Instance = new();
+        try
+        {
+            //Service.Device = pluginInterface.UiBuilder.Device;
+            Service.Condition.ConditionChange += OnConditionChanged;
+            _frameworkEventsInstalled = true;
+            MultiboxUnlock.Exec();
+            Camera.Instance = new();
 
-        Service.Config.Modified.Subscribe(() => Task.Run(() => Service.Config.SaveToFile(_dalamud.ConfigFile)));
+        _pluginSubscriptions.Add(Service.Config.Modified.Subscribe(() => Task.Run(() => Service.Config.SaveToFile(_dalamud.ConfigFile))));
 
         CommandManager.AddHandler("/bmr", new CommandInfo(OnCommand) { HelpMessage = "Show BossMod Reborn settings UI" });
 
         ActionDefinitions.Instance.UnlockCheck = QuestUnlocked; // ensure action definitions are initialized and set unlock check functor (we don't really store the quest progress in clientstate, for now at least)
 
-        var qpf = (ulong)FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance()->PerformanceCounterFrequency;
-        _rsr = new(_dalamud);
-        _ws = new(qpf, _gameVersion);
-        _foretell = new(_ws, _dalamud.ConfigDirectory.FullName);
+            var qpf = (ulong)FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance()->PerformanceCounterFrequency;
+            _ws = new(qpf, _gameVersion);
+            // Foretell is constructed before legacy modules that install many hooks. If a Foretell startup sensor
+            // fails, there is no partially-created BMR hook graph for Dalamud to report as leaked.
+            _foretell = new(_ws, _dalamud.ConfigDirectory.FullName);
+            _rsr = new(_dalamud);
         _hints = new();
         _cancelCastTweak = new(_ws, _hints);
         _bossmod = new(_ws);
@@ -138,51 +162,79 @@ public sealed class Plugin : IAsyncDalamudPlugin
         var replayDir = string.IsNullOrEmpty(config.ReplayFolder) ? _dalamud.ConfigDirectory.FullName + "/replays" : config.ReplayFolder;
         _wndReplay = new ReplayManagementWindow(_ws, _bossmod, _rotationDB, new DirectoryInfo(replayDir));
         _configUI = new(Service.Config, _ws, new DirectoryInfo(replayDir), _rotationDB);
-        config.Modified.ExecuteAndSubscribe(() => _wndReplay.UpdateLogDirectory());
+        _pluginSubscriptions.Add(config.Modified.ExecuteAndSubscribe(() => _wndReplay.UpdateLogDirectory()));
         _wndRotation = new(_rotation, _amex, () => OpenConfigUI("Autorotation presets"));
         _wndDebug = new(_ws, _rotation, _zonemod, _amex, _movementOverride, _hintsBuilder, _dalamud, _rsr);
 
         _dalamud.UiBuilder.DisableAutomaticUiHide = true;
-        _dalamud.UiBuilder.Draw += DrawUI;
+            _dalamud.UiBuilder.Draw += DrawUI;
         // Foretell owns the plugin's primary/config entry points. Legacy BMR configuration remains available
         // explicitly through /bmr while /foretell and the Dalamud buttons open the dedicated Foretell cockpit.
-        _dalamud.UiBuilder.OpenMainUi += () => _foretell.OpenInspector();
-        _dalamud.UiBuilder.OpenConfigUi += () => _foretell.OpenInspector();
+            _openMainUiHandler = () => _foretell.OpenInspector();
+            _openConfigUiHandler = () => _foretell.OpenInspector();
+            _dalamud.UiBuilder.OpenMainUi += _openMainUiHandler;
+            _dalamud.UiBuilder.OpenConfigUi += _openConfigUiHandler;
+        }
+        catch
+        {
+            Interlocked.Exchange(ref _disposed, 1);
+            DisposeComponents();
+            throw;
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         await Service.Framework.RunOnFrameworkThread(() =>
         {
-            _dalamud.UiBuilder.Draw -= DrawUI;
-            Service.Condition.ConditionChange -= OnConditionChanged;
+            DisposeComponents();
         });
-        ReplayVisualization.GaugeVisualizer.Dispose();
-        _wndDebug.Dispose();
-        _wndRotation.Dispose();
-        _wndReplay.Dispose();
-        _wndZone.Dispose();
-        _wndBossmodHints.Dispose();
-        _wndBossmod.Dispose();
-        _configUI.Dispose();
-        _foretell.Dispose();
-        _partyRoles.Dispose();
-        _mbox.Dispose();
-        _dtr.Dispose();
-        _ipc.Dispose();
-        _ai.Dispose();
-        _rotation.Dispose();
-        _wsSync.Dispose();
-        _amex.Dispose();
-        _movementOverride.Dispose();
-        _hintsBuilder.Dispose();
-        _zonemod.Dispose();
-        _bossmod.Dispose();
-        _rsr.Dispose();
-        Dx11ArenaRenderer.Shutdown();
-        CommandManager.RemoveHandler("/foretell");
-        CommandManager.RemoveHandler("/bmr");
         GarbageCollection();
+    }
+
+    private void DisposeComponents()
+    {
+        static void Safe(Action action) { try { action(); } catch (Exception e) { Service.Log($"[Foretell] Partial shutdown rejected safely: {e.Message}"); } }
+        Safe(() => _dalamud.UiBuilder.Draw -= DrawUI);
+        if (_openMainUiHandler != null) Safe(() => _dalamud.UiBuilder.OpenMainUi -= _openMainUiHandler);
+        if (_openConfigUiHandler != null) Safe(() => _dalamud.UiBuilder.OpenConfigUi -= _openConfigUiHandler);
+        _openMainUiHandler = _openConfigUiHandler = null;
+        if (_frameworkEventsInstalled)
+        {
+            Safe(() => Service.Condition.ConditionChange -= OnConditionChanged);
+            _frameworkEventsInstalled = false;
+        }
+        Safe(_pluginSubscriptions.Dispose);
+        Safe(ReplayVisualization.GaugeVisualizer.Dispose);
+        if (_wndDebug != null) Safe(_wndDebug.Dispose);
+        if (_wndRotation != null) Safe(_wndRotation.Dispose);
+        if (_wndReplay != null) Safe(_wndReplay.Dispose);
+        if (_wndZone != null) Safe(_wndZone.Dispose);
+        if (_wndBossmodHints != null) Safe(_wndBossmodHints.Dispose);
+        if (_wndBossmod != null) Safe(_wndBossmod.Dispose);
+        if (_configUI != null) Safe(_configUI.Dispose);
+        if (_foretell != null) Safe(_foretell.Dispose);
+        if (_partyRoles != null) Safe(_partyRoles.Dispose);
+        if (_mbox != null) Safe(_mbox.Dispose);
+        if (_dtr != null) Safe(_dtr.Dispose);
+        if (_ipc != null) Safe(_ipc.Dispose);
+        if (_ai != null) Safe(_ai.Dispose);
+        if (_rotation != null) Safe(_rotation.Dispose);
+        if (_wsSync != null) Safe(_wsSync.Dispose);
+        if (_amex != null) Safe(_amex.Dispose);
+        if (_movementOverride != null) Safe(_movementOverride.Dispose);
+        if (_hintsBuilder != null) Safe(_hintsBuilder.Dispose);
+        if (_zonemod != null) Safe(_zonemod.Dispose);
+        if (_bossmod != null) Safe(_bossmod.Dispose);
+        if (_rsr != null) Safe(_rsr.Dispose);
+        if (_dx11Initialized)
+        {
+            Safe(Dx11ArenaRenderer.Shutdown);
+            _dx11Initialized = false;
+        }
+        Safe(() => CommandManager.RemoveHandler("/foretell"));
+        Safe(() => CommandManager.RemoveHandler("/bmr"));
     }
 
     private void OnCommand(string cmd, string args)
@@ -298,7 +350,7 @@ public sealed class Plugin : IAsyncDalamudPlugin
     private void OpenConfigUI(string showTab = "")
     {
         _configUI.ShowTab(showTab);
-        _ = new UISimpleWindow("Foretell", _configUI.Draw, true, new(300, 300));
+        _ = new UISimpleWindow("BossMod Reborn", _configUI.Draw, true, new(300, 300));
     }
 
     private void DrawUI()

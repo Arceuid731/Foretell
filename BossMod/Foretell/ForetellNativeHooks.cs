@@ -6,6 +6,7 @@ using InteropGenerator.Runtime;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
+using System.Text;
 using FFXIVEventObject = FFXIVClientStructs.FFXIV.Client.Game.Object.EventObject;
 
 namespace BossMod.Foretell;
@@ -18,8 +19,10 @@ public sealed partial class ForetellEngine
     private Hook<VfxObject.Delegates.Create>? _foretellStaticVFXCreateHook;
     private Hook<VfxObject.Delegates.CleanupRender>? _foretellStaticVFXDestroyHook;
     private readonly ConcurrentDictionary<nint, NativeVFXTrack> _nativeVFXTracks = [];
+    private readonly ConcurrentQueue<(nint Address, long Token, DateTime Created)> _nativeVFXExpiry = [];
     private readonly ConcurrentQueue<NativeHookCapture> _nativeHookCaptures = [];
     private long _nativeVFXSequence;
+    private long _nativeVFXTrackCount;
     private long _nativeHookCaptured;
     private long _nativeHookProcessed;
     private long _nativeHookPending;
@@ -27,7 +30,11 @@ public sealed partial class ForetellEngine
     private double _lastNativeHookDrainMilliseconds;
     private double _peakNativeHookDrainMilliseconds;
     private const int MaxNativeHookCapturesPerFrame = 96;
+    private const int MaxNativeHookBacklog = 8192;
+    private const int MaxTrackedNativeVFX = 32768;
+    private const int MaxNativeVFXExpiryEntries = 65536;
     private const double MaxNativeHookDrainMilliseconds = 0.75;
+    private long _nativeVFXExpiryPending;
 
     // Signatures independently verified against the current client. The generic hook mechanism was cross-checked
     // with ECommons (MIT, NightmareXIV) rather than copying Splatoon's AGPL implementation.
@@ -78,6 +85,8 @@ public sealed partial class ForetellEngine
         }
         catch (Exception e)
         {
+            _foretellObjectEffectHook?.Dispose();
+            _foretellObjectEffectHook = null;
             RegisterCapability("native.objectEffect", typeof(FFXIVEventObject), "PlayAnimation", false, false, $"hook unavailable: {e.GetType().Name}");
             Service.Log($"[Foretell] Native ObjectEffect hook unavailable: {e.Message}");
         }
@@ -155,10 +164,18 @@ public sealed partial class ForetellEngine
         _foretellObjectEffectHook?.Dispose();
         _foretellObjectEffectHook = null;
         _nativeVFXTracks.Clear();
+        Interlocked.Exchange(ref _nativeVFXTrackCount, 0);
+        while (_nativeVFXExpiry.TryDequeue(out _)) { }
+        Interlocked.Exchange(ref _nativeVFXExpiryPending, 0);
     }
 
     private void EnqueueNativeCapture(NativeHookCapture capture)
     {
+        if (Interlocked.Read(ref _nativeHookPending) >= MaxNativeHookBacklog)
+        {
+            Interlocked.Increment(ref _nativeHookFailures);
+            return;
+        }
         _nativeHookCaptures.Enqueue(capture);
         Interlocked.Increment(ref _nativeHookCaptured);
         Interlocked.Increment(ref _nativeHookPending);
@@ -193,12 +210,27 @@ public sealed partial class ForetellEngine
                 Service.LogVerbose($"[Foretell] Deferred native capture rejected safely: {e.Message}");
             }
         }
+        var now = DateTime.UtcNow;
+        var cleaned = 0;
+        while (cleaned++ < 128 && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxNativeHookDrainMilliseconds
+            && _nativeVFXExpiry.TryPeek(out var expiry)
+            && ((now - expiry.Created).TotalMinutes >= 5 || Interlocked.Read(ref _nativeVFXExpiryPending) > MaxNativeVFXExpiryEntries)
+            && _nativeVFXExpiry.TryDequeue(out expiry))
+        {
+            Interlocked.Decrement(ref _nativeVFXExpiryPending);
+            if (_nativeVFXTracks.TryGetValue(expiry.Address, out var tracked) && tracked.Token == expiry.Token)
+            {
+                if (_nativeVFXTracks.TryRemove(expiry.Address, out _))
+                    Interlocked.Decrement(ref _nativeVFXTrackCount);
+            }
+        }
         _lastNativeHookDrainMilliseconds = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         _peakNativeHookDrainMilliseconds = Math.Max(_peakNativeHookDrainMilliseconds, _lastNativeHookDrainMilliseconds);
     }
 
     private void ProcessNativeObjectEffect(NativeObjectEffectCapture capture)
     {
+        InvalidateTopology();
         var actor = capture.InstanceID != 0 ? _ws.Actors.Find(capture.InstanceID) : null;
         var obs = Observation(ObservationKind.ObjectEffect, actor, capture.EntityID, capture.ActionID);
         obs.At = NormalizeObservationTime(capture.At);
@@ -235,17 +267,28 @@ public sealed partial class ForetellEngine
 
     private unsafe nint ForetellActorVFXCreateDetour(nint pathAddress, nint casterAddress, nint targetAddress, float a4, byte a5, ushort a6, byte a7)
     {
-        var path = ReadNativeString(pathAddress);
-        var caster = ReadNativeActor(casterAddress);
-        var target = ReadNativeActor(targetAddress);
         var result = _foretellActorVFXCreateHook!.Original(pathAddress, casterAddress, targetAddress, a4, a5, a6, a7);
         try
         {
             if (result == 0) return result;
+            // Match the proven MIT ECommons ordering: never perform telemetry work before the game constructor.
+            var path = ReadNativeString(pathAddress);
+            var caster = ReadNativeActor(casterAddress);
+            var target = ReadNativeActor(targetAddress);
             var track = new NativeVFXTrack(System.Threading.Interlocked.Increment(ref _nativeVFXSequence), "actor", path, "",
                 caster.ID, caster.OID, caster.X, caster.Y, caster.Z, caster.Rotation, caster.Radius,
                 target.ID, target.OID, target.X, target.Y, target.Z, target.Rotation, target.Radius, DateTime.UtcNow);
-            _nativeVFXTracks[result] = track;
+            if (Interlocked.Read(ref _nativeVFXTrackCount) < MaxTrackedNativeVFX)
+            {
+                if (_nativeVFXTracks.TryAdd(result, track))
+                    Interlocked.Increment(ref _nativeVFXTrackCount);
+                else
+                    _nativeVFXTracks[result] = track;
+                _nativeVFXExpiry.Enqueue((result, track.Token, track.Created));
+                Interlocked.Increment(ref _nativeVFXExpiryPending);
+            }
+            else
+                Interlocked.Increment(ref _nativeHookFailures);
             EnqueueNativeCapture(new NativeVFXCapture(track.Created, ObservationKind.NativeVFXSpawn, track, a4, a5, a6, a7));
         }
         catch (Exception e)
@@ -260,7 +303,10 @@ public sealed partial class ForetellEngine
         try
         {
             if (_nativeVFXTracks.TryRemove(vfx, out var track))
+            {
+                Interlocked.Decrement(ref _nativeVFXTrackCount);
                 EnqueueNativeCapture(new NativeVFXCapture(DateTime.UtcNow, ObservationKind.NativeVFXDestroy, track));
+            }
         }
         catch (Exception e)
         {
@@ -274,25 +320,26 @@ public sealed partial class ForetellEngine
 
     private unsafe VfxObject* ForetellStaticVFXCreateDetour(CStringPointer path, CStringPointer pool)
     {
-        var pathText = "";
-        var poolText = "";
-        try
-        {
-            pathText = path.ToString();
-            poolText = pool.ToString();
-        }
-        catch
-        {
-            Interlocked.Increment(ref _nativeHookFailures);
-        }
         var result = _foretellStaticVFXCreateHook!.Original(path, pool);
         try
         {
             if (result == null) return result;
+            var pathText = ReadNativeString((nint)path.Value);
+            var poolText = ReadNativeString((nint)pool.Value);
             var position = result->Position;
             var track = new NativeVFXTrack(System.Threading.Interlocked.Increment(ref _nativeVFXSequence), "static", pathText, poolText,
                 0, 0, position.X, position.Y, position.Z, 0, 0, 0, 0, 0, 0, 0, 0, 0, DateTime.UtcNow);
-            _nativeVFXTracks[(nint)result] = track;
+            if (Interlocked.Read(ref _nativeVFXTrackCount) < MaxTrackedNativeVFX)
+            {
+                if (_nativeVFXTracks.TryAdd((nint)result, track))
+                    Interlocked.Increment(ref _nativeVFXTrackCount);
+                else
+                    _nativeVFXTracks[(nint)result] = track;
+                _nativeVFXExpiry.Enqueue(((nint)result, track.Token, track.Created));
+                Interlocked.Increment(ref _nativeVFXExpiryPending);
+            }
+            else
+                Interlocked.Increment(ref _nativeHookFailures);
             EnqueueNativeCapture(new NativeVFXCapture(track.Created, ObservationKind.NativeVFXSpawn, track));
         }
         catch (Exception e)
@@ -307,7 +354,10 @@ public sealed partial class ForetellEngine
         try
         {
             if (_nativeVFXTracks.TryRemove((nint)vfx, out var track))
+            {
+                Interlocked.Decrement(ref _nativeVFXTrackCount);
                 EnqueueNativeCapture(new NativeVFXCapture(DateTime.UtcNow, ObservationKind.NativeVFXDestroy, track));
+            }
         }
         catch (Exception e)
         {
@@ -361,10 +411,14 @@ public sealed partial class ForetellEngine
         ProcessObservation(obs);
     }
 
-    private static string ReadNativeString(nint address)
+    private static unsafe string ReadNativeString(nint address)
     {
         if (address == 0) return "";
-        try { return MemoryHelper.ReadStringNullTerminated(address); }
+        try
+        {
+            // Dalamud's bounded helper centralises native-memory validation and matches the upstream MIT hook.
+            return MemoryHelper.ReadString(address, Encoding.ASCII, 512).TrimEnd('\0');
+        }
         catch { return ""; }
     }
 
@@ -374,7 +428,7 @@ public sealed partial class ForetellEngine
         try
         {
             var actor = (GameObject*)address;
-            return new((ulong)actor->GetGameObjectId(), actor->BaseId, actor->Position.X, actor->Position.Y, actor->Position.Z,
+            return new(actor->EntityId, actor->BaseId, actor->Position.X, actor->Position.Y, actor->Position.Z,
                 actor->Rotation, actor->HitboxRadius);
         }
         catch

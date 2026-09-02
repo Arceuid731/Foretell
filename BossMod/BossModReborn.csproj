@@ -54,10 +54,26 @@
     <DalamudLibPath>$(DALAMUD_HOME)/</DalamudLibPath>
   </PropertyGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(ForetellOfflineBuild)' != 'true'">
     <PackageReference Include="DalamudPackager" Version="15.0.0" />
     <PackageReference Include="PInvoke.User32" Version="0.7.124" />
     <PackageReference Include="TerraFX.Interop.Windows" Version="10.0.26100.6" />
+  </ItemGroup>
+
+  <!-- Local/CI validation can compile entirely from the already installed Dalamud distribution. This avoids
+       turning a NuGet outage into a blind Foretell release while preserving the normal packaged build path. -->
+  <ItemGroup Condition="'$(ForetellOfflineBuild)' == 'true'">
+    <Reference Include="PInvoke.User32">
+      <HintPath>$(DalamudLibPath)PInvoke.User32.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="TerraFX.Interop.Windows">
+      <HintPath>$(DalamudLibPath)TerraFX.Interop.Windows.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="FFXIVClientStructs">
       <HintPath>$(DalamudLibPath)FFXIVClientStructs.dll</HintPath>
       <Private>false</Private>

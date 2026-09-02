@@ -250,7 +250,7 @@ public sealed partial class ForetellEngine
         }
 
         _predictions[trigger.Sequence] = new(trigger.ActorID, trigger.PrimaryID, geometry, MechanicKind.GroundAOE,
-            origin, target, trigger.Rotation, p1, p2, trigger.At.AddSeconds(Math.Max(0, trigger.Value1)), confidence, p.Evidence);
+            origin, target, trigger.Rotation, p1, p2, trigger.At.AddSeconds(float.IsFinite(trigger.Value1) ? Math.Clamp(trigger.Value1, 0, 120) : 0), confidence, p.Evidence);
         _lastEvidence = $"Metadata prior AID {trigger.PrimaryID}: {geometry} {confidence:P0} | {p.Evidence}";
     }
 
@@ -262,7 +262,11 @@ public sealed partial class ForetellEngine
 
     private static float ReadFloat(object? value)
     {
-        try { return value == null ? 0 : Convert.ToSingle(value, CultureInfo.InvariantCulture); }
+        try
+        {
+            var result = value == null ? 0 : Convert.ToSingle(value, CultureInfo.InvariantCulture);
+            return float.IsFinite(result) ? result : 0;
+        }
         catch { return 0; }
     }
 

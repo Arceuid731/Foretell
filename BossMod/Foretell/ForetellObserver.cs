@@ -10,13 +10,17 @@ public sealed partial class ForetellEngine
     private readonly record struct ActorControlGate(ulong Fingerprint, DateTime At);
 
     private void OnActorAdded(Actor actor)
-        => ProcessObservation(Observation(ObservationKind.ActorAdded, actor, detail: actor.Type.ToString()));
+    {
+        PrioritizeNativeActor(actor.InstanceID);
+        ProcessObservation(Observation(ObservationKind.ActorAdded, actor, detail: actor.Type.ToString()));
+    }
 
     private void OnActorRemoved(Actor actor)
         => ProcessObservation(Observation(ObservationKind.ActorRemoved, actor, detail: actor.Type.ToString()));
 
     private void OnCastStarted(Actor actor)
     {
+        PrioritizeNativeActor(actor.InstanceID);
         var spell = actor.CastInfo;
         if (spell == null || !spell.IsSpell()) return;
         var castSeconds = (float)Math.Max(0, spell.NPCRemainingTime);
@@ -119,7 +123,9 @@ public sealed partial class ForetellEngine
 
     private void OnTether(Actor actor)
     {
+        PrioritizeNativeActor(actor.InstanceID);
         var target = ToULong(Member(actor.Tether, "Target")) ?? ToULong(Member(actor.Tether, "TargetID")) ?? 0;
+        PrioritizeNativeActor(target);
         ProcessObservation(Observation(ObservationKind.TetherStart, actor, actor.Tether.ID, target: target));
     }
 
@@ -189,21 +195,30 @@ public sealed partial class ForetellEngine
         => ProcessObservation(Observation(ObservationKind.NpcYell, actor, id));
 
     private void OnMapEffect(WorldState.OpMapEffect op)
-        => ProcessRichObservation(Observation(ObservationKind.MapEffect, primary: ToUInt(op.Index) ?? 0, secondary: ToUInt(op.State) ?? 0), op);
+    {
+        InvalidateTopology();
+        ProcessRichObservation(Observation(ObservationKind.MapEffect, primary: ToUInt(op.Index) ?? 0, secondary: ToUInt(op.State) ?? 0), op);
+    }
 
     private void OnLegacyMapEffect(WorldState.OpLegacyMapEffect op)
-        => ProcessRichObservation(Observation(ObservationKind.LegacyMapEffect,
+    {
+        InvalidateTopology();
+        ProcessRichObservation(Observation(ObservationKind.LegacyMapEffect,
             primary: ToUInt(op.Sequence) ?? 0,
             secondary: ToUInt(op.Param) ?? 0,
             value1: ToUInt(op.Data) ?? 0), op);
+    }
 
     private void OnDirectorUpdate(WorldState.OpDirectorUpdate op)
-        => ProcessRichObservation(Observation(ObservationKind.DirectorUpdate,
+    {
+        InvalidateTopology();
+        ProcessRichObservation(Observation(ObservationKind.DirectorUpdate,
             primary: ToUInt(op.UpdateID) ?? 0,
             secondary: ToUInt(op.Param1) ?? 0,
             value1: ToUInt(op.Param2) ?? 0,
             value2: ToUInt(op.Param3) ?? 0,
             detail: (ToUInt(op.Param4) ?? 0).ToString("X")), op);
+    }
 
     private void OnWorldOperation(WorldState.Operation op)
     {
@@ -276,42 +291,28 @@ public sealed partial class ForetellEngine
         // Every payload enters the compact lossless journal. It deliberately does not re-enter semantic enrichment:
         // decoded WorldState events already feed the online learner, while raw bytes remain available for offline
         // feature discovery and future decoders without multiplying per-packet work on the framework thread.
-        _raw.EnqueueServer(_rawPath, _territory, packet);
-        if (!_cfg.RecordReplay)
-            return;
-        var obs = RawTransportObservation(ObservationKind.ServerIPC, packet.Opcode, $"transport:server:{packet.ID}", packet.SendTimestamp);
-        obs.ActorID = packet.SourceServerActor;
-        obs.TargetID = packet.TargetServerActor;
-        obs.Numeric["transport.packetID"] = Convert.ToUInt32(packet.ID);
-        obs.Numeric["transport.epoch"] = packet.Epoch;
-        obs.Numeric["transport.payloadLength"] = packet.Payload.Length;
-        obs.Binary["transport.payload"] = packet.Payload;
-        Record(obs, replaying: false);
+        var context = _rawCaptureContext;
+        if (context.Path.Length != 0)
+            _raw.EnqueueServer(context.Path, context.TerritoryID, packet);
     }
 
     private void OnRawClientIPC(NetworkState.RawClientIPC packet)
     {
-        _raw.EnqueueClient(_rawPath, _territory, packet);
-        if (!_cfg.RecordReplay)
-            return;
-        var obs = RawTransportObservation(ObservationKind.ClientIPC, packet.Opcode, "transport:client", packet.SendTimestamp);
-        obs.Numeric["transport.payloadLength"] = packet.Payload.Length;
-        obs.Binary["transport.payload"] = packet.Payload;
-        Record(obs, replaying: false);
+        var context = _rawCaptureContext;
+        if (context.Path.Length != 0)
+            _raw.EnqueueClient(context.Path, context.TerritoryID, packet);
+    }
+
+    private void OnRawActorControlCapture(NetworkState.RawActorControl control)
+    {
+        var context = _rawCaptureContext;
+        if (context.Path.Length != 0)
+            _raw.EnqueueActorControl(context.Path, context.TerritoryID, DateTime.UtcNow, control);
     }
 
     private void OnRawActorControl(NetworkState.RawActorControl control)
     {
         var captureAt = ObservationNow();
-        _raw.EnqueueActorControl(_rawPath, _territory, captureAt, control);
-        if (_cfg.RecordReplay)
-        {
-            var raw = RawTransportObservation(ObservationKind.ActorControlRaw, control.Command, "transport:actor-control", captureAt);
-            raw.ActorID = control.SourceID;
-            raw.TargetID = control.TargetID;
-            StoreActorControlFields(raw, control);
-            Record(raw, replaying: false);
-        }
 
         // Preserve every command in the optional raw stream, but admit at most one semantic update per command
         // and source every 250 ms. This prevents self telemetry from monopolizing the learner in open-world zones.
@@ -354,18 +355,6 @@ public sealed partial class ForetellEngine
             ProcessObservation(obs, enriched: true);
         }
     }
-
-    private ForetellObservation RawTransportObservation(ObservationKind kind, uint opcode, string detail, DateTime at)
-        => new()
-        {
-            Sequence = ++_sequence,
-            At = NormalizeObservationTime(at),
-            TerritoryID = _territory,
-            Kind = kind,
-            SourceKind = SourceKind.Unknown,
-            PrimaryID = opcode,
-            Detail = detail
-        };
 
     private static void StoreActorControlFields(ForetellObservation obs, NetworkState.RawActorControl control)
     {

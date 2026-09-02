@@ -7,18 +7,19 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine : IDisposable
 {
+    private const long MaxLearnedStoreBytes = 256L * 1024 * 1024;
     // Emergency fail-closed tier: direct client-memory readers and hooks remain quarantined until every detour
     // only copies bounded primitives into a queue and all interpretation runs on the framework thread.
-    private const bool NativeHookTelemetryEnabled = true;
-    private const bool NativeSnapshotTelemetryEnabled = true;
+    private static readonly bool NativeHookTelemetryEnabled = true;
+    private static readonly bool NativeSnapshotTelemetryEnabled = true;
     private readonly WorldState _ws;
     private readonly ForetellConfig _cfg;
     private readonly string _storePath;
     private readonly string _replayDir;
     private readonly string _rawDir;
     private readonly EventSubscriptions _subscriptions;
-    private readonly JsonSerializerOptions _json = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
-    private readonly JsonSerializerOptions _replayJson = new() { WriteIndented = false, Converters = { new JsonStringEnumConverter() } };
+    private readonly JsonSerializerOptions _json = new() { WriteIndented = true, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() } };
+    private readonly JsonSerializerOptions _replayJson = new() { WriteIndented = false, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() } };
 
     private ForetellStore _store;
     private OnlineClassifier _classifier;
@@ -26,6 +27,10 @@ public sealed partial class ForetellEngine : IDisposable
     private readonly ForetellRawWriter _raw;
     private string _replayPath = "";
     private string _rawPath = "";
+    private DateTime _rawOpenedAt;
+    private sealed record RawCaptureContext(string Path, uint TerritoryID);
+    private volatile RawCaptureContext _rawCaptureContext = new("", 0);
+    private bool _rawCaptureAttached;
     private long _sequence;
     private DateTime _lastSave;
     private DateTime _lastPositionSample;
@@ -33,10 +38,13 @@ public sealed partial class ForetellEngine : IDisposable
     private LiveSessionStats _session;
 
     private Dictionary<long, MechanicEpisode> _episodes = [];
+    private PriorityQueue<long, long> _episodeFinalization = new();
+    private PriorityQueue<long, long> _episodeCleanup = new();
     private Dictionary<ulong, ParticipantTrack> _tracks = [];
     private Dictionary<long, ActivePrediction> _predictions = [];
     private Dictionary<uint, long> _effectSequenceEpisodes = [];
-    private Queue<ForetellObservation> _recentSignals = new();
+    private long _episodeRejections;
+    private long _learningEvictions;
 
     private uint _previousAction;
     private DateTime _previousActionTime;
@@ -45,9 +53,28 @@ public sealed partial class ForetellEngine : IDisposable
     private string _lastEvidence = "Waiting for observations";
     private bool _inPull;
     private DateTime _lastCombatSignal;
+    private DateTime _pullStartedAt;
+    private DateTime _lastPhaseBoundary;
+    private string _lastPhaseBoundarySignal = "";
+    private readonly Dictionary<ulong, DateTime> _untargetableSince = [];
+    private readonly HashSet<string> _phaseBoundariesThisPull = [];
+    private string _phaseTopologyFingerprint = "";
 
     private bool _inspectorOpen;
     private ReplayReport _lastReplayReport = new();
+    private Task<ForetellRawReadReport>? _rawAnalysisTask;
+    private ForetellRawReadReport? _lastRawAnalysis;
+    private long _updateFailures;
+    private long _updateOverruns;
+    private double _lastUpdateMilliseconds;
+    private double _peakUpdateMilliseconds;
+    private double _meanUpdateMilliseconds;
+    private long _updateSamples;
+    private int _consecutiveUpdateOverruns;
+    private DateTime _adaptiveThrottleUntil;
+    private DateTime _lastUpdateFailureLog;
+    private bool _disposed;
+    internal bool PerformanceThrottled => DateTime.UtcNow < _adaptiveThrottleUntil;
 
     internal ForetellStore Store => _store;
     internal LiveSessionStats Session => _session;
@@ -67,40 +94,45 @@ public sealed partial class ForetellEngine : IDisposable
         _rawDir = Path.Combine(configDirectory, "foretell-raw");
         Directory.CreateDirectory(_replayDir);
         Directory.CreateDirectory(_rawDir);
+        _store = LoadStore();
+        _lastSave = DateTime.UtcNow;
+        _subscriptions = new();
         _raw = new();
 
-        _store = LoadStore();
-        NormalizeStore();
-        _classifier = new(_store.ML);
-        _territory = CurrentTerritory();
-        _session = NewSession(_territory);
-        _subscriptions = new();
-        StartEncounterSession(_territory);
-
-        foreach (var actor in _ws.Actors)
-            OnActorAdded(actor);
-        SamplePartyPositions();
-        SampleDataFabric(force: true);
-        OpenRawJournal();
-
-        // Perform all fallible initial sampling before installing passive native hooks or event callbacks. If a
-        // future sensor rejects startup, the constructor cannot leave Foretell-owned hooks behind.
+        // Everything after background-resource construction is one transactional startup region. Passive hooks
+        // and subscriptions are installed last; any failure unwinds every Foretell-owned resource in reverse.
         try
         {
+            NormalizeStore();
+            _classifier = new(_store.ML);
+            _territory = CurrentTerritory();
+            _session = NewSession(_territory);
+            StartEncounterSession(_territory);
+            foreach (var actor in _ws.Actors)
+                OnActorAdded(actor);
+            SamplePartyPositions();
+            // Startup only touches managed/typed WorldState. Native Character/environment/camera reads begin on
+            // the first normal framework update, after plugin and game-scene initialization have completed.
+            SampleDataFabric(force: true, includeNative: false);
+            OpenRawJournal();
+            AttachRawCapture();
             SyncReplayWriter();
             InstallForetellCommand();
+            SubscribeToWorldState();
+            InitializeDalamudSignals();
+            // Native detours are the final startup action so no game callback can observe a partially subscribed
+            // engine. An unavailable signature remains an explicit degraded capability, not a load failure.
             if (NativeHookTelemetryEnabled)
                 InitializeNativeHooks();
             else
                 ClassifyNativeTelemetryQuarantine();
-            SubscribeToWorldState();
-            InitializeDalamudSignals();
         }
         catch
         {
             _ws.Network.CaptureRawTransport = false;
-            _subscriptions.Dispose();
-            DisposeNativeHooks();
+            DetachRawCapture();
+            try { _subscriptions.Dispose(); } catch { }
+            try { DisposeNativeHooks(); } catch { }
             _replay?.Dispose();
             _replay = null;
             _raw.Dispose();
@@ -113,8 +145,6 @@ public sealed partial class ForetellEngine : IDisposable
     {
         _subscriptions.Add(_ws.Modified.Subscribe(OnWorldOperation));
         _subscriptions.Add(_ws.SystemLogMessage.Subscribe(OnSystemLog));
-        _subscriptions.Add(_ws.Network.RawServerIPCReceived.Subscribe(OnRawServerIPC));
-        _subscriptions.Add(_ws.Network.RawClientIPCSent.Subscribe(OnRawClientIPC));
         _subscriptions.Add(_ws.Network.RawActorControlReceived.Subscribe(OnRawActorControl));
         _subscriptions.Add(_ws.Actors.Added.Subscribe(OnActorAdded));
         _subscriptions.Add(_ws.Actors.Removed.Subscribe(OnActorRemoved));
@@ -145,19 +175,55 @@ public sealed partial class ForetellEngine : IDisposable
 
     public void Dispose()
     {
-        FinalizeDue(DateTime.MaxValue);
-        CompleteSession();
-        SaveStore();
+        if (_disposed) return;
+        _disposed = true;
+        try { FinalizeDue(DateTime.MaxValue); CompleteSession(); SaveStore(); }
+        catch (Exception e) { Service.Log($"[Foretell] Final save during dispose failed safely: {e.Message}"); }
         _ws.Network.CaptureRawTransport = false;
-        _replay?.Dispose();
+        DetachRawCapture();
+        try { _subscriptions.Dispose(); } catch (Exception e) { Service.Log($"[Foretell] Subscription shutdown failed safely: {e.Message}"); }
+        try { DisposeNativeHooks(); } catch (Exception e) { Service.Log($"[Foretell] Native hook shutdown failed safely: {e.Message}"); }
+        try { _replay?.Dispose(); } catch (Exception e) { Service.Log($"[Foretell] Replay shutdown failed safely: {e.Message}"); }
         _replay = null;
-        _raw.Dispose();
-        _subscriptions.Dispose();
-        DisposeNativeHooks();
-        Service.CommandManager.RemoveHandler("/foretell");
+        try { _raw.Dispose(); } catch (Exception e) { Service.Log($"[Foretell] Raw shutdown failed safely: {e.Message}"); }
+        try { Service.CommandManager.RemoveHandler("/foretell"); } catch (Exception e) { Service.Log($"[Foretell] Command shutdown failed safely: {e.Message}"); }
     }
 
     public void Update()
+    {
+        if (_disposed) return;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try { UpdateCore(); }
+        catch (Exception e)
+        {
+            ++_updateFailures;
+            var now = DateTime.UtcNow;
+            if ((now - _lastUpdateFailureLog).TotalSeconds >= 5)
+            {
+                _lastUpdateFailureLog = now;
+                Service.Log($"[Foretell] Frame update rejected safely ({_updateFailures} total): {e.GetType().Name}: {e.Message}");
+            }
+        }
+        finally
+        {
+            _lastUpdateMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            _peakUpdateMilliseconds = Math.Max(_peakUpdateMilliseconds, _lastUpdateMilliseconds);
+            _meanUpdateMilliseconds += (_lastUpdateMilliseconds - _meanUpdateMilliseconds) / ++_updateSamples;
+            if (_lastUpdateMilliseconds > 2)
+            {
+                ++_updateOverruns;
+                if (++_consecutiveUpdateOverruns >= 3)
+                {
+                    _adaptiveThrottleUntil = DateTime.UtcNow.AddSeconds(15);
+                    _topologySuspendedUntil = _adaptiveThrottleUntil;
+                    _consecutiveUpdateOverruns = 0;
+                }
+            }
+            else _consecutiveUpdateOverruns = 0;
+        }
+    }
+
+    private void UpdateCore()
     {
         var now = ObservationNow();
         var territory = CurrentTerritory();
@@ -167,8 +233,11 @@ public sealed partial class ForetellEngine : IDisposable
             RefreshEncounterIdentity(currentEncounter, _ws.CurrentCFCID);
 
         SyncReplayWriter();
+        if ((DateTime.UtcNow - _rawOpenedAt).TotalHours >= 1)
+            OpenRawJournal();
         DrainRawFeatureWindows();
         DrainNativeCaptures();
+        SampleNativeTopology();
         if ((now - _lastPositionSample).TotalMilliseconds >= 250)
         {
             SamplePartyPositions();
@@ -177,15 +246,15 @@ public sealed partial class ForetellEngine : IDisposable
         }
 
         FinalizeDue(now);
-        TrimRecentSignals(now.AddSeconds(-8));
-
         foreach (var key in _predictions.Where(p => p.Value.Activation.AddSeconds(1.5) < now).Select(p => p.Key).ToArray())
             _predictions.Remove(key);
 
         if (_inPull && (now - _lastCombatSignal).TotalSeconds > 30)
             _inPull = false;
 
-        if ((DateTime.UtcNow - _lastSave).TotalSeconds > 30)
+        // Persistence is deliberately kept off the active-combat path. Store serialization can grow with learned
+        // history; saving after combat preserves it without creating a periodic gameplay hitch.
+        if (!_inPull && (DateTime.UtcNow - _lastSave).TotalSeconds > 60)
             SaveStore();
     }
 
@@ -215,15 +284,23 @@ public sealed partial class ForetellEngine : IDisposable
         FinalizeDue(DateTime.MaxValue);
         CompleteSession();
         _episodes.Clear();
+        _episodeFinalization.Clear();
+        _episodeCleanup.Clear();
         _tracks.Clear();
         ResetDataFabric();
+        ResetTopology();
         _predictions.Clear();
         _effectSequenceEpisodes.Clear();
-        _recentSignals.Clear();
         _actorControlGates.Clear();
         _previousAction = 0;
         _previousSignal = "";
         _inPull = false;
+        _pullStartedAt = default;
+        _lastPhaseBoundary = default;
+        _lastPhaseBoundarySignal = "";
+        _untargetableSince.Clear();
+        _phaseBoundariesThisPull.Clear();
+        _phaseTopologyFingerprint = "";
         _territory = territory;
         _session = NewSession(territory);
         StartEncounterSession(territory);
@@ -281,14 +358,64 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void ApplyPerformancePolicyMigration()
     {
-        if (_cfg.ReplayPerformancePolicyVersion >= 1)
-            return;
+        var changed = false;
+        if (_cfg.ReplayPerformancePolicyVersion < 1)
+        {
+            // Older builds enabled synchronous JSON replay recording by default. Disable it once for both existing
+            // and new configurations; users can explicitly opt into the new background writer afterwards.
+            _cfg.RecordReplay = false;
+            _cfg.ReplayPerformancePolicyVersion = 1;
+            changed = true;
+        }
 
-        // Older builds enabled synchronous JSON replay recording by default. Disable it once for both existing
-        // and new configurations; users can explicitly opt into the new background writer afterwards.
-        _cfg.RecordReplay = false;
-        _cfg.ReplayPerformancePolicyVersion = 1;
-        _cfg.Modified.Fire();
+        // Persisted config is user-editable and survives plugin upgrades. Never let NaN, infinity or an obsolete
+        // enum value reach ImGui/DX11; invalid window geometry is capable of destabilising the graphics driver.
+        changed |= NormalizeEnum(ref _cfg.Mode, ForetellMode.Observe);
+        changed |= NormalizeEnum(ref _cfg.RadarShape, ForetellRadarShape.Auto);
+        changed |= NormalizeFinite(ref _cfg.VisualConfidence, 75, 50, 100);
+        changed |= NormalizeFinite(ref _cfg.WarningConfidence, 95, _cfg.VisualConfidence, 100);
+        changed |= NormalizeFinite(ref _cfg.SafeConfidence, 99, _cfg.WarningConfidence, 100);
+        changed |= NormalizeFinite(ref _cfg.RadarWorldRadius, 30, 5, 120);
+        changed |= NormalizeFinite(ref _cfg.RadarSize, 220, 140, 600);
+        var maxRendered = Math.Clamp(_cfg.MaxRenderedMechanics, 1, 32);
+        if (maxRendered != _cfg.MaxRenderedMechanics) { _cfg.MaxRenderedMechanics = maxRendered; changed = true; }
+        if (!float.IsFinite(_cfg.RadarPositionX) || !float.IsFinite(_cfg.RadarPositionY))
+        {
+            _cfg.RadarPositionX = _cfg.RadarPositionY = -1;
+            changed = true;
+        }
+        else if (_cfg.RadarPositionX >= 0 && _cfg.RadarPositionY >= 0)
+        {
+            var x = Math.Clamp(_cfg.RadarPositionX, 0, 1);
+            var y = Math.Clamp(_cfg.RadarPositionY, 0, 1);
+            if (x != _cfg.RadarPositionX || y != _cfg.RadarPositionY)
+            {
+                _cfg.RadarPositionX = x;
+                _cfg.RadarPositionY = y;
+                changed = true;
+            }
+        }
+        else if (_cfg.RadarPositionX != -1 || _cfg.RadarPositionY != -1)
+        {
+            _cfg.RadarPositionX = _cfg.RadarPositionY = -1;
+            changed = true;
+        }
+        if (changed) _cfg.Modified.Fire();
+    }
+
+    private static bool NormalizeEnum<T>(ref T value, T fallback) where T : struct, Enum
+    {
+        if (Enum.IsDefined(value)) return false;
+        value = fallback;
+        return true;
+    }
+
+    private static bool NormalizeFinite(ref float value, float fallback, float minimum, float maximum)
+    {
+        var normalized = float.IsFinite(value) ? Math.Clamp(value, minimum, maximum) : fallback;
+        if (normalized == value) return false;
+        value = normalized;
+        return true;
     }
 
     private void SyncReplayWriter()
@@ -321,21 +448,65 @@ public sealed partial class ForetellEngine : IDisposable
     private void OpenRawJournal()
     {
         _rawPath = Path.Combine(_rawDir, $"foretell-T{_territory}-{DateTime.Now:yyyyMMdd-HHmmss-fff}.ftraw.gz");
+        _rawOpenedAt = DateTime.UtcNow;
+        _rawCaptureContext = new(_rawPath, _territory);
+    }
+
+    private void AttachRawCapture()
+    {
+        _ws.Network.RawServerIPCCapture = OnRawServerIPC;
+        _ws.Network.RawClientIPCCapture = OnRawClientIPC;
+        _ws.Network.RawActorControlCapture = OnRawActorControlCapture;
+        _rawCaptureAttached = true;
+    }
+
+    private void DetachRawCapture()
+    {
+        if (!_rawCaptureAttached) return;
+        if (_ws.Network.RawServerIPCCapture == OnRawServerIPC) _ws.Network.RawServerIPCCapture = null;
+        if (_ws.Network.RawClientIPCCapture == OnRawClientIPC) _ws.Network.RawClientIPCCapture = null;
+        if (_ws.Network.RawActorControlCapture == OnRawActorControlCapture) _ws.Network.RawActorControlCapture = null;
+        _rawCaptureAttached = false;
     }
 
     private ForetellStore LoadStore()
     {
+        var temporaryPath = _storePath + ".tmp";
+        foreach (var candidate in new[] { _storePath, temporaryPath })
+        {
+            if (!File.Exists(candidate)) continue;
+            try
+            {
+                var size = new FileInfo(candidate).Length;
+                if (size > MaxLearnedStoreBytes)
+                    throw new InvalidDataException($"learned memory is {size / (1024d * 1024):F0} MiB and exceeds the {MaxLearnedStoreBytes / (1024 * 1024)} MiB load safety limit");
+                var store = JsonSerializer.Deserialize<ForetellStore>(File.ReadAllText(candidate), _json) ?? new();
+                if (candidate == temporaryPath)
+                {
+                    File.Move(temporaryPath, _storePath, true);
+                    Service.Log("[Foretell] Recovered learned memory from an interrupted atomic save.");
+                }
+                return store;
+            }
+            catch (Exception e)
+            {
+                Service.Log($"[Foretell] Failed to load {Path.GetFileName(candidate)}: {e.Message}");
+                PreserveRejectedStore(candidate);
+            }
+        }
+        return new();
+    }
+
+    private static void PreserveRejectedStore(string path)
+    {
         try
         {
-            return File.Exists(_storePath)
-                ? JsonSerializer.Deserialize<ForetellStore>(File.ReadAllText(_storePath), _json) ?? new()
-                : new();
+            if (!File.Exists(path)) return;
+            var backup = $"{path}.rejected-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}-{Guid.NewGuid():N}";
+            File.Move(path, backup, false);
+            Service.Log($"[Foretell] Rejected memory was preserved as {Path.GetFileName(backup)}");
         }
-        catch (Exception e)
-        {
-            Service.Log($"[Foretell] Failed to load memory: {e.Message}");
-            return new();
-        }
+        catch (Exception backupError) { Service.Log($"[Foretell] Could not preserve rejected memory: {backupError.Message}"); }
     }
 
     private void NormalizeStore()
@@ -344,7 +515,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 9);
+        _store.Schema = Math.Max(_store.Schema, 12);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -352,23 +523,192 @@ public sealed partial class ForetellEngine : IDisposable
         _store.ML ??= new();
         _store.Coverage ??= new();
         _store.Coverage.Items ??= [];
-        foreach (var encounter in _store.Encounters.Values)
+        foreach (var key in _store.Mechanics.Where(item => item.Value == null).Select(item => item.Key).ToArray()) _store.Mechanics.Remove(key);
+        foreach (var key in _store.Timeline.Where(item => item.Value == null).Select(item => item.Key).ToArray()) _store.Timeline.Remove(key);
+        foreach (var key in _store.Encounters.Where(item => item.Value == null).Select(item => item.Key).ToArray()) _store.Encounters.Remove(key);
+        foreach (var key in _store.Coverage.Items.Where(item => item.Value == null).Select(item => item.Key).ToArray()) _store.Coverage.Items.Remove(key);
+        foreach (var mechanic in _store.Mechanics.Values) NormalizeLearnedMechanic(mechanic);
+        foreach (var edge in _store.Timeline.Values) NormalizeTimelineEdge(edge);
+        while (_store.Mechanics.Count > 8192) _store.Mechanics.Remove(_store.Mechanics.MinBy(item => item.Value.LastSeen).Key);
+        while (_store.Timeline.Count > 8192) _store.Timeline.Remove(_store.Timeline.MinBy(item => item.Value.Count).Key);
+        if (_store.Encounters.Count > 2048)
+            foreach (var key in _store.Encounters.OrderByDescending(item => item.Value.LastSeen).Skip(2048).Select(item => item.Key).ToArray()) _store.Encounters.Remove(key);
+        if (_store.Coverage.Items.Count > 65536)
+            foreach (var key in _store.Coverage.Items.OrderByDescending(item => item.Value.Seen).Skip(65536).Select(item => item.Key).ToArray()) _store.Coverage.Items.Remove(key);
+        _store.Sessions.RemoveAll(session => session == null);
+        if (_store.Sessions.Count > 100) _store.Sessions = _store.Sessions.OrderByDescending(session => session.Started).Take(100).OrderBy(session => session.Started).ToList();
+
+        foreach (var encounterKey in _store.Encounters.Keys.ToArray())
         {
-            RefreshEncounterIdentity(encounter, encounter.TerritoryID == _territory && _ws.CurrentCFCID != 0 ? _ws.CurrentCFCID : encounter.ContentFinderConditionID);
-            encounter.ObservationCounts ??= [];
-            encounter.Sources ??= [];
-            encounter.Mechanics ??= [];
-            encounter.Timeline ??= [];
-            encounter.Phases ??= [];
-            foreach (var mechanic in encounter.Mechanics.Values)
+            try
             {
-                mechanic.Evidence ??= [];
-                mechanic.Samples ??= [];
+                var encounter = _store.Encounters[encounterKey];
+                encounter.TerritoryID = encounterKey;
+                RefreshEncounterIdentity(encounter, encounter.TerritoryID == _territory && _ws.CurrentCFCID != 0 ? _ws.CurrentCFCID : encounter.ContentFinderConditionID);
+                encounter.ObservationCounts ??= [];
+                encounter.Sources ??= [];
+                encounter.Mechanics ??= [];
+                encounter.Timeline ??= [];
+                encounter.Phases ??= [];
+                encounter.PhaseBoundaries ??= [];
+                encounter.Composites ??= [];
+                encounter.Topologies ??= [];
+                RemoveNullValues(encounter.Sources);
+                RemoveNullValues(encounter.Mechanics);
+                RemoveNullValues(encounter.Timeline);
+                RemoveNullValues(encounter.Phases);
+                RemoveNullValues(encounter.PhaseBoundaries);
+                RemoveNullValues(encounter.Composites);
+                RemoveNullValues(encounter.Topologies);
+                foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
+                foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
+                foreach (var source in encounter.Sources.Values)
+                {
+                    source.Name ??= "";
+                    source.Observations = Math.Max(0, source.Observations);
+                    source.Casts = Math.Max(0, source.Casts);
+                    source.Signals = Math.Max(0, source.Signals);
+                    source.Deaths = Math.Max(0, source.Deaths);
+                }
+                foreach (var phase in encounter.Phases.Values)
+                {
+                    phase.Signals ??= [];
+                    phase.Seen = Math.Max(0, phase.Seen);
+                    foreach (var signal in phase.Signals.Where(item => item.Value < 0).Select(item => item.Key).ToArray()) phase.Signals.Remove(signal);
+                    if (phase.Signals.Count > 2048)
+                        foreach (var signal in phase.Signals.OrderByDescending(item => item.Value).Skip(2048).Select(item => item.Key).ToArray()) phase.Signals.Remove(signal);
+                }
+                foreach (var composite in encounter.Composites.Values)
+                {
+                    composite.Key ??= "";
+                    composite.Signals ??= [];
+                    composite.Signals = composite.Signals.Where(signal => !string.IsNullOrWhiteSpace(signal)).Distinct().Take(64).ToList();
+                    composite.Count = Math.Max(0, composite.Count);
+                    composite.MeanSkewSeconds = Finite(composite.MeanSkewSeconds, 0, 0, 120);
+                    composite.M2 = Finite(composite.M2, 0, 0, double.MaxValue);
+                }
+                foreach (var topologyKey in encounter.Topologies.Keys.ToArray())
+                    if (!NormalizeTopology(encounter.Topologies[topologyKey])) encounter.Topologies.Remove(topologyKey);
+                TrimEncounterCollections(encounter);
+                encounter.Sessions = Math.Max(0, encounter.Sessions);
+                encounter.Pulls = Math.Max(0, encounter.Pulls);
             }
-            foreach (var source in encounter.Sources.Values)
-                source.Name ??= "";
+            catch (Exception e)
+            {
+                _store.Encounters.Remove(encounterKey);
+                Service.Log($"[Foretell] Rejected malformed learned encounter {encounterKey} safely: {e.Message}");
+            }
         }
     }
+
+    private static void RemoveNullValues<TKey, TValue>(Dictionary<TKey, TValue> dictionary) where TKey : notnull where TValue : class
+    {
+        foreach (var key in dictionary.Where(item => item.Value == null).Select(item => item.Key).ToArray()) dictionary.Remove(key);
+    }
+
+    private static void TrimEncounterCollections(EncounterMemory encounter)
+    {
+        if (encounter.Sources.Count > 8192)
+            foreach (var key in encounter.Sources.OrderByDescending(item => item.Value.LastSeen).Skip(8192).Select(item => item.Key).ToArray()) encounter.Sources.Remove(key);
+        if (encounter.Mechanics.Count > 2048)
+            foreach (var key in encounter.Mechanics.OrderByDescending(item => item.Value.Confidence).ThenByDescending(item => item.Value.LastSeen).Skip(2048).Select(item => item.Key).ToArray()) encounter.Mechanics.Remove(key);
+        if (encounter.Timeline.Count > 8192)
+            foreach (var key in encounter.Timeline.OrderByDescending(item => item.Value.Count).Skip(8192).Select(item => item.Key).ToArray()) encounter.Timeline.Remove(key);
+        if (encounter.Phases.Count > 512)
+            foreach (var key in encounter.Phases.OrderBy(item => item.Key).Skip(512).Select(item => item.Key).ToArray()) encounter.Phases.Remove(key);
+        if (encounter.PhaseBoundaries.Count > 512)
+            foreach (var key in encounter.PhaseBoundaries.OrderByDescending(item => item.Value.Accepted).ThenByDescending(item => item.Value.PullsSeen).Skip(512).Select(item => item.Key).ToArray()) encounter.PhaseBoundaries.Remove(key);
+        if (encounter.Composites.Count > 2048)
+            foreach (var key in encounter.Composites.OrderByDescending(item => item.Value.Count).Skip(2048).Select(item => item.Key).ToArray()) encounter.Composites.Remove(key);
+        if (encounter.Topologies.Count > 8)
+            foreach (var key in encounter.Topologies.OrderByDescending(item => item.Value.LastSeen).Skip(8).Select(item => item.Key).ToArray()) encounter.Topologies.Remove(key);
+    }
+
+    private static void NormalizeLearnedMechanic(LearnedMechanic mechanic)
+    {
+        mechanic.P1 = Finite(mechanic.P1, 0, 0, 200);
+        mechanic.P2 = Finite(mechanic.P2, 0, 0, 200);
+        mechanic.Score = Finite(mechanic.Score, 0, 0, 1);
+        mechanic.MeanCastSeconds = Finite(mechanic.MeanCastSeconds, 0, 0, 120);
+        mechanic.Observations = Math.Max(0, mechanic.Observations);
+        mechanic.Confirmations = Math.Clamp(mechanic.Confirmations, 0, mechanic.Observations);
+    }
+
+    private static void NormalizeContextualMechanic(ContextualMechanic mechanic)
+    {
+        mechanic.Key ??= "";
+        mechanic.TriggerDetail ??= "";
+        mechanic.PriorOmen ??= "";
+        mechanic.PriorEvidence ??= "";
+        mechanic.Evidence ??= [];
+        mechanic.Samples ??= [];
+        mechanic.P1 = Finite(mechanic.P1, 0, 0, 200);
+        mechanic.P2 = Finite(mechanic.P2, 0, 0, 200);
+        mechanic.Score = Finite(mechanic.Score, 0, 0, 1);
+        mechanic.PriorP1 = Finite(mechanic.PriorP1, 0, 0, 200);
+        mechanic.PriorP2 = Finite(mechanic.PriorP2, 0, 0, 200);
+        mechanic.PriorConfidence = Finite(mechanic.PriorConfidence, 0, 0, .98f);
+        mechanic.MeanLeadSeconds = Finite(mechanic.MeanLeadSeconds, 0, 0, 120);
+        mechanic.Observations = Math.Max(0, mechanic.Observations);
+        mechanic.Confirmations = Math.Clamp(mechanic.Confirmations, 0, mechanic.Observations);
+        mechanic.AffectedSamples = Math.Max(0, mechanic.AffectedSamples);
+        mechanic.StatusSamples = Math.Max(0, mechanic.StatusSamples);
+        mechanic.MovementSamples = Math.Max(0, mechanic.MovementSamples);
+        mechanic.DeathSamples = Math.Max(0, mechanic.DeathSamples);
+        mechanic.AmbiguousSamples = Math.Max(0, mechanic.AmbiguousSamples);
+        mechanic.Samples.RemoveAll(sample => sample == null || !float.IsFinite(sample.Side) || !float.IsFinite(sample.Forward) || !float.IsFinite(sample.TargetDX) || !float.IsFinite(sample.TargetDZ));
+        if (mechanic.Samples.Count > 256) mechanic.Samples.RemoveRange(0, mechanic.Samples.Count - 256);
+    }
+
+    private static void NormalizeTimelineEdge(TimelineEdge edge)
+    {
+        edge.Count = Math.Max(0, edge.Count);
+        edge.MeanDelay = Finite(edge.MeanDelay, 0, 0, 600);
+        edge.M2 = Finite(edge.M2, 0, 0, double.MaxValue);
+    }
+
+    private static void NormalizeSignalTimelineEdge(SignalTimelineEdge edge)
+    {
+        edge.From ??= "";
+        edge.To ??= "";
+        edge.Count = Math.Max(0, edge.Count);
+        edge.MeanDelay = Finite(edge.MeanDelay, 0, 0, 600);
+        edge.M2 = Finite(edge.M2, 0, 0, double.MaxValue);
+    }
+
+    private static bool NormalizeTopology(ArenaTopologyMemory topology)
+    {
+        topology.Fingerprint ??= "";
+        topology.Cells ??= [];
+        topology.HeightCentimeters ??= [];
+        topology.Contours ??= [];
+        if (topology.Width is <= 0 or > 257 || topology.Height is <= 0 or > 257 || topology.Width * topology.Height != topology.Cells.Length || topology.HeightCentimeters.Length != topology.Cells.Length)
+            return false;
+        topology.OriginX = Finite(topology.OriginX, 0, -100000, 100000);
+        topology.OriginZ = Finite(topology.OriginZ, 0, -100000, 100000);
+        topology.ReferenceY = Finite(topology.ReferenceY, 0, -10000, 10000);
+        topology.Resolution = Finite(topology.Resolution, 1, .1f, 10);
+        topology.Contours.RemoveAll(contour => contour == null);
+        if (topology.Contours.Count > 128) topology.Contours.RemoveRange(128, topology.Contours.Count - 128);
+        foreach (var contour in topology.Contours)
+        {
+            contour.Points ??= [];
+            contour.Points.RemoveAll(point => point == null || !float.IsFinite(point.X) || !float.IsFinite(point.Z));
+            if (contour.Points.Count > 65536) contour.Points.RemoveRange(65536, contour.Points.Count - 65536);
+        }
+        topology.PassableCells = Math.Clamp(topology.PassableCells, 0, topology.Cells.Length);
+        topology.BlockedCells = Math.Clamp(topology.BlockedCells, 0, topology.Cells.Length);
+        topology.UnknownCells = Math.Clamp(topology.UnknownCells, 0, topology.Cells.Length);
+        topology.Components = Math.Max(0, topology.Components);
+        topology.Observations = Math.Max(0, topology.Observations);
+        return true;
+    }
+
+    private static float Finite(float value, float fallback, float minimum, float maximum)
+        => float.IsFinite(value) ? Math.Clamp(value, minimum, maximum) : fallback;
+
+    private static double Finite(double value, double fallback, double minimum, double maximum)
+        => double.IsFinite(value) ? Math.Clamp(value, minimum, maximum) : fallback;
 
     private void SaveStore()
     {
@@ -381,6 +721,8 @@ public sealed partial class ForetellEngine : IDisposable
         }
         catch (Exception e)
         {
+            // Back off after an I/O failure instead of retrying serialization on every framework frame.
+            _lastSave = DateTime.UtcNow;
             Service.Log($"[Foretell] Failed to save memory: {e.Message}");
         }
     }

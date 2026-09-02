@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Numerics;
 
 namespace BossMod.Foretell;
 
@@ -20,7 +21,7 @@ public enum ObservationKind
     DutyStarted, DutyWiped, DutyRecommenced, DutyCompleted, FlyText, DalamudLogMessage, NormalToast, QuestToast, ErrorToast,
     WorldOperation, ServerIPC, ClientIPC, ActorControlRaw,
     PositionSample, Displacement, ActorSnapshot, EnvironmentSnapshot, CameraSnapshot,
-    NativeVFXSpawn, NativeVFXDestroy,
+    NativeVFXSpawn, NativeVFXDestroy, TopologySnapshot,
     ClientMetadata, GenericFeature
 }
 
@@ -83,6 +84,7 @@ public sealed class ContextualMechanic
     [JsonConverter(typeof(JsonStringEnumConverter))] public SourceKind SourceKind { get; set; }
     [JsonConverter(typeof(JsonStringEnumConverter))] public ObservationKind TriggerKind { get; set; }
     public uint TriggerID { get; set; }
+    public string TriggerDetail { get; set; } = "";
     [JsonConverter(typeof(JsonStringEnumConverter))] public GeometryKind Geometry { get; set; }
     [JsonConverter(typeof(JsonStringEnumConverter))] public MechanicKind Kind { get; set; }
     public float P1 { get; set; }
@@ -207,6 +209,28 @@ public sealed class PhaseMemory
     public Dictionary<string, int> Signals { get; set; } = [];
 }
 
+public sealed class CompositeMechanicMemory
+{
+    public string Key { get; set; } = "";
+    public int Phase { get; set; }
+    public List<string> Signals { get; set; } = [];
+    public int Count { get; set; }
+    public double MeanSkewSeconds { get; set; }
+    public double M2 { get; set; }
+    [JsonIgnore] public double StdDev => Count > 1 ? Math.Sqrt(M2 / (Count - 1)) : 0;
+}
+
+public sealed class PhaseBoundaryMemory
+{
+    public string Signature { get; set; } = "";
+    [JsonConverter(typeof(JsonStringEnumConverter))] public ObservationKind EvidenceKind { get; set; }
+    public int Seen { get; set; }
+    public int PullsSeen { get; set; }
+    public int LastPull { get; set; } = -1;
+    public bool Accepted { get; set; }
+    public DateTime LastSeen { get; set; }
+}
+
 public sealed class SessionSummary
 {
     public string SessionID { get; set; } = "";
@@ -237,6 +261,42 @@ public sealed class EncounterMemory
     public Dictionary<string, ContextualMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, SignalTimelineEdge> Timeline { get; set; } = [];
     public Dictionary<int, PhaseMemory> Phases { get; set; } = [];
+    public Dictionary<string, PhaseBoundaryMemory> PhaseBoundaries { get; set; } = [];
+    public Dictionary<string, CompositeMechanicMemory> Composites { get; set; } = [];
+    public Dictionary<string, ArenaTopologyMemory> Topologies { get; set; } = [];
+}
+
+public sealed class TopologyPoint
+{
+    public float X { get; set; }
+    public float Z { get; set; }
+}
+
+public sealed class TopologyContourMemory
+{
+    public bool Hole { get; set; }
+    public List<TopologyPoint> Points { get; set; } = [];
+}
+
+public sealed class ArenaTopologyMemory
+{
+    public string Fingerprint { get; set; } = "";
+    public float OriginX { get; set; }
+    public float OriginZ { get; set; }
+    public float ReferenceY { get; set; }
+    public float Resolution { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public byte[] Cells { get; set; } = [];
+    public short[] HeightCentimeters { get; set; } = [];
+    public List<TopologyContourMemory> Contours { get; set; } = [];
+    public int PassableCells { get; set; }
+    public int BlockedCells { get; set; }
+    public int UnknownCells { get; set; }
+    public int Components { get; set; }
+    public DateTime FirstSeen { get; set; }
+    public DateTime LastSeen { get; set; }
+    public int Observations { get; set; }
 }
 
 public sealed class MLState
@@ -249,7 +309,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 9;
+    public int Schema { get; set; } = 12;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
@@ -294,6 +354,9 @@ public sealed class ReplayReport
     public int Territories { get; set; }
     public int RediscoveredMechanics { get; set; }
     public int AmbiguousMechanics { get; set; }
+    public long RawRecords { get; set; }
+    public int RawWindows { get; set; }
+    public int RawErrors { get; set; }
     public Dictionary<ObservationKind, int> Counts { get; set; } = [];
     public DateTime First { get; set; }
     public DateTime Last { get; set; }
@@ -310,9 +373,4 @@ internal readonly record struct ActionGeometryPrior(
     int CastType, int EffectRange, int XAxisModifier, bool TargetArea,
     uint OmenID, string Omen, string Evidence);
 
-internal readonly record struct CastSnapshot(
-    ulong CasterID, uint ActionID, Vector2 Origin, Vector2 Target, float Rotation,
-    DateTime Started, DateTime Activation, double CastSeconds);
-
-internal readonly record struct Sample(Vector2 Position, bool Hit);
 internal readonly record struct FitResult(GeometryKind Geometry, Vector2 Origin, float Rotation, float P1, float P2, float Score);

@@ -32,6 +32,8 @@ public sealed partial class ForetellEngine
     private readonly Dictionary<ulong, string> _actorFabricFingerprint = [];
     private readonly Dictionary<ulong, string> _nativeActorFabricFingerprint = [];
     private readonly Dictionary<ulong, FabricActorTrack> _fabricActorTracks = [];
+    private readonly Queue<ulong> _nativeActorPriorities = [];
+    private readonly HashSet<ulong> _nativeActorPrioritySet = [];
     private readonly Dictionary<string, int> _fabricCollectionOffsets = [];
     private readonly Dictionary<Type, PropertyInfo[]> _fabricPropertyCache = [];
     private readonly Dictionary<Type, FieldInfo[]> _fabricFieldCache = [];
@@ -57,6 +59,8 @@ public sealed partial class ForetellEngine
         _actorFabricFingerprint.Clear();
         _nativeActorFabricFingerprint.Clear();
         _fabricActorTracks.Clear();
+        _nativeActorPriorities.Clear();
+        _nativeActorPrioritySet.Clear();
         _fabricCollectionOffsets.Clear();
         _runtimeRootCursor = 0;
         _actorFabricCursor = 0;
@@ -68,7 +72,7 @@ public sealed partial class ForetellEngine
         _coreRuntimeFingerprint = "";
     }
 
-    private void SampleDataFabric(bool force = false)
+    private void SampleDataFabric(bool force = false, bool includeNative = true)
     {
         var now = ObservationNow();
 
@@ -103,7 +107,7 @@ public sealed partial class ForetellEngine
             }
         }
 
-        if (!NativeSnapshotTelemetryEnabled)
+        if (!includeNative || !NativeSnapshotTelemetryEnabled || PerformanceThrottled)
             return;
 
         // Character containers are sampled through a rotating cursor at up to 4 Hz. Every actor is eventually
@@ -185,16 +189,18 @@ public sealed partial class ForetellEngine
         Span<ulong> sampledIDs = stackalloc ulong[MaxNativeActorsPerSlice];
         var playerID = _ws.Party[PartyState.PlayerSlot]?.InstanceID ?? 0;
 
-        // Reserve half the slice for volatile actors. This gives casts, tethers and the player a 4 Hz chance to
-        // expose timeline/transformation/tether progress while the rotating pass still guarantees full coverage.
-        for (var i = 0; i < actors.Length && sampled < MaxNativeActorsPerSlice / 2 && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxNativeActorTraversalMilliseconds; ++i)
+        // Event handlers enqueue volatile actors, avoiding a full-population priority scan four times per second.
+        // The player remains explicit and the rotating half still guarantees eventual coverage of every actor.
+        if (playerID != 0 && _ws.Actors.Find(playerID) is { } player && TrySampleNativeActor(player, now))
+            sampledIDs[sampled++] = playerID;
+        while (_nativeActorPriorities.TryDequeue(out var priorityID) && sampled < MaxNativeActorsPerSlice / 2
+            && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxNativeActorTraversalMilliseconds)
         {
-            var actor = actors[i];
-            if (actor.InstanceID != playerID && actor.CastInfo == null && actor.Tether.ID == 0)
+            _nativeActorPrioritySet.Remove(priorityID);
+            var actor = _ws.Actors.Find(priorityID);
+            if (actor == null || sampledIDs[..sampled].Contains(priorityID) || !TrySampleNativeActor(actor, now))
                 continue;
-            if (!TrySampleNativeActor(actor, now))
-                continue;
-            sampledIDs[sampled++] = actor.InstanceID;
+            sampledIDs[sampled++] = priorityID;
         }
 
         var examined = 0;
@@ -210,6 +216,17 @@ public sealed partial class ForetellEngine
         }
         _lastNativeActorMilliseconds = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         _peakNativeActorMilliseconds = Math.Max(_peakNativeActorMilliseconds, _lastNativeActorMilliseconds);
+    }
+
+    private void PrioritizeNativeActor(ulong instanceID)
+    {
+        if (instanceID == 0 || !_nativeActorPrioritySet.Add(instanceID)) return;
+        if (_nativeActorPriorities.Count >= 256)
+        {
+            var removed = _nativeActorPriorities.Dequeue();
+            _nativeActorPrioritySet.Remove(removed);
+        }
+        _nativeActorPriorities.Enqueue(instanceID);
     }
 
     private bool TrySampleNativeActor(Actor actor, DateTime now)
@@ -828,9 +845,14 @@ public sealed partial class ForetellEngine
         }
         if (value is byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal)
         {
-            try { observation.Numeric[path] = Convert.ToDouble(value, CultureInfo.InvariantCulture); }
+            try
+            {
+                var number = Convert.ToDouble(value, CultureInfo.InvariantCulture);
+                if (double.IsFinite(number)) observation.Numeric[path] = number;
+                else observation.Text[path + ".nonFinite"] = number.ToString("R", CultureInfo.InvariantCulture);
+            }
             catch { observation.Text[path] = value.ToString() ?? ""; }
-            RegisterCapability(path, type, path, true, false, "numeric");
+            RegisterCapability(path, type, path, true, false, "numeric; non-finite sentinels are retained as text and excluded from arithmetic");
             return true;
         }
         if (value is string s)
@@ -950,10 +972,10 @@ public sealed partial class ForetellEngine
             RegisterCapability(key, typeof(ForetellObservation), key, true, false, "replayed lossless binary feature");
     }
 
-    private void AccumulateDataFeatures(ForetellObservation observation)
+    private void AccumulateDataFeatures(ForetellObservation observation, MechanicEpisode? correlated = null)
     {
         MechanicEpisode? episode = _episodes.GetValueOrDefault(observation.Sequence);
-        episode ??= BestEpisode(observation);
+        episode ??= correlated ?? BestEpisode(observation);
         if (episode == null) return;
         if (observation.Kind == ObservationKind.ActorSnapshot && observation.ActorID != episode.Trigger.ActorID && !episode.ParticipantPositions.ContainsKey(observation.ActorID))
             return;

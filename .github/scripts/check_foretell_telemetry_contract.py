@@ -14,38 +14,55 @@ def read(path: str) -> str:
 
 requirements = {
     "BossMod/Foretell/ForetellEngine.cs": [
-        "RawServerIPCReceived.Subscribe(OnRawServerIPC)",
-        "RawClientIPCSent.Subscribe(OnRawClientIPC)",
         "RawActorControlReceived.Subscribe(OnRawActorControl)",
+        "AttachRawCapture();",
+        "RawServerIPCCapture = OnRawServerIPC",
+        "RawClientIPCCapture = OnRawClientIPC",
+        "RawActorControlCapture = OnRawActorControlCapture",
+        "DetachRawCapture();",
         "_ws.Actors.EffectResult.Subscribe(OnEffectResult)",
-        "private const bool NativeHookTelemetryEnabled = true",
-        "private const bool NativeSnapshotTelemetryEnabled = true",
+        "private static readonly bool NativeHookTelemetryEnabled = true",
+        "private static readonly bool NativeSnapshotTelemetryEnabled = true",
         "DrainNativeCaptures()",
         "_ws.Network.CaptureRawTransport = true",
         "ApplyPerformancePolicyMigration()",
         "InitializeDalamudSignals()",
         "private static DateTime NormalizeObservationTime",
         "At = ObservationNow()",
+        "try { UpdateCore(); }",
+        "PerformanceThrottled",
+        "NormalizeEnum(ref _cfg.Mode",
+        "NormalizeFinite(ref _cfg.RadarSize",
+        "(DateTime.UtcNow - _rawOpenedAt).TotalHours >= 1",
+        "NormalizeContextualMechanic",
+        "Everything after background-resource construction is one transactional startup region",
     ],
     "BossMod/Foretell/ForetellObserver.cs": [
         'affected.Binary[$"{prefix}.raw"]',
         'resolved.Numeric["action.globalSequence"]',
         'obs.Numeric["effectResult.sequence"]',
         'obs.Numeric["actorControl.p8"]',
-        "RawTransportObservation(ObservationKind.ServerIPC",
         "ProcessObservation(obs, enriched: true)",
         "age < 250",
         "WorldOperationSubstitution(op)",
         "ActorState.OpMove =>",
         "ClientState.OpActiveCompanionChange",
-        "_raw.EnqueueServer(_rawPath, _territory, packet)",
-        "_raw.EnqueueClient(_rawPath, _territory, packet)",
-        "_raw.EnqueueActorControl(_rawPath, _territory, captureAt, control)",
+        "_raw.EnqueueServer(context.Path, context.TerritoryID, packet)",
+        "_raw.EnqueueClient(context.Path, context.TerritoryID, packet)",
+        "_raw.EnqueueActorControl(context.Path, context.TerritoryID, DateTime.UtcNow, control)",
     ],
     "BossMod/Foretell/ForetellLearning.cs": [
         "observation.At = NormalizeObservationTime(observation.At)",
+        "observation.Numeric ??= []",
         "bool replaying = false, bool enriched = false",
         "else if (!enriched) EnrichObservation(observation)",
+        "LearnPhaseBoundary(observation)",
+        "LearnCompositeMechanics(encounter, episode)",
+        "LooksLikeGaze",
+        "LooksLikeProximity",
+        "CaptureResolutionPose",
+        "observation.Kind != ObservationKind.SystemLog || _inPull",
+        "FiniteOrZero(observation.X)",
     ],
     "BossMod/Foretell/ForetellDataFabric.cs": [
         'FlattenRoot(_ws.Frame, "runtime.frame"',
@@ -59,6 +76,8 @@ requirements = {
         "RefreshRuntimeContextSlice()",
         "SampleGenericActorSlice()",
         "SampleNativeActorSlice(now)",
+        "bool includeNative = true",
+        "if (!includeNative || !NativeSnapshotTelemetryEnabled || PerformanceThrottled)",
         "private static readonly bool LiveReflectionTelemetryEnabled = false",
         "SampleCoreRuntimeSnapshot()",
         "ProcessObservation(obs, enriched: true)",
@@ -77,10 +96,14 @@ requirements = {
         "RejectNonBoxableMember(p.PropertyType",
         "RejectNonBoxableMember(f.FieldType",
         "memberType.IsFunctionPointer",
+        "non-finite sentinels are retained as text",
     ],
     "BossMod/Framework/Plugin.cs": [
-        "OpenMainUi += () => _foretell.OpenInspector()",
-        "OpenConfigUi += () => _foretell.OpenInspector()",
+        "_openMainUiHandler = () => _foretell.OpenInspector()",
+        "_openConfigUiHandler = () => _foretell.OpenInspector()",
+        "_pluginSubscriptions.Add(Service.Config.Modified.Subscribe",
+        "DisposeComponents();",
+        "Interlocked.Exchange(ref _disposed, 1)",
     ],
     "BossMod/Config/ConfigUI.cs": [
         "n is Foretell.ForetellConfig",
@@ -102,15 +125,22 @@ requirements = {
         "ForetellRadarShape.Square",
         "RadarWorldRadius",
         "MaxRenderedMechanics",
+        "FiniteViewport(viewport)",
     ],
     "BossMod/Foretell/ForetellInspector.cs": [
-        'BeginTabItem("Knowledge explorer")',
+        'DrawInspectorTab("Knowledge explorer", DrawKnowledgeExplorer)',
+        'DrawInspectorTab("Replay & storage", DrawInspectorReplay)',
+        "finally { ImGui.EndTabBar(); }",
+        "finally { ImGui.EndTabItem(); }",
         "DrawKnowledgeExplorer()",
         "DrawPurgeConfirmation()",
-        "Delete learned data",
-        "DATA COMPLETE — HEALTHY",
+        "Delete local data",
+        "FULL SENSOR CONTRACT — HEALTHY",
         "rawBacklogged",
         "nativeBacklogged",
+        "DrawStorageManager()",
+        "Pause view",
+        "PurgePhaseSignal",
     ],
     "BossMod/Foretell/ForetellKnowledge.cs": [
         "RefreshEncounterIdentity",
@@ -121,6 +151,12 @@ requirements = {
         "PurgeEncounter",
         "PurgeSource",
         "PurgeMechanic",
+        "PurgeTopology",
+        "PurgeTimelineEdge",
+        "PurgeComposite",
+        "PurgePhase",
+        "PurgeSession",
+        "DeleteStorageFile",
         "RemoveOrphanGlobalKnowledge",
     ],
     "BossMod/Foretell/ForetellNativeState.cs": [
@@ -144,8 +180,11 @@ requirements = {
         "ConcurrentQueue<NativeHookCapture>",
         "MaxNativeHookCapturesPerFrame",
         "MaxNativeHookDrainMilliseconds",
+        "MaxNativeHookBacklog",
+        "MaxTrackedNativeVFX",
         "EnqueueNativeCapture",
         "DrainNativeCaptures",
+        "MemoryHelper.ReadString(address, Encoding.ASCII, 512)",
     ],
     "BossMod/Foretell/ForetellDalamudSignals.cs": [
         "Service.DutyState.DutyWiped += OnDutyWiped",
@@ -158,6 +197,9 @@ requirements = {
     ],
     "BossMod/Foretell/ForetellReplayWriter.cs": [
         "BlockingCollection<Item>",
+        "MaxQueuedObservations",
+        "TryAdd",
+        "Rejected",
         "IsBackground = true",
         "JsonSerializer.Serialize(item.Observation",
         "GetConsumingEnumerable(_stop.Token)",
@@ -168,21 +210,57 @@ requirements = {
         "IsBackground = true",
         "GetConsumingEnumerable(_stop.Token)",
         "PendingItems",
+        "MaxQueuedPayloadBytes",
         "RejectedItems",
         "packet.Payload",
         "ForetellRawFeatureWindow",
         "PendingFeatureWindows",
+        "RejectedFeatureWindows",
+        "MaxQueuedFeatureWindows",
         "DurationTicks >= TimeSpan.TicksPerMillisecond * 250",
     ],
     "BossMod/Foretell/ForetellRawFeatures.cs": [
         "MaxRawFeatureWindowsPerFrame",
         "MaxRawFeatureDrainMilliseconds",
         "_raw.TryDequeueFeature(out var window)",
+        "RawWindowObservation(window)",
+        "RegisterRecordedFeatures(obs)",
+        "ProcessObservation(obs, enriched: true)",
+    ],
+    "BossMod/Foretell/ForetellRawFormat.cs": [
+        "CurrentSchema = 2",
+        "MaxPayloadBytes",
+        "MaxInMemoryWindows",
+        "ForetellRawWindowAccumulator",
+        "truncated payload",
+    ],
+    "BossMod/Foretell/ForetellReplay.cs": [
+        "RawJournalsForReplay",
+        "TryParseJournalTime",
+        "File.GetLastWriteTimeUtc(path)",
+        "DateTimeStyles.AdjustToUniversal",
+        "ForetellRawFormat.Read",
+        "MaxReadableReplayBytes",
+        "MaxReadableReplayLines",
         'Detail = "raw:250ms-window"',
         'obs.Numeric["raw.window.payloadBytes"]',
         'obs.Numeric[$"raw.window.opcode[{opcode:X8}]"]',
         'obs.Numeric[$"raw.window.binaryBucket[{i}]"]',
-        "ProcessObservation(obs, enriched: true)",
+    ],
+    "BossMod/Foretell/ForetellTopology.cs": [
+        "RaycastMaterialFilter",
+        "MaxTopologyRaysPerFrame",
+        "MaxTopologyMillisecondsPerFrame",
+        "CompleteTopologySweep",
+        "SuspendTopology",
+        "++_topologyInvalidations",
+        "non-finite player position rejected before native call",
+    ],
+    "BossMod/Foretell/ForetellTopologyGrid.cs": [
+        "Flood(seed, connected, maxStepHeight)",
+        "BuildContours",
+        "Fingerprint",
+        "IsConnectedPassable",
     ],
     "BossMod/Foretell/ForetellTypedSnapshots.cs": [
         "StoreTypedWorldSnapshot",
@@ -194,10 +272,24 @@ requirements = {
     ],
     "BossMod/Data/NetworkState.cs": [
         "public volatile bool CaptureRawTransport",
+        "RawServerIPCCapture",
+        "RawClientIPCCapture",
+        "RawActorControlCapture",
+        "RejectedActorControlSemantic",
     ],
     "BossMod/Framework/WorldStateGameSync.cs": [
         "if (_ws.Network.CaptureRawTransport)",
         "var needPayload = _ws.Network.CaptureRawTransport || _netConfig.Data.RecordServerPackets || _netConfig.Data.DumpServerPackets",
+        "RawServerIPCCapture?.Invoke",
+        "RawClientIPCCapture?.Invoke",
+        "RawActorControlCapture?.Invoke",
+        "MaxForetellActorControlSemanticBacklog",
+        "MaxForetellActorControlSemanticPerFrame",
+    ],
+    "BossMod/Foretell/OnlineClassifier.cs": [
+        "if (!double.IsFinite(normalizedWeights[c][i]))",
+        "if (!double.IsFinite(x[i])) continue",
+        "Math.Clamp(w[i] + learningRate * error * x[i], -20, 20)",
     ],
 }
 
@@ -235,7 +327,9 @@ if fabric.find("CanTraverseFabricType(type)") > fabric.find("value is IEnumerabl
     errors.append("Foretell can enumerate an external live implementation before applying its assembly allowlist")
 
 learning = read("BossMod/Foretell/ForetellLearning.cs")
-if learning.find("observation.At = NormalizeObservationTime(observation.At)") > learning.find("observation.At.AddSeconds(-8)"):
+normalization_pos = learning.find("observation.At = NormalizeObservationTime(observation.At)")
+unsafe_arithmetic_pos = learning.find("observation.At.AddSeconds(-8)")
+if unsafe_arithmetic_pos >= 0 and (normalization_pos < 0 or normalization_pos > unsafe_arithmetic_pos):
     errors.append("Foretell performs DateTime arithmetic before normalizing an uninitialized WorldState timestamp")
 
 episode_trigger = learning[learning.find("private static bool IsEpisodeTrigger"):learning.find("private static string SignalKey")]
@@ -246,16 +340,31 @@ if "observation.ActorID == 0 && observation.TargetID == 0" not in episode_trigge
     errors.append("Foretell can create mechanic episodes from unbound ambient native VFX")
 
 engine = read("BossMod/Foretell/ForetellEngine.cs")
-if engine.find("SampleDataFabric(force: true)") > engine.find("InitializeNativeHooks()"):
+if "SampleDataFabric(force: true, includeNative: false)" not in engine:
+    errors.append("Foretell startup can perform native memory sampling before normal framework updates")
+if engine.find("SampleDataFabric(force: true, includeNative: false)") > engine.find("InitializeNativeHooks()"):
     errors.append("Foretell installs native hooks before fallible initial Data Fabric sampling")
 if "if (NativeHookTelemetryEnabled)\n                InitializeNativeHooks();" not in engine:
     errors.append("Foretell native hooks escaped their explicit data-complete gate")
-if "if (!NativeSnapshotTelemetryEnabled)\n            return;" not in fabric:
+if "if (!includeNative || !NativeSnapshotTelemetryEnabled || PerformanceThrottled)\n            return;" not in fabric:
     errors.append("Foretell native snapshots escaped their explicit data-complete gate")
 if "_replay.Enqueue(_replayPath, observation)" not in engine or "_replay.WriteLine" in engine:
     errors.append("Foretell replay serialization can run synchronously on the framework thread")
 if "_ws.Network.CaptureRawTransport = true" not in engine:
     errors.append("Foretell data-complete raw transport capture is not always armed")
+if "if (!_inPull && (DateTime.UtcNow - _lastSave).TotalSeconds > 60)" not in engine:
+    errors.append("Foretell persistent-store serialization can return to the active-combat frame path")
+
+plugin = read("BossMod/Framework/Plugin.cs")
+if plugin.find("_foretell = new(_ws") > plugin.find("_rsr = new(_dalamud)"):
+    errors.append("Foretell startup can again fail after the legacy module installs its large hook graph")
+if "_pluginSubscriptions.Dispose" not in plugin or "OpenMainUi -= _openMainUiHandler" not in plugin:
+    errors.append("Foretell plugin lifecycle can leak global subscriptions after a partial load/unload")
+
+game_sync = read("BossMod/Framework/WorldStateGameSync.cs")
+for forbidden_queue in ["_foretellRawServerPackets", "_foretellRawClientPackets"]:
+    if forbidden_queue in game_sync:
+        errors.append(f"Foretell raw payloads returned to an unbounded framework-thread queue: {forbidden_queue}")
 
 observer = read("BossMod/Foretell/ForetellObserver.cs")
 server_handler = observer[observer.find("private void OnRawServerIPC"):observer.find("private void OnRawClientIPC")]
@@ -265,6 +374,8 @@ for name, handler in [("server", server_handler), ("client", client_handler)]:
         errors.append(f"Foretell raw {name} transport re-entered the semantic learner")
     if "_raw.Enqueue" not in handler:
         errors.append(f"Foretell raw {name} transport is not retained by the lossless journal")
+    if 'transport.payload' in handler or 'Record(' in handler:
+        errors.append(f"Foretell raw {name} transport regressed to duplicate JSON serialization on the framework callback")
 if "ProcessObservation(obs, enriched: true)" not in observer[observer.find("private void SamplePartyPositions"):observer.find("private static uint ReadActionID")]:
     errors.append("Foretell position sampling re-entered full actor/static enrichment")
 
@@ -273,6 +384,12 @@ if "public bool RecordReplay = true" in config:
     errors.append("Foretell high-volume replay recording became default-on again")
 
 native_hooks = read("BossMod/Foretell/ForetellNativeHooks.cs")
+actor_create = native_hooks[native_hooks.find("private unsafe nint ForetellActorVFXCreateDetour"):native_hooks.find("private void ForetellActorVFXDestroyDetour")]
+if actor_create.find(".Original(") > actor_create.find("ReadNativeString("):
+    errors.append("Foretell actor VFX detour performs telemetry reads before the game constructor")
+static_create = native_hooks[native_hooks.find("private unsafe VfxObject* ForetellStaticVFXCreateDetour"):native_hooks.find("private unsafe void ForetellStaticVFXDestroyDetour")]
+if static_create.find(".Original(") > static_create.find("ReadNativeString("):
+    errors.append("Foretell static VFX detour performs telemetry reads before the game constructor")
 for start, end, name in [
     ("private unsafe void ForetellObjectEffectDetour", "private unsafe nint ForetellActorVFXCreateDetour", "ObjectEffect"),
     ("private unsafe nint ForetellActorVFXCreateDetour", "private void ForetellActorVFXDestroyDetour", "actor VFX create"),
@@ -286,6 +403,11 @@ for start, end, name in [
             errors.append(f"Foretell {name} detour performs deferred work directly: {forbidden_call}")
     if "EnqueueNativeCapture" not in body:
         errors.append(f"Foretell {name} detour does not enqueue its primitive capture")
+
+topology = read("BossMod/Foretell/ForetellTopology.cs")
+invalidate = topology[topology.find("private void InvalidateTopology()") : topology.find("// Collision calls")]
+if "_topology.Cursor = 0" in invalidate:
+    errors.append("Frequent topology invalidations can restart and starve the bounded sweep")
 
 foretell_sources = "\n".join(
     path.read_text(encoding="utf-8-sig")

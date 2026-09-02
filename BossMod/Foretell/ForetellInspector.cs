@@ -1,4 +1,6 @@
 using Dalamud.Bindings.ImGui;
+using System.IO;
+using System.Threading;
 
 namespace BossMod.Foretell;
 
@@ -10,7 +12,19 @@ public sealed partial class ForetellEngine
     private string _pendingPurgeTitle = "";
     private string _pendingPurgeDescription = "";
     private bool _openPurgeConfirmation;
+    private string _purgeResult = "";
+    private string _knowledgeFilter = "";
+    private int _knowledgeConfidenceFilter;
+    private bool _liveFeedPaused;
+    private string _liveFeedFilter = "";
+    private int _liveFeedKindFilter;
+    private List<ForetellObservation> _pausedLiveFeed = [];
+    private DateTime _lastStorageRefresh;
+    private List<StorageFileEntry> _storageFiles = [];
     private static readonly string[] RadarShapeLabels = ["Auto (learned topology)", "Circle", "Square"];
+    private static readonly string[] KnowledgeConfidenceLabels = ["All confidence levels", "Learned (75%+)", "High (95%+)", "Safe (99%+)"];
+    private static readonly string[] ObservationKindLabels = ["All event types", .. Enum.GetNames<ObservationKind>()];
+    private readonly record struct StorageFileEntry(string Path, string Kind, long Bytes, DateTime Updated, bool Active);
 
     public bool HandleCommand(string[] args)
     {
@@ -125,49 +139,30 @@ public sealed partial class ForetellEngine
             return;
         }
 
-        _inspectorTerritory = _inspectorTerritory == 0 ? _territory : _inspectorTerritory;
-        DrawInspectorHeader();
-        if (ImGui.BeginTabBar("ForetellInspectorTabs"))
+        try
         {
-            if (ImGui.BeginTabItem("Dashboard"))
+            _inspectorTerritory = _inspectorTerritory == 0 ? _territory : _inspectorTerritory;
+            DrawInspectorHeader();
+            if (ImGui.BeginTabBar("ForetellInspectorTabs"))
             {
-                DrawDashboard();
-                ImGui.EndTabItem();
+                try
+                {
+                    DrawInspectorTab("Dashboard", DrawDashboard);
+                    DrawInspectorTab("Knowledge explorer", DrawKnowledgeExplorer);
+                    DrawInspectorTab("Timeline", DrawInspectorTimeline);
+                    DrawInspectorTab("Live feed", DrawInspectorObservations);
+                    DrawInspectorTab("Replay & storage", DrawInspectorReplay);
+                    DrawInspectorTab("Settings", DrawInspectorSettings);
+                    DrawInspectorTab("Help", DrawInspectorHelp);
+                }
+                finally { ImGui.EndTabBar(); }
             }
-            if (ImGui.BeginTabItem("Settings"))
-            {
-                DrawInspectorSettings();
-                ImGui.EndTabItem();
-            }
-            if (ImGui.BeginTabItem("Knowledge explorer"))
-            {
-                DrawKnowledgeExplorer();
-                ImGui.EndTabItem();
-            }
-            if (ImGui.BeginTabItem("Timeline"))
-            {
-                DrawInspectorTimeline();
-                ImGui.EndTabItem();
-            }
-            if (ImGui.BeginTabItem("Live feed"))
-            {
-                DrawInspectorObservations();
-                ImGui.EndTabItem();
-            }
-            if (ImGui.BeginTabItem("Replay & export"))
-            {
-                DrawInspectorReplay();
-                ImGui.EndTabItem();
-            }
-            if (ImGui.BeginTabItem("Help"))
-            {
-                DrawInspectorHelp();
-                ImGui.EndTabItem();
-            }
-            ImGui.EndTabBar();
+            DrawPurgeConfirmation();
         }
-        DrawPurgeConfirmation();
-        ImGui.End();
+        finally
+        {
+            ImGui.End();
+        }
     }
 
     private void DrawInspectorHeader()
@@ -175,7 +170,7 @@ public sealed partial class ForetellEngine
         if (ImGui.BeginTable("ForetellHeader", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV))
         {
             DrawMetricCell(_cfg.EnableLearning ? "LEARNING" : "READ-ONLY", "Engine");
-            DrawMetricCell(_territory.ToString(), "Territory");
+            DrawMetricCell(EncounterName(_territory), "Current content");
             DrawMetricCell(_session.Observations.ToString("N0"), "Observations");
             DrawMetricCell(_session.MechanicsFinalized.ToString(), "Reviewed");
             ImGui.EndTable();
@@ -196,12 +191,12 @@ public sealed partial class ForetellEngine
         ImGui.SameLine();
         ImGui.TextUnformatted("  Territory");
         ImGui.SameLine();
-        if (ImGui.Button($"Current ({_territory})"))
+        if (ImGui.Button($"Current: {EncounterName(_territory)}##current-territory"))
             _inspectorTerritory = _territory;
         foreach (var id in _store.Encounters.Keys.Where(id => id != _territory).OrderByDescending(id => _store.Encounters[id].LastSeen).Take(4))
         {
             ImGui.SameLine();
-            if (ImGui.Button($"{id}##territory{id}"))
+            if (ImGui.Button($"{EncounterName(id)}##territory{id}"))
                 _inspectorTerritory = id;
         }
         ImGui.Separator();
@@ -293,9 +288,9 @@ public sealed partial class ForetellEngine
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(mechanic.Observations.ToString());
                 ImGui.TableNextColumn();
-                ImGui.TextUnformatted($"{mechanic.SourceOID:X8}");
+                ImGui.TextUnformatted(encounter.Sources.TryGetValue(mechanic.SourceOID, out var source) ? SourceDisplayName(source) : mechanic.SourceKind.ToString());
                 ImGui.TableNextColumn();
-                ImGui.TextUnformatted($"{mechanic.TriggerKind} {mechanic.TriggerID:X}");
+                ImGui.TextUnformatted(MechanicDisplayName(mechanic));
             }
             ImGui.EndTable();
         }
@@ -340,7 +335,9 @@ public sealed partial class ForetellEngine
             changed |= ImGui.SliderFloat("Zoom: distance to edge (yalms)", ref _cfg.RadarWorldRadius, 5, 120);
             ImGui.TextDisabled($"Current view: {_cfg.RadarWorldRadius:F0} yalms from the player to each edge; smaller means more zoom.");
             if (_cfg.RadarShape == ForetellRadarShape.Auto)
-                ImGui.TextDisabled("Auto currently falls back to a circle until collision topology reaches a confidence threshold.");
+                ImGui.TextDisabled(_topologyAnalysis is { UnknownCells: 0, PassableCells: > 0 }
+                    ? $"Auto uses native collision topology ({_topologyAnalysis.PassableCells:N0} reachable cells)."
+                    : "Auto is scanning native collision; a temporary circle is used until the sweep is complete.");
             if (ImGui.Button("Reset radar to top-right"))
             {
                 _cfg.RadarPositionX = -1;
@@ -358,13 +355,17 @@ public sealed partial class ForetellEngine
     private void DrawTelemetryStatus()
     {
         var coverage = _store.Coverage;
-        var rawBacklogged = _raw.PendingItems > 4096 || _raw.PendingBytes > 16 * 1024 * 1024 || _raw.PendingFeatureWindows > 256;
+        var rawBacklogged = _raw.PendingItems > 4096 || _raw.PendingBytes > 16 * 1024 * 1024 || _raw.PendingFeatureWindows > 256
+            || _raw.RejectedFeatureWindows != 0 || Interlocked.Read(ref _ws.Network.RejectedActorControlSemantic) != 0;
         var nativeBacklogged = _nativeHookPending > 2048;
-        var healthy = !_raw.Failed && _raw.RejectedItems == 0 && !rawBacklogged && !nativeBacklogged && _nativeHookFailures == 0 && _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 && coverage.Unaccounted == 0;
+        var replayDegraded = _replay is { } replayWriter && (replayWriter.Failed || replayWriter.Rejected != 0 || replayWriter.Pending > 4096);
+        var topologyHealthy = _topologyFailures == 0 && !TopologySuspended;
+        var runtimeHealthy = _updateFailures == 0 && _drawFailures == 0 && _episodeRejections == 0 && _learningEvictions == 0 && !PerformanceThrottled;
+        var healthy = !_raw.Failed && _raw.RejectedItems == 0 && !rawBacklogged && !nativeBacklogged && !replayDegraded && _nativeHookFailures == 0 && _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 && topologyHealthy && runtimeHealthy && coverage.Unaccounted == 0;
         ImGui.Separator();
         ImGui.TextUnformatted("Telemetry completeness");
         ImGui.SameLine();
-        ImGui.TextUnformatted(healthy ? "DATA COMPLETE — HEALTHY" : "DATA COMPLETE — DEGRADED / AUDIT REQUIRED");
+        ImGui.TextUnformatted(healthy ? "FULL SENSOR CONTRACT — HEALTHY" : "SENSOR CONTRACT — DEGRADED / AUDIT REQUIRED");
         if (ImGui.BeginTable("ForetellTelemetryStatus", 3, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
         {
             ImGui.TableSetupColumn("Surface");
@@ -372,10 +373,13 @@ public sealed partial class ForetellEngine
             ImGui.TableSetupColumn("Critical-path policy");
             ImGui.TableHeadersRow();
             DrawTelemetryRow("World state + semantic network events", "ACTIVE", "Processed with bounded typed handlers");
-            DrawTelemetryRow("Raw server/client IPC + ActorControl", _raw.Failed ? "FAILED" : rawBacklogged ? "BACKLOG" : "LOSSLESS", $"Gzip: {_raw.PendingItems:N0} queued / {_raw.WrittenItems:N0} written / {_raw.RejectedItems:N0} rejected; features {_raw.PendingFeatureWindows:N0} queued / {_rawFeatureWindowsProcessed:N0} learned; drain {_lastRawFeatureDrainMilliseconds:F2} ms (peak {_peakRawFeatureDrainMilliseconds:F2})");
+            DrawTelemetryRow("Raw server/client IPC + ActorControl", _raw.Failed ? "FAILED" : rawBacklogged ? "BACKLOG" : "LOSSLESS", $"Gzip: {_raw.PendingItems:N0} queued / {_raw.WrittenItems:N0} written / {_raw.RejectedItems:N0} rejected; features {_raw.PendingFeatureWindows:N0} queued / {_rawFeatureWindowsProcessed:N0} learned / {_raw.RejectedFeatureWindows:N0} rejected; semantic ActorControl {Interlocked.Read(ref _ws.Network.RejectedActorControlSemantic):N0} rejected; drain {_lastRawFeatureDrainMilliseconds:F2} ms (peak {_peakRawFeatureDrainMilliseconds:F2})");
+            DrawTelemetryRow("Readable Replay Lab stream", !_cfg.RecordReplay ? "OPTIONAL / OFF" : replayDegraded ? "DEGRADED" : "ACTIVE", _replay == null ? "Exact raw journal remains active" : $"{_replay.Pending:N0} queued / {_replay.Written:N0} written / {_replay.Rejected:N0} rejected; normalized events only");
             DrawTelemetryRow("Typed runtime snapshots", _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 ? "ACTIVE" : "DEGRADED", $"1 Hz typed {_lastTypedSnapshotMilliseconds:F2} ms (peak {_peakTypedSnapshotMilliseconds:F2}); native {_lastNativeActorMilliseconds:F2} ms (peak {_peakNativeActorMilliseconds:F2}); {_typedSnapshotFailures + _nativeSnapshotFailures:N0} rejects");
             DrawTelemetryRow("Generic live reflection", "REPLACED", "Typed roots + WorldState deltas; no unmanaged getters on frame thread");
             DrawTelemetryRow("Native ObjectEffect + VFX lifecycle", _nativeHookFailures == 0 ? nativeBacklogged ? "BACKLOG" : "ACTIVE" : "DEGRADED", $"Primitive queue: {_nativeHookPending:N0} queued / {_nativeHookProcessed:N0} processed / {_nativeHookFailures:N0} rejected; drain {_lastNativeHookDrainMilliseconds:F2} ms (peak {_peakNativeHookDrainMilliseconds:F2})");
+            DrawTelemetryRow("Native collision topology", topologyHealthy ? _topologyAnalysis == null ? "WAITING" : "ACTIVE" : "SAFE COOLDOWN", $"{_topologyRays:N0} probes / {_topologySweeps:N0} sweeps / {_topologyChanges:N0} changes / {_topologyInvalidations:N0} structural signals; {_lastTopologyMilliseconds:F2} ms (peak {_peakTopologyMilliseconds:F2}); {_topologyOverruns:N0} overruns / {_topologyFailures:N0} rejects");
+            DrawTelemetryRow("Foretell frame budget", runtimeHealthy ? "HEALTHY" : PerformanceThrottled ? "ADAPTIVE THROTTLE" : "DEGRADED", $"{_lastUpdateMilliseconds:F2} ms last / {_meanUpdateMilliseconds:F2} ms mean / {_peakUpdateMilliseconds:F2} ms peak; {_updateOverruns:N0} overruns / {_updateFailures:N0} rejected updates / {_drawFailures:N0} rejected draws / {_episodeRejections:N0} pressure rejects / {_learningEvictions:N0} derived-memory evictions");
             DrawTelemetryRow("Coverage ledger", coverage.Unaccounted == 0 ? "ACCOUNTED" : "INCOMPLETE", $"{coverage.Ingested} ingested / {coverage.Excluded} explicitly excluded / {coverage.Unaccounted} unaccounted");
             ImGui.EndTable();
         }
@@ -397,8 +401,14 @@ public sealed partial class ForetellEngine
 
     private void DrawKnowledgeExplorer()
     {
-        ImGui.TextUnformatted("Learned knowledge is grouped by game content, territory, source and mechanic.");
-        ImGui.TextDisabled("Deleting an item also removes its dependent timelines and orphaned global fallback. Learning can rediscover it later.");
+        ImGui.SetNextItemWidth(360);
+        ImGui.InputText("Search names, zones, IDs or mechanic types", ref _knowledgeFilter, 160);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(190);
+        ImGui.Combo("Confidence", ref _knowledgeConfidenceFilter, KnowledgeConfidenceLabels, KnowledgeConfidenceLabels.Length);
+        ImGui.SameLine();
+        if (ImGui.Button("Clear filters")) { _knowledgeFilter = ""; _knowledgeConfidenceFilter = 0; }
+        ImGui.TextDisabled("Content → territory/duty → arena, environment, bosses/mobs → learned mechanics. Every level can be deleted.");
         ImGui.Separator();
 
         if (_store.Encounters.Count == 0)
@@ -413,11 +423,13 @@ public sealed partial class ForetellEngine
             .GroupBy(encounter => string.IsNullOrWhiteSpace(encounter.ContentCategory) ? "Unclassified" : encounter.ContentCategory))
         {
             var category = categoryGroup.Key;
-            var encounters = categoryGroup.ToArray();
+            var allEncounters = categoryGroup.ToArray();
+            var encounters = allEncounters.Where(KnowledgeEncounterVisible).ToArray();
+            if (encounters.Length == 0) continue;
             var categoryOpen = ImGui.TreeNodeEx($"{category}  ({encounters.Length})##knowledge-category-{category}", ImGuiTreeNodeFlags.DefaultOpen);
             ImGui.SameLine();
             if (ImGui.Button($"Delete category##delete-category-{category}"))
-                RequestPurge(category, $"Delete all {encounters.Length} learned content entries under {category}?", () => PurgeCategory(category));
+                RequestPurge(category, $"Delete all {allEncounters.Length} learned content entries under {category}, including items currently hidden by filters?", () => PurgeCategory(category));
             if (!categoryOpen)
                 continue;
 
@@ -429,6 +441,7 @@ public sealed partial class ForetellEngine
 
     private void DrawKnowledgeEncounter(EncounterMemory encounter)
     {
+        var parentMatchesSearch = KnowledgeEncounterIdentityMatches(encounter);
         var name = EncounterDisplayName(encounter);
         var label = encounter.ContentFinderConditionID != 0
             ? $"{name}  — {encounter.TerritoryName}"
@@ -442,29 +455,61 @@ public sealed partial class ForetellEngine
 
         ImGui.TextDisabled($"Territory {encounter.TerritoryID} | duty {encounter.ContentFinderConditionID} | {encounter.Sessions} sessions | {encounter.Pulls} pulls | {encounter.Mechanics.Count} mechanics");
 
-        var environment = encounter.Mechanics.Values.Where(mechanic => mechanic.SourceOID == 0 || mechanic.SourceKind == SourceKind.Environment).ToArray();
+        if (encounter.Topologies.Count > 0 && ImGui.TreeNodeEx($"Arena topology  ({encounter.Topologies.Count} states)##topologies-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
+        {
+            foreach (var topology in encounter.Topologies.Values.OrderByDescending(t => t.LastSeen))
+            {
+                ImGui.BulletText($"{topology.Fingerprint[..Math.Min(8, topology.Fingerprint.Length)]} · {topology.PassableCells:N0} reachable cells · {topology.Contours.Count} contours · seen {topology.Observations}x");
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Delete##delete-topology-{encounter.TerritoryID}-{topology.Fingerprint}"))
+                    RequestPurge("Arena topology", "Delete this learned collision state? It can be scanned again during the next pull.", () => PurgeTopology(encounter.TerritoryID, topology.Fingerprint));
+            }
+            ImGui.TreePop();
+        }
+
+        var environment = encounter.Mechanics.Values.Where(mechanic => (mechanic.SourceOID == 0 || mechanic.SourceKind == SourceKind.Environment) && (parentMatchesSearch || KnowledgeMechanicVisible(mechanic))).ToArray();
         if (environment.Length != 0)
             DrawEnvironmentKnowledge(encounter, environment);
 
+        var mechanicsBySource = encounter.Mechanics.Values
+            .Where(mechanic => parentMatchesSearch || KnowledgeMechanicVisible(mechanic))
+            .GroupBy(mechanic => mechanic.SourceOID)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(mechanic => mechanic.Confidence).ToArray());
+        var visibleMechanicSourceIDs = mechanicsBySource.Keys.ToHashSet();
+        bool DirectSourceMatch(SourceMemory source) => string.IsNullOrWhiteSpace(_knowledgeFilter)
+            || ContainsFilter(SourceDisplayName(source)) || ContainsFilter($"{source.OID:X}") || visibleMechanicSourceIDs.Contains(source.OID);
+        var allMechanicSourceIDs = encounter.Mechanics.Values.Select(mechanic => mechanic.SourceOID).ToHashSet();
         var mechanicSources = encounter.Sources.Values
-            .Where(source => source.OID != 0 && encounter.Mechanics.Values.Any(mechanic => mechanic.SourceOID == source.OID))
-            .OrderByDescending(source => encounter.Mechanics.Values.Count(mechanic => mechanic.SourceOID == source.OID))
+            .Where(source => source.OID != 0 && (parentMatchesSearch || DirectSourceMatch(source)) && mechanicsBySource.ContainsKey(source.OID))
+            .OrderByDescending(source => mechanicsBySource[source.OID].Length)
             .ToArray();
         if (mechanicSources.Length != 0 && ImGui.TreeNodeEx($"Bosses & mechanic sources  ({mechanicSources.Length})##mechanic-sources-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
         {
             foreach (var source in mechanicSources)
-                DrawSourceKnowledge(encounter, source);
+                DrawSourceKnowledge(encounter, source, mechanicsBySource[source.OID]);
             ImGui.TreePop();
         }
 
         var otherSources = encounter.Sources.Values
-            .Where(source => source.OID != 0 && !encounter.Mechanics.Values.Any(mechanic => mechanic.SourceOID == source.OID))
+            .Where(source => source.OID != 0 && source.Kind is not SourceKind.Player and not SourceKind.Pet && _knowledgeConfidenceFilter == 0
+                && (parentMatchesSearch || DirectSourceMatch(source)) && !allMechanicSourceIDs.Contains(source.OID))
             .OrderByDescending(source => source.Observations)
             .ToArray();
         if (otherSources.Length != 0 && ImGui.TreeNodeEx($"Other observed mobs / objects  ({otherSources.Length})##other-sources-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
         {
             foreach (var source in otherSources)
-                DrawSourceKnowledge(encounter, source);
+                DrawSourceKnowledge(encounter, source, []);
+            ImGui.TreePop();
+        }
+        var partySources = encounter.Sources.Values
+            .Where(source => source.Kind is SourceKind.Player or SourceKind.Pet && _knowledgeConfidenceFilter == 0
+                && (parentMatchesSearch || DirectSourceMatch(source)))
+            .OrderByDescending(source => source.Observations)
+            .ToArray();
+        if (partySources.Length != 0 && ImGui.TreeNodeEx($"Party, allies & pets  ({partySources.Length})##party-sources-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
+        {
+            foreach (var source in partySources)
+                DrawSourceKnowledge(encounter, source, []);
             ImGui.TreePop();
         }
         ImGui.TreePop();
@@ -483,9 +528,8 @@ public sealed partial class ForetellEngine
         ImGui.TreePop();
     }
 
-    private void DrawSourceKnowledge(EncounterMemory encounter, SourceMemory source)
+    private void DrawSourceKnowledge(EncounterMemory encounter, SourceMemory source, ContextualMechanic[] mechanics)
     {
-        var mechanics = encounter.Mechanics.Values.Where(mechanic => mechanic.SourceOID == source.OID).OrderByDescending(mechanic => mechanic.Confidence).ToArray();
         var name = SourceDisplayName(source);
         var open = ImGui.TreeNodeEx($"{name}  ({mechanics.Length} mechanics)##source-{encounter.TerritoryID}-{source.OID}", ImGuiTreeNodeFlags.SpanAvailWidth);
         ImGui.SameLine();
@@ -519,8 +563,43 @@ public sealed partial class ForetellEngine
         }
         ImGui.TextUnformatted(GeometryDescription(mechanic));
         ImGui.TextDisabled($"Trigger {mechanic.TriggerKind} 0x{mechanic.TriggerID:X} | first {mechanic.FirstSeen:u} | last {mechanic.LastSeen:u}");
+        if (mechanic.Evidence.Count > 0)
+            ImGui.TextWrapped("Evidence: " + string.Join(" · ", mechanic.Evidence.OrderByDescending(item => item.Value).Select(item => $"{ObservationLabel(item.Key)} ×{item.Value}")));
         ImGui.TreePop();
     }
+
+    private static void DrawInspectorTab(string label, Action draw)
+    {
+        if (!ImGui.BeginTabItem(label)) return;
+        try { draw(); }
+        finally { ImGui.EndTabItem(); }
+    }
+
+    private bool KnowledgeEncounterVisible(EncounterMemory encounter)
+    {
+        var confidenceVisible = _knowledgeConfidenceFilter == 0 || encounter.Mechanics.Values.Any(KnowledgeMechanicVisible);
+        if (!confidenceVisible) return false;
+        if (string.IsNullOrWhiteSpace(_knowledgeFilter)) return true;
+        return KnowledgeEncounterIdentityMatches(encounter)
+            || encounter.Sources.Values.Any(source => ContainsFilter(SourceDisplayName(source)) || ContainsFilter($"{source.OID:X}"))
+            || encounter.Mechanics.Values.Any(mechanic => ContainsFilter(MechanicDisplayName(mechanic)) || ContainsFilter(mechanic.Kind.ToString()) || ContainsFilter(mechanic.Geometry.ToString()));
+    }
+
+    private bool KnowledgeEncounterIdentityMatches(EncounterMemory encounter)
+        => string.IsNullOrWhiteSpace(_knowledgeFilter) || ContainsFilter(EncounterDisplayName(encounter)) || ContainsFilter(encounter.TerritoryName)
+            || ContainsFilter(encounter.ContentCategory) || ContainsFilter(encounter.TerritoryID.ToString());
+
+    private bool KnowledgeMechanicVisible(ContextualMechanic mechanic)
+    {
+        var threshold = _knowledgeConfidenceFilter switch { 1 => .75f, 2 => .95f, 3 => .99f, _ => 0 };
+        if (mechanic.Confidence < threshold) return false;
+        return string.IsNullOrWhiteSpace(_knowledgeFilter) || ContainsFilter(MechanicDisplayName(mechanic))
+            || ContainsFilter(mechanic.Kind.ToString()) || ContainsFilter(mechanic.Geometry.ToString())
+            || ContainsFilter(mechanic.TriggerKind.ToString()) || ContainsFilter($"{mechanic.TriggerID:X}");
+    }
+
+    private bool ContainsFilter(string? value)
+        => value?.Contains(_knowledgeFilter.Trim(), StringComparison.OrdinalIgnoreCase) == true;
 
     private void RequestPurge(string title, string description, Action purge)
     {
@@ -543,11 +622,16 @@ public sealed partial class ForetellEngine
         ImGui.TextUnformatted(_pendingPurgeTitle);
         ImGui.Separator();
         ImGui.TextWrapped(_pendingPurgeDescription);
-        ImGui.TextDisabled("This removes learned local data. It does not blacklist the item; active learning may discover it again.");
-        if (ImGui.Button("Delete learned data"))
+        ImGui.TextDisabled("This removes local data permanently. Learned items can be rediscovered while learning is enabled.");
+        if (ImGui.Button("Delete local data"))
         {
-            _pendingPurge?.Invoke();
-            SaveStore();
+            try
+            {
+                _pendingPurge?.Invoke();
+                SaveStore();
+                _purgeResult = $"Deleted: {_pendingPurgeTitle}";
+            }
+            catch (Exception e) { _purgeResult = $"Delete failed safely: {e.Message}"; }
             _pendingPurge = null;
             ImGui.CloseCurrentPopup();
         }
@@ -583,39 +667,6 @@ public sealed partial class ForetellEngine
     private static string ConfidenceBadge(float confidence)
         => confidence >= .99f ? "[SAFE]" : confidence >= .95f ? "[HIGH]" : confidence >= .75f ? "[LEARNED]" : "[LEARNING]";
 
-    private void DrawInspectorMechanics()
-    {
-        if (!_store.Encounters.TryGetValue(_inspectorTerritory, out var encounter) || encounter.Mechanics.Count == 0)
-        {
-            ImGui.TextUnformatted("No mechanics learned for this territory yet. Use Observe mode and run the content first.");
-            return;
-        }
-
-        ImGui.TextUnformatted("HOW TO READ THIS: confidence combines fit quality, repetition, agreement and ambiguity. A mechanic can be observed many times and still remain low-confidence if the evidence conflicts.");
-        ImGui.TextUnformatted($"Display threshold {_cfg.VisualConfidence:F0}% | warning threshold {_cfg.WarningConfidence:F0}% | safe-guidance threshold {_cfg.SafeConfidence:F0}% (Never Guess Lethal)");
-        ImGui.Separator();
-        foreach (var mechanic in encounter.Mechanics.Values.OrderByDescending(m => m.Confidence).ThenByDescending(m => m.LastSeen).Take(250))
-        {
-            var title = $"{ConfidenceBadge(mechanic.Confidence)} {mechanic.Kind} / {mechanic.Geometry} - {mechanic.Confidence:P0} - source {mechanic.SourceOID:X} - {mechanic.TriggerKind} {mechanic.TriggerID:X}##{mechanic.Key}";
-            if (!ImGui.CollapsingHeader(title)) continue;
-            ImGui.TextUnformatted($"What Foretell thinks: {mechanic.Kind} using {mechanic.Geometry} geometry ({GeometryDescription(mechanic)}).");
-            ImGui.TextUnformatted($"Confidence: {mechanic.Confidence:P1} | fit/evidence score: {mechanic.Score:P1}");
-            ImGui.TextUnformatted($"Evidence history: {mechanic.Observations} observations | {mechanic.Confirmations} confirmations | {mechanic.AmbiguousSamples} conflicting/ambiguous samples");
-            ImGui.TextUnformatted($"Outcome evidence: affected={mechanic.AffectedSamples} | status={mechanic.StatusSamples} | movement={mechanic.MovementSamples} | deaths={mechanic.DeathSamples}");
-            ImGui.TextUnformatted($"Average warning lead/cast: {mechanic.MeanLeadSeconds:F2}s | retained geometry samples: {mechanic.Samples?.Count ?? 0}");
-            ImGui.TextUnformatted($"Source: OID {mechanic.SourceOID:X8} ({mechanic.SourceKind}) | trigger: {mechanic.TriggerKind} ID {mechanic.TriggerID:X}");
-            if (mechanic.PriorConfidence > 0 || mechanic.PriorCastType != 0)
-            {
-                ImGui.TextUnformatted($"Client-data prior: {mechanic.PriorGeometry} {mechanic.PriorConfidence:P0} | CastType={mechanic.PriorCastType} | EffectRange={mechanic.PriorEffectRange} | XAxis={mechanic.PriorXAxisModifier} | TargetArea={mechanic.PriorTargetArea}");
-                ImGui.TextUnformatted($"Omen: {mechanic.PriorOmenID}:{mechanic.PriorOmen}");
-                ImGui.TextWrapped($"Prior rationale: {mechanic.PriorEvidence}");
-            }
-            ImGui.TextUnformatted($"First seen: {mechanic.FirstSeen:u} | last seen: {mechanic.LastSeen:u}");
-            ImGui.TextUnformatted("Signals used: " + (mechanic.Evidence.Count == 0 ? "none" : string.Join(", ", mechanic.Evidence.OrderByDescending(e => e.Value).Select(e => $"{e.Key} x{e.Value}"))));
-            ImGui.TextUnformatted($"Internal key: {mechanic.Key}");
-        }
-    }
-
     private static string GeometryDescription(ContextualMechanic mechanic) => mechanic.Geometry switch
     {
         GeometryKind.Circle => $"radius {mechanic.P1:F1} yalms",
@@ -626,40 +677,6 @@ public sealed partial class ForetellEngine
         _ => "geometry not confidently identified yet"
     };
 
-    private void DrawInspectorSources()
-    {
-        if (!_store.Encounters.TryGetValue(_inspectorTerritory, out var encounter) || encounter.Sources.Count == 0)
-        {
-            ImGui.TextUnformatted("No mobs or event sources observed yet.");
-            return;
-        }
-
-        if (ImGui.BeginTable("ForetellSources", 7, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
-        {
-            ImGui.TableSetupColumn("OID");
-            ImGui.TableSetupColumn("Kind");
-            ImGui.TableSetupColumn("Observations");
-            ImGui.TableSetupColumn("Casts");
-            ImGui.TableSetupColumn("Signals");
-            ImGui.TableSetupColumn("Mechanics");
-            ImGui.TableSetupColumn("Deaths");
-            ImGui.TableHeadersRow();
-            foreach (var source in encounter.Sources.Values.OrderByDescending(x => x.Casts).ThenByDescending(x => x.Signals).Take(250))
-            {
-                var learned = encounter.Mechanics.Values.Count(m => m.SourceOID == source.OID);
-                ImGui.TableNextRow();
-                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{source.OID:X8}");
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Kind.ToString());
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Observations.ToString("N0"));
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Casts.ToString("N0"));
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Signals.ToString("N0"));
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(learned.ToString());
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(source.Deaths.ToString());
-            }
-            ImGui.EndTable();
-        }
-    }
-
     private void DrawInspectorTimeline()
     {
         if (!_store.Encounters.TryGetValue(_inspectorTerritory, out var encounter))
@@ -668,8 +685,41 @@ public sealed partial class ForetellEngine
             return;
         }
 
-        ImGui.TextUnformatted($"{encounter.Phases.Count} phase buckets  |  {encounter.Timeline.Count} learned transitions");
-        if (ImGui.BeginTable("ForetellTimeline", 7, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        ImGui.TextUnformatted($"{encounter.Phases.Count} learned phases  |  {encounter.Timeline.Count} transitions  |  {encounter.Composites.Count} simultaneous patterns");
+        ImGui.TextDisabled("Names come from the game's own data sheets; IDs remain visible only when no name exists.");
+        if (encounter.PhaseBoundaries.Count > 0 && ImGui.TreeNode($"Phase-boundary evidence ({encounter.PhaseBoundaries.Count})"))
+        {
+            foreach (var pair in encounter.PhaseBoundaries.OrderByDescending(item => item.Value.Accepted).ThenByDescending(item => item.Value.PullsSeen))
+            {
+                var boundary = pair.Value;
+                ImGui.BulletText($"{(boundary.Accepted ? "Accepted" : "Learning")} · {ObservationLabel(boundary.EvidenceKind)} · repeated in {boundary.PullsSeen} pull(s) · {boundary.Signature}");
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Delete##delete-boundary-{pair.Key}"))
+                    RequestPurge("Phase-boundary evidence", "Delete this learned structural-change candidate?", () => PurgePhaseBoundary(encounter.TerritoryID, pair.Key));
+            }
+            ImGui.TreePop();
+        }
+        foreach (var phase in encounter.Phases.Values.OrderBy(item => item.Phase))
+        {
+            var open = ImGui.TreeNodeEx($"Phase {phase.Phase + 1} · {phase.Signals.Count} signals · {phase.Seen:N0} observations##phase-{encounter.TerritoryID}-{phase.Phase}", ImGuiTreeNodeFlags.SpanAvailWidth);
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"Delete phase##delete-phase-{encounter.TerritoryID}-{phase.Phase}"))
+                RequestPurge($"Phase {phase.Phase + 1}", "Delete this learned phase, its signal sequence, transitions and simultaneous patterns?", () => PurgePhase(encounter.TerritoryID, phase.Phase));
+            if (!open) continue;
+            foreach (var signal in phase.Signals.OrderByDescending(item => item.Value).Take(80))
+            {
+                ImGui.BulletText($"{SignalDisplayName(encounter, signal.Key)} · {signal.Value:N0}×");
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Delete##delete-phase-signal-{phase.Phase}-{signal.Key}"))
+                    RequestPurge("Phase signal", "Delete this signal from the phase and remove dependent transitions/composites?", () => PurgePhaseSignal(encounter.TerritoryID, phase.Phase, signal.Key));
+            }
+            ImGui.TreePop();
+        }
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("Learned transitions");
+        var outgoingCounts = encounter.Timeline.Values.GroupBy(edge => (edge.Phase, edge.From)).ToDictionary(group => group.Key, group => group.Sum(edge => edge.Count));
+        if (ImGui.BeginTable("ForetellTimeline", 9, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
         {
             ImGui.TableSetupColumn("Phase");
             ImGui.TableSetupColumn("From");
@@ -678,25 +728,100 @@ public sealed partial class ForetellEngine
             ImGui.TableSetupColumn("Deviation");
             ImGui.TableSetupColumn("Seen");
             ImGui.TableSetupColumn("Stability");
+            ImGui.TableSetupColumn("Branch chance");
+            ImGui.TableSetupColumn("Manage");
             ImGui.TableHeadersRow();
-            foreach (var edge in encounter.Timeline.Values.OrderByDescending(x => x.Count).ThenByDescending(x => x.Stability).Take(180))
+            foreach (var pair in encounter.Timeline.OrderByDescending(x => x.Value.Count).ThenByDescending(x => x.Value.Stability).Take(180))
             {
+                var edge = pair.Value;
                 ImGui.TableNextRow();
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(edge.Phase.ToString());
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(edge.From);
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(edge.To);
+                ImGui.TableNextColumn(); ImGui.TextUnformatted((edge.Phase + 1).ToString());
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(SignalDisplayName(encounter, edge.From));
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(SignalDisplayName(encounter, edge.To));
                 ImGui.TableNextColumn(); ImGui.TextUnformatted($"{edge.MeanDelay:F2}s");
                 ImGui.TableNextColumn(); ImGui.TextUnformatted($"+/- {edge.StdDev:F2}s");
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(edge.Count.ToString());
                 ImGui.TableNextColumn(); ImGui.TextUnformatted($"{edge.Stability:P0}");
+                var outgoing = outgoingCounts.GetValueOrDefault((edge.Phase, edge.From));
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(outgoing > 0 ? $"{edge.Count / (float)outgoing:P0}" : "—");
+                ImGui.TableNextColumn();
+                if (ImGui.SmallButton($"Delete##delete-edge-{pair.Key}"))
+                    RequestPurge("Timeline transition", $"Delete {SignalDisplayName(encounter, edge.From)} → {SignalDisplayName(encounter, edge.To)}?", () => PurgeTimelineEdge(encounter.TerritoryID, pair.Key));
             }
             ImGui.EndTable();
         }
+        if (encounter.Composites.Count > 0 && ImGui.CollapsingHeader("Simultaneous / composite mechanics", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            foreach (var pair in encounter.Composites.OrderByDescending(c => c.Value.Count).Take(80))
+            {
+                var composite = pair.Value;
+                ImGui.BulletText($"Phase {composite.Phase + 1}: {string.Join(" + ", composite.Signals.Select(signal => SignalDisplayName(encounter, signal)))} · {composite.Count}× · skew {composite.MeanSkewSeconds:F2}s ± {composite.StdDev:F2}s");
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Delete##delete-composite-{pair.Key}"))
+                    RequestPurge("Simultaneous pattern", "Delete this learned composite pattern? Individual mechanics are kept.", () => PurgeComposite(encounter.TerritoryID, pair.Key));
+            }
+        }
     }
+
+    private string SignalDisplayName(EncounterMemory encounter, string signal)
+    {
+        if (encounter.Mechanics.TryGetValue(signal, out var mechanic))
+            return MechanicDisplayName(mechanic);
+        var parts = signal.Split(':', 3);
+        if (parts.Length != 3 || !uint.TryParse(parts[0], System.Globalization.NumberStyles.HexNumber, null, out var oid)
+            || !Enum.TryParse<ObservationKind>(parts[1], out var kind)
+            || !uint.TryParse(parts[2], System.Globalization.NumberStyles.HexNumber, null, out var id))
+            return signal;
+        var source = encounter.Sources.TryGetValue(oid, out var knownSource) ? SourceDisplayName(knownSource) : oid == 0 ? "Environment" : $"Object 0x{oid:X}";
+        string eventName = kind.ToString();
+        if (id != 0 && kind is ObservationKind.CastStart or ObservationKind.CastFinish or ObservationKind.ActionResolved or ObservationKind.AffectedTarget)
+        {
+            var action = LookupActionName(id);
+            eventName = string.IsNullOrWhiteSpace(action) ? $"{ObservationLabel(kind)} 0x{id:X}" : action;
+        }
+        else if (id != 0) eventName = $"{ObservationLabel(kind)} 0x{id:X}";
+        return $"{source} — {eventName}";
+    }
+
+    private static string ObservationLabel(ObservationKind kind) => kind switch
+    {
+        ObservationKind.CastStart => "Cast started",
+        ObservationKind.CastFinish => "Cast finished",
+        ObservationKind.ActionResolved => "Action impact",
+        ObservationKind.AffectedTarget => "Affected target",
+        ObservationKind.EffectResult => "Effect confirmed",
+        ObservationKind.Icon => "Target marker",
+        ObservationKind.VFX or ObservationKind.NativeVFXSpawn => "Visual effect",
+        ObservationKind.TetherStart => "Tether",
+        ObservationKind.StatusGain => "Status gained",
+        ObservationKind.MapEffect or ObservationKind.LegacyMapEffect => "Arena change",
+        ObservationKind.DirectorUpdate => "Encounter state",
+        ObservationKind.TopologySnapshot => "Arena topology",
+        _ => kind.ToString()
+    };
 
     private void DrawInspectorObservations()
     {
-        ImGui.TextUnformatted("Latest normalized observations (raw binary payloads remain in Replay Lab)");
+        var pause = _liveFeedPaused;
+        if (ImGui.Checkbox("Pause view", ref pause))
+        {
+            _liveFeedPaused = pause;
+            if (pause) _pausedLiveFeed = _session.Recent.ToList();
+            else _pausedLiveFeed.Clear();
+        }
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(220);
+        ImGui.Combo("Event type", ref _liveFeedKindFilter, ObservationKindLabels, ObservationKindLabels.Length);
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(280);
+        ImGui.InputText("Search", ref _liveFeedFilter, 120);
+        ImGui.TextDisabled("Readable normalized events are shown here; complete binary payloads remain in Replay & storage.");
+        IEnumerable<ForetellObservation> source = _liveFeedPaused ? _pausedLiveFeed : _session.Recent;
+        var observations = source.AsEnumerable();
+        if (_liveFeedKindFilter > 0)
+            observations = observations.Where(observation => (int)observation.Kind == _liveFeedKindFilter - 1);
+        if (!string.IsNullOrWhiteSpace(_liveFeedFilter))
+            observations = observations.Where(observation => ObservationMatchesFilter(observation, _liveFeedFilter));
         if (ImGui.BeginTable("ForetellLiveFeed", 6, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
         {
             ImGui.TableSetupColumn("Time");
@@ -706,28 +831,60 @@ public sealed partial class ForetellEngine
             ImGui.TableSetupColumn("Target");
             ImGui.TableSetupColumn("Detail");
             ImGui.TableHeadersRow();
-            foreach (var observation in _session.Recent.Reverse().Take(80))
+            foreach (var observation in observations.Reverse().Take(120))
             {
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn(); ImGui.TextUnformatted($"{observation.At:T}.{observation.At.Millisecond:000}");
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(observation.Kind.ToString());
-                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{observation.ActorOID:X8}");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(ObservationLabel(observation.Kind));
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(ObservationSourceName(observation));
                 ImGui.TableNextColumn(); ImGui.TextUnformatted($"{observation.PrimaryID:X}");
                 ImGui.TableNextColumn(); ImGui.TextUnformatted($"{observation.TargetID:X}");
-                ImGui.TableNextColumn(); ImGui.TextUnformatted(observation.Detail);
+                ImGui.TableNextColumn();
+                var detail = DisplayText(observation.Detail, 72);
+                ImGui.TextUnformatted(detail);
+                if (detail != observation.Detail && ImGui.IsItemHovered()) ImGui.SetTooltip(observation.Detail);
             }
             ImGui.EndTable();
         }
     }
 
+    private bool ObservationMatchesFilter(ForetellObservation observation, string filter)
+        => ObservationLabel(observation.Kind).Contains(filter, StringComparison.OrdinalIgnoreCase)
+            || observation.Detail.Contains(filter, StringComparison.OrdinalIgnoreCase)
+            || ObservationSourceName(observation).Contains(filter, StringComparison.OrdinalIgnoreCase)
+            || $"{observation.PrimaryID:X}".Contains(filter, StringComparison.OrdinalIgnoreCase);
+
+    private string ObservationSourceName(ForetellObservation observation)
+    {
+        var live = observation.ActorID == 0 ? null : _ws.Actors.Find(observation.ActorID);
+        if (live != null && !string.IsNullOrWhiteSpace(live.Name)) return live.Name;
+        if (_store.Encounters.TryGetValue(observation.TerritoryID, out var encounter)
+            && encounter.Sources.TryGetValue(observation.ActorOID, out var source)) return SourceDisplayName(source);
+        return observation.SourceKind == SourceKind.Environment ? "Environment" : observation.ActorOID == 0 ? observation.SourceKind.ToString() : $"{observation.SourceKind} 0x{observation.ActorOID:X}";
+    }
+
+    private static string DisplayText(string value, int maxCharacters)
+        => value.Length <= maxCharacters ? value : value[..Math.Max(1, maxCharacters - 1)] + "…";
+
     private void DrawInspectorReplay()
     {
-        ImGui.TextUnformatted("REPLAY LAB");
-        ImGui.TextUnformatted("Foretell records its normalized encounter observations, then can feed them back through the same learner in an isolated sandbox. It is not a video replay and it never mutates your live memory.");
-        ImGui.TextUnformatted("This lets us change the inference algorithm and retest the exact same pull without returning to the boss.");
-        ImGui.TextUnformatted($"Current recording: {(string.IsNullOrEmpty(_replayPath) ? "none" : _replayPath)}");
-        ImGui.TextWrapped($"Lossless raw journal: {_rawPath} | {_raw.PendingItems:N0} queued records | {_raw.WrittenItems:N0} written | {_raw.WrittenBytes / (1024.0 * 1024.0):F1} MiB uncompressed payload");
+        PollRawAnalysis();
+        ImGui.TextUnformatted("Replay Lab");
+        ImGui.TextDisabled("Reprocess a recorded pull through the current learner without changing live knowledge.");
+        if (ImGui.BeginTable("ReplayStorageMetrics", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV))
+        {
+            DrawMetricCell(_raw.WrittenItems.ToString("N0"), "Raw records written");
+            DrawMetricCell($"{_raw.WrittenBytes / (1024.0 * 1024.0):F1} MiB", "Raw payload");
+            DrawMetricCell(_raw.PendingItems.ToString("N0"), "Writer backlog");
+            DrawMetricCell(_raw.RejectedItems.ToString("N0"), "Rejected");
+            ImGui.EndTable();
+        }
+        ImGui.BeginDisabled(_inPull);
         if (ImGui.Button("Replay latest in sandbox")) ReplayLatest();
+        ImGui.EndDisabled();
+        if (_inPull && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled)) ImGui.SetTooltip("Replay is disabled during combat to protect frame time.");
+        ImGui.SameLine();
+        if (ImGui.Button(_rawAnalysisTask is { IsCompleted: false } ? "Indexing raw journal..." : "Index latest raw journal")) StartRawAnalysis();
         ImGui.SameLine();
         if (ImGui.Button("Export diagnostics snapshot"))
         {
@@ -736,24 +893,109 @@ public sealed partial class ForetellEngine
         }
         ImGui.SameLine();
         if (ImGui.Button("Save learned memory now")) SaveStore();
+        if (!string.IsNullOrWhiteSpace(_purgeResult)) ImGui.TextDisabled(_purgeResult);
 
         ImGui.Separator();
         var replay = _lastReplayReport;
-        ImGui.TextUnformatted($"Last Replay Lab run: {(string.IsNullOrEmpty(replay.File) ? "not run yet" : replay.File)}");
-        ImGui.TextUnformatted($"Status: {replay.Status}");
-        ImGui.TextUnformatted($"Input: {replay.Lines} lines | {replay.Parsed} parsed | {replay.Rejected} rejected | {replay.Territories} territories");
-        ImGui.TextUnformatted($"Sandbox result: {replay.RediscoveredMechanics} mechanics rediscovered | {replay.AmbiguousMechanics} ambiguous evidence cases");
+        ImGui.TextUnformatted($"Last sandbox run · {(string.IsNullOrEmpty(replay.File) ? "not run yet" : replay.File)}");
+        ImGui.TextDisabled(replay.Status);
+        if (ImGui.BeginTable("ReplayResultMetrics", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV))
+        {
+            DrawMetricCell(replay.Parsed.ToString("N0"), "Events parsed");
+            DrawMetricCell(replay.RawRecords.ToString("N0"), "Raw records");
+            DrawMetricCell(replay.RediscoveredMechanics.ToString("N0"), "Mechanics rediscovered");
+            DrawMetricCell((replay.Rejected + replay.RawErrors).ToString("N0"), "Errors/rejected");
+            ImGui.EndTable();
+        }
         if (replay.First != default) ImGui.TextUnformatted($"Recorded time range: {replay.First:u} -> {replay.Last:u}");
-        if (replay.Counts.Count > 0)
-            ImGui.TextUnformatted("Observation mix: " + string.Join(", ", replay.Counts.OrderByDescending(kv => kv.Value).Take(16).Select(kv => $"{kv.Key}={kv.Value}")));
         if (!string.IsNullOrEmpty(_diagnosticsPath))
             ImGui.TextUnformatted($"Latest diagnostics export: {_diagnosticsPath}");
+        if (_lastRawAnalysis is { } raw)
+        {
+            ImGui.Separator();
+            ImGui.TextUnformatted($"RAW INDEX · {Path.GetFileName(raw.Path)} · schema {raw.Schema} · {(raw.Complete ? "COMPLETE" : "DEGRADED")}");
+            ImGui.TextUnformatted($"{raw.Records:N0} records · {raw.PayloadBytes / (1024.0 * 1024.0):F1} MiB · {raw.Windows.Count:N0} windows · {raw.Opcodes.Count:N0} opcode families");
+            ImGui.TextUnformatted($"Server {raw.ServerPackets:N0} · client {raw.ClientPackets:N0} · ActorControl {raw.ActorControls:N0}");
+            if (raw.FirstAt != default) ImGui.TextUnformatted($"{raw.FirstAt:u} → {raw.LastAt:u}");
+            foreach (var error in raw.Errors.Take(4)) ImGui.TextColored(new Vector4(1, .35f, .25f, 1), error);
+        }
 
-        ImGui.Separator();
-        ImGui.TextUnformatted("RECENT SESSIONS");
-        foreach (var session in _store.Sessions.Where(s => _inspectorTerritory == 0 || s.TerritoryID == _inspectorTerritory).OrderByDescending(s => s.Started).Take(24))
-            ImGui.TextUnformatted($"{session.Started:u} | territory {session.TerritoryID} | pulls {session.Pulls} | obs {session.Observations} | mechanics {session.MechanicsFinalized} | new {session.NewMechanics} | ambiguous {session.AmbiguousMechanics} | {session.ReplayFile}");
+        DrawStorageManager();
+
+        if (ImGui.CollapsingHeader("Recent learning sessions"))
+        {
+            foreach (var session in _store.Sessions.Where(s => _inspectorTerritory == 0 || s.TerritoryID == _inspectorTerritory).OrderByDescending(s => s.Started).Take(40))
+            {
+                ImGui.BulletText($"{session.Started:u} · {EncounterName(session.TerritoryID)} · {session.Observations:N0} events · {session.MechanicsFinalized} mechanics");
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Delete##delete-session-{session.SessionID}"))
+                    RequestPurge("Learning session", "Delete this historical session summary? Learned mechanics remain intact.", () => PurgeSession(session.SessionID));
+            }
+        }
     }
+
+    private void DrawStorageManager()
+    {
+        if (!ImGui.CollapsingHeader("Local recordings & storage", ImGuiTreeNodeFlags.DefaultOpen)) return;
+        RefreshStorageFiles();
+        var bytes = _storageFiles.Sum(file => file.Bytes);
+        ImGui.TextUnformatted($"{_storageFiles.Count:N0} files · {FormatBytes(bytes)} total");
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Refresh")) { _lastStorageRefresh = default; RefreshStorageFiles(); }
+        ImGui.TextDisabled("The active file is protected. Delete old captures individually after reviewing their date and size.");
+        if (ImGui.BeginTable("ForetellStorageFiles", 5, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Type"); ImGui.TableSetupColumn("File"); ImGui.TableSetupColumn("Updated"); ImGui.TableSetupColumn("Size"); ImGui.TableSetupColumn("Manage");
+            ImGui.TableHeadersRow();
+            foreach (var file in _storageFiles.OrderByDescending(file => file.Updated).Take(100))
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(file.Active ? $"{file.Kind} · active" : file.Kind);
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(Path.GetFileName(file.Path));
+                ImGui.TableNextColumn(); ImGui.TextUnformatted($"{file.Updated:u}");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(FormatBytes(file.Bytes));
+                ImGui.TableNextColumn();
+                if (file.Active) ImGui.TextDisabled("Protected");
+                else if (ImGui.SmallButton($"Delete##delete-file-{file.Path}"))
+                    RequestPurge(Path.GetFileName(file.Path), $"Permanently delete this {file.Kind.ToLowerInvariant()} file ({FormatBytes(file.Bytes)})?", () => DeleteStorageFile(file.Path));
+            }
+            ImGui.EndTable();
+        }
+        if (ImGui.TreeNode("Current file paths"))
+        {
+            ImGui.TextWrapped($"Raw: {_rawPath}");
+            ImGui.TextWrapped($"Readable replay: {(string.IsNullOrEmpty(_replayPath) ? "disabled" : _replayPath)}");
+            ImGui.TreePop();
+        }
+    }
+
+    private void RefreshStorageFiles()
+    {
+        if ((DateTime.UtcNow - _lastStorageRefresh).TotalSeconds < 5) return;
+        _lastStorageRefresh = DateTime.UtcNow;
+        try
+        {
+            _storageFiles = Directory.EnumerateFiles(_rawDir, "*.ftraw.gz").Take(5000)
+                .Select(path => StorageEntry(path, "Raw", string.Equals(path, _rawPath, StringComparison.OrdinalIgnoreCase)))
+                .Concat(Directory.EnumerateFiles(_replayDir, "*.jsonl").Take(5000).Select(path => StorageEntry(path, "Replay", string.Equals(path, _replayPath, StringComparison.OrdinalIgnoreCase))))
+                .OrderByDescending(file => file.Updated).Take(5000).ToList();
+        }
+        catch (Exception e) { _purgeResult = $"Storage scan failed safely: {e.Message}"; }
+    }
+
+    private static StorageFileEntry StorageEntry(string path, string kind, bool active)
+    {
+        var info = new FileInfo(path);
+        return new(path, kind, info.Exists ? info.Length : 0, info.Exists ? info.LastWriteTimeUtc : default, active);
+    }
+
+    private string EncounterName(uint territoryID)
+        => _store.Encounters.TryGetValue(territoryID, out var encounter) ? EncounterDisplayName(encounter) : $"Territory {territoryID}";
+
+    private static string FormatBytes(long bytes)
+        => bytes >= 1024L * 1024 * 1024 ? $"{bytes / (1024d * 1024 * 1024):F2} GiB"
+            : bytes >= 1024L * 1024 ? $"{bytes / (1024d * 1024):F1} MiB"
+            : bytes >= 1024 ? $"{bytes / 1024d:F1} KiB" : $"{bytes} B";
 
     private void DrawInspectorHelp()
     {

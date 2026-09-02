@@ -67,6 +67,12 @@ public sealed class NetworkState
     public Event<RawServerIPC> RawServerIPCReceived = new();
     public Event<RawClientIPC> RawClientIPCSent = new();
     public Event<RawActorControl> RawActorControlReceived = new();
+    // The exact capture sinks are intentionally direct: their only consumer copies immutable primitives into a
+    // bounded background writer. Routing full packet payloads through Framework.Update caused packet-flood hitches.
+    public Action<RawServerIPC>? RawServerIPCCapture;
+    public Action<RawClientIPC>? RawClientIPCCapture;
+    public Action<RawActorControl>? RawActorControlCapture;
+    public long RejectedActorControlSemantic;
     public volatile bool CaptureRawTransport;
 
     public IDScrambleFields IDScramble;

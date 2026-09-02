@@ -6,21 +6,39 @@ public sealed partial class ForetellEngine
 {
     private bool _radarWasUnlocked;
     private bool _radarPositionDirty;
+    private long _drawFailures;
+    private DateTime _lastDrawFailureLog;
 
     public void Draw()
     {
-        DrawInspector();
+        DrawSafely(DrawInspector, "inspector");
         if (_cfg.Mode is ForetellMode.Legacy or ForetellMode.Observe) return;
-        var confidenceCut = _cfg.VisualConfidence / 100f;
-        var displayed = 0;
-        foreach (var p in _predictions.Values.OrderBy(p => p.Activation))
+        DrawSafely(() =>
         {
-            if (p.Confidence < confidenceCut || displayed++ >= _cfg.MaxRenderedMechanics) continue;
-            if (_cfg.WorldOverlay) DrawWorld(p);
+            var confidenceCut = _cfg.VisualConfidence / 100f;
+            var displayed = 0;
+            foreach (var p in _predictions.Values.Where(ValidPrediction).OrderBy(p => p.Activation))
+            {
+                if (p.Confidence < confidenceCut || displayed++ >= _cfg.MaxRenderedMechanics) continue;
+                if (_cfg.WorldOverlay) DrawWorld(p);
+            }
+        }, "world overlay");
+        if (_cfg.TextHints) DrawSafely(DrawTextHints, "text hints");
+        if (_cfg.MiniRadar) DrawSafely(DrawRadar, "radar");
+        if (_cfg.SafePositionSuggestions) DrawSafely(DrawSafeSuggestion, "safe suggestion");
+    }
+
+    private void DrawSafely(Action draw, string surface)
+    {
+        try { draw(); }
+        catch (Exception e)
+        {
+            ++_drawFailures;
+            var now = DateTime.UtcNow;
+            if ((now - _lastDrawFailureLog).TotalSeconds < 5) return;
+            _lastDrawFailureLog = now;
+            Service.Log($"[Foretell] {surface} draw rejected safely ({_drawFailures} total): {e.GetType().Name}: {e.Message}");
         }
-        if (_cfg.TextHints) DrawTextHints();
-        if (_cfg.MiniRadar) DrawRadar();
-        if (_cfg.SafePositionSuggestions) DrawSafeSuggestion();
     }
 
     // Confidence is encoded consistently everywhere Foretell draws learned geometry:
@@ -69,6 +87,7 @@ public sealed partial class ForetellEngine
         if (cam == null) return;
         var actor = _ws.Actors.Find(p.CasterID);
         var y = actor?.PosRot.Y ?? 0;
+        if (!float.IsFinite(y)) y = 0;
         var o = new Vector3(p.Origin.X, y + .05f, p.Origin.Y);
         var color = ConfidenceColor(p.Confidence);
         var thickness = ConfidenceThickness(p.Confidence);
@@ -129,26 +148,32 @@ public sealed partial class ForetellEngine
     {
         var draw = ImGui.GetForegroundDrawList();
         var viewport = Camera.Instance?.ViewportSize ?? new Vector2(1920, 1080);
+        if (!FiniteViewport(viewport)) viewport = new(1920, 1080);
         var y = viewport.Y * .18f;
-        var active = _predictions.Values.OrderBy(p => p.Activation).FirstOrDefault();
+        var active = _predictions.Values.Where(ValidPrediction).OrderBy(p => p.Activation).FirstOrDefault();
         if (active.ActionID != 0)
         {
             var remain = Math.Max(0, (active.Activation - _ws.CurrentTime).TotalSeconds);
+            var actionName = LookupActionName(active.ActionID);
             draw.AddText(new(viewport.X * .5f - 190, y), ConfidenceColor(active.Confidence),
-                $"FORETELL  {active.Kind} / {active.Geometry}  {remain:F1}s  confidence {active.Confidence:P0}");
+                $"FORETELL  {(string.IsNullOrWhiteSpace(actionName) ? active.Kind : actionName)}  {remain:F1}s  confidence {active.Confidence:P0}");
             y += 22;
         }
         var next = PredictNextContextual();
         if (next != null)
-            draw.AddText(new(viewport.X * .5f - 190, y), 0xFFE0E0E0u, $"Likely next: {next.To}  ~{next.MeanDelay:F1}s  ({next.Count}x, {next.Stability:P0} stable)");
+        {
+            var encounter = _store.Encounters.GetValueOrDefault(_territory);
+            var nextName = encounter == null ? next.To : SignalDisplayName(encounter, next.To);
+            draw.AddText(new(viewport.X * .5f - 190, y), 0xFFE0E0E0u, $"Likely next: {nextName}  ~{next.MeanDelay:F1}s  ({next.Count}x, {next.Stability:P0} stable)");
+        }
         else
         {
             var legacyNext = PredictNext();
             if (legacyNext != null)
-                draw.AddText(new(viewport.X * .5f - 190, y), 0xFFE0E0E0u, $"Likely next: AID {legacyNext.To}  ~{legacyNext.MeanDelay:F1}s  ({legacyNext.Count}x)");
+                draw.AddText(new(viewport.X * .5f - 190, y), 0xFFE0E0E0u, $"Likely next: {LookupActionName(legacyNext.To) ?? $"Action 0x{legacyNext.To:X}"}  ~{legacyNext.MeanDelay:F1}s  ({legacyNext.Count}x)");
         }
         var contextualCount = _store.Encounters.GetValueOrDefault(_territory)?.Mechanics.Count ?? 0;
-        draw.AddText(new(20, viewport.Y - 35), 0xFFB0B0B0u, $"Foretell T{_territory}: {contextualCount} contextual mechanics | {_session.Observations:N0} obs | ML {_store.ML.Updates} | {_lastEvidence}");
+        draw.AddText(new(20, viewport.Y - 35), 0xFFB0B0B0u, $"Foretell · {EncounterName(_territory)} · {contextualCount} mechanics learned · {_session.Observations:N0} observations");
     }
 
     private TimelineEdge? PredictNext()
@@ -175,6 +200,9 @@ public sealed partial class ForetellEngine
 
         var size = _cfg.RadarSize;
         var viewport = cam.ViewportSize;
+        if (!FiniteViewport(viewport)) return;
+        var playerPos = V(player.Position);
+        if (!FiniteVector(playerPos)) return;
         var windowSize = new Vector2(size + 24, size + 62);
         var defaultPosition = new Vector2(Math.Max(8, viewport.X - windowSize.X - 22), 22);
         var savedPosition = _cfg.RadarPositionX >= 0 && _cfg.RadarPositionY >= 0
@@ -200,40 +228,47 @@ public sealed partial class ForetellEngine
             return;
         }
 
-        if (_cfg.RadarUnlocked)
+        try
         {
-            var position = ImGui.GetWindowPos();
-            var normalizedX = Math.Clamp(position.X / Math.Max(1, viewport.X), 0, 1);
-            var normalizedY = Math.Clamp(position.Y / Math.Max(1, viewport.Y), 0, 1);
-            if (Math.Abs(normalizedX - _cfg.RadarPositionX) > .0001f || Math.Abs(normalizedY - _cfg.RadarPositionY) > .0001f)
+            if (_cfg.RadarUnlocked)
             {
-                _cfg.RadarPositionX = normalizedX;
-                _cfg.RadarPositionY = normalizedY;
-                _radarPositionDirty = true;
+                var position = ImGui.GetWindowPos();
+                var normalizedX = Math.Clamp(position.X / Math.Max(1, viewport.X), 0, 1);
+                var normalizedY = Math.Clamp(position.Y / Math.Max(1, viewport.Y), 0, 1);
+                if (Math.Abs(normalizedX - _cfg.RadarPositionX) > .0001f || Math.Abs(normalizedY - _cfg.RadarPositionY) > .0001f)
+                {
+                    _cfg.RadarPositionX = normalizedX;
+                    _cfg.RadarPositionY = normalizedY;
+                    _radarPositionDirty = true;
+                }
+                if (_radarPositionDirty && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
+                {
+                    _cfg.Modified.Fire();
+                    _radarPositionDirty = false;
+                }
             }
-            if (_radarPositionDirty && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
-            {
-                _cfg.Modified.Fire();
-                _radarPositionDirty = false;
-            }
-        }
-        _radarWasUnlocked = _cfg.RadarUnlocked;
+            _radarWasUnlocked = _cfg.RadarUnlocked;
 
         var canvas = ImGui.GetCursorScreenPos();
         var center = canvas + new Vector2(size * .5f + 4, size * .5f + 22);
         var radius = size * .5f;
         var draw = ImGui.GetWindowDrawList();
+        var topologyAvailable = _cfg.RadarShape == ForetellRadarShape.Auto && _topologyAnalysis is { PassableCells: > 0, UnknownCells: 0 };
         var shape = _cfg.RadarShape == ForetellRadarShape.Auto ? ForetellRadarShape.Circle : _cfg.RadarShape;
-        var shapeLabel = _cfg.RadarShape == ForetellRadarShape.Auto ? "auto / circle fallback" : shape.ToString().ToLowerInvariant();
+        var shapeLabel = _cfg.RadarShape == ForetellRadarShape.Auto
+            ? topologyAvailable ? "auto / collision topology" : "auto / scanning"
+            : shape.ToString().ToLowerInvariant();
         draw.AddText(canvas + new Vector2(4, 1), 0xFFE0E0E0u,
             _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : $"Foretell radar · {shapeLabel} · {_cfg.RadarWorldRadius:F0}y");
-        DrawRadarFrame(draw, center, radius, shape);
+        if (topologyAvailable)
+            DrawTopologyRadarFrame(draw, center, radius, playerPos, radius / MathF.Max(1, _cfg.RadarWorldRadius));
+        else
+            DrawRadarFrame(draw, center, radius, shape);
         draw.AddCircleFilled(center, 4, 0xFFFFFFFFu);
 
         var scale = radius / MathF.Max(1, _cfg.RadarWorldRadius);
-        var playerPos = V(player.Position);
         var displayed = 0;
-        foreach (var p in _predictions.Values.OrderBy(p => p.Activation))
+        foreach (var p in _predictions.Values.Where(ValidPrediction).OrderBy(p => p.Activation))
         {
             if (p.Confidence < _cfg.VisualConfidence / 100f || displayed++ >= _cfg.MaxRenderedMechanics)
                 continue;
@@ -248,7 +283,11 @@ public sealed partial class ForetellEngine
         draw.AddText(new(center.X - radius, legendY), ConfidenceColor(_cfg.VisualConfidence / 100f), $"{_cfg.VisualConfidence:F0}% learn");
         draw.AddText(new(center.X - 22, legendY), ConfidenceColor(_cfg.WarningConfidence / 100f), $"{_cfg.WarningConfidence:F0}% high");
         draw.AddText(new(center.X + radius - 58, legendY), ConfidenceColor(_cfg.SafeConfidence / 100f), $"{_cfg.SafeConfidence:F0}% safe");
-        ImGui.End();
+        }
+        finally
+        {
+            ImGui.End();
+        }
     }
 
     private static void DrawRadarFrame(ImDrawListPtr draw, Vector2 center, float radius, ForetellRadarShape shape)
@@ -271,6 +310,34 @@ public sealed partial class ForetellEngine
             draw.AddLine(new(center.X - radius, center.Y), new(center.X + radius, center.Y), 0x354F5560u);
             draw.AddLine(new(center.X, center.Y - radius), new(center.X, center.Y + radius), 0x354F5560u);
         }
+    }
+
+    private void DrawTopologyRadarFrame(ImDrawListPtr draw, Vector2 center, float radius, Vector2 player, float scale)
+    {
+        var min = center - new Vector2(radius);
+        var max = center + new Vector2(radius);
+        draw.AddRectFilled(min, max, Pack(12, 14, 20, 150), 8);
+        draw.PushClipRect(min, max, true);
+        try
+        {
+            if (_topologyAnalysis is { } topology)
+            {
+                foreach (var loop in topology.Contours)
+                {
+                    if (loop.Count < 2) continue;
+                    for (var i = 0; i < loop.Count; ++i)
+                    {
+                        var a = RadarPoint(loop[i], player, center, scale);
+                        var b = RadarPoint(loop[(i + 1) % loop.Count], player, center, scale);
+                        draw.AddLine(a, b, Pack(80, 220, 175, 230), 2f);
+                    }
+                }
+            }
+        }
+        finally { draw.PopClipRect(); }
+        draw.AddRect(min, max, Pack(80, 220, 175, 180), 8, ImDrawFlags.None, 1.5f);
+        draw.AddLine(new(center.X - radius, center.Y), new(center.X + radius, center.Y), 0x354F5560u);
+        draw.AddLine(new(center.X, center.Y - radius), new(center.X, center.Y + radius), 0x354F5560u);
     }
 
     private static Vector2 RadarPoint(Vector2 world, Vector2 player, Vector2 center, float scale)
@@ -339,9 +406,10 @@ public sealed partial class ForetellEngine
     {
         var player = _ws.Party[PartyState.PlayerSlot];
         if (player == null) return;
-        var dangers = _predictions.Values.Where(p => p.Confidence >= _cfg.SafeConfidence / 100f).ToArray();
+        var dangers = _predictions.Values.Where(p => ValidPrediction(p) && p.Confidence >= _cfg.SafeConfidence / 100f).ToArray();
         if (dangers.Length == 0) return;
         var pp = V(player.Position);
+        if (!FiniteVector(pp)) return;
         bool Unsafe(Vector2 q) => dangers.Any(p => Contains(p, q));
         if (!Unsafe(pp)) return;
         Vector2? best = null;
@@ -351,13 +419,28 @@ public sealed partial class ForetellEngine
             {
                 var a = MathF.Tau * i / 48;
                 var q = pp + new Vector2(MathF.Sin(a), MathF.Cos(a)) * ring;
-                if (!Unsafe(q) && ring < bestD) { best = q; bestD = ring; }
+                var topology = IsTopologyPassable(q);
+                if (!Unsafe(q) && topology != false && ring < bestD) { best = q; bestD = ring; }
             }
         if (best is not Vector2 b) return;
         var cam = Camera.Instance;
         if (cam == null) return;
         var y = player.PosRot.Y + .1f;
+        if (!float.IsFinite(y)) return;
         cam.DrawWorldLine(new(pp.X, y, pp.Y), new(b.X, y, b.Y), 0xFF40FF40u, 4f);
         cam.DrawWorldCircle(new(b.X, y, b.Y), 1f, 0xFF40FF40u, 3f);
     }
+
+    private static bool ValidPrediction(ActivePrediction prediction)
+        => float.IsFinite(prediction.Origin.X) && float.IsFinite(prediction.Origin.Y)
+            && float.IsFinite(prediction.Target.X) && float.IsFinite(prediction.Target.Y)
+            && float.IsFinite(prediction.Rotation) && float.IsFinite(prediction.P1) && prediction.P1 is >= 0 and <= 200
+            && float.IsFinite(prediction.P2) && prediction.P2 is >= 0 and <= 200
+            && float.IsFinite(prediction.Confidence) && prediction.Confidence is >= 0 and <= 1;
+
+    private static bool FiniteVector(Vector2 value)
+        => float.IsFinite(value.X) && float.IsFinite(value.Y);
+
+    private static bool FiniteViewport(Vector2 value)
+        => FiniteVector(value) && value.X is >= 64 and <= 32768 && value.Y is >= 64 and <= 32768;
 }

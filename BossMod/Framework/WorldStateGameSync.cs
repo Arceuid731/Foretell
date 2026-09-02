@@ -14,6 +14,7 @@ using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using FFXIVClientStructs.Interop;
+using System.Threading;
 
 namespace BossMod;
 
@@ -42,9 +43,10 @@ sealed class WorldStateGameSync : IDisposable
     private readonly Network.OpcodeMap _opcodeMap = new();
     private readonly Network.PacketInterceptor _interceptor = new();
     private readonly Network.PacketDecoderGame _decoder = new();
-    private readonly System.Collections.Concurrent.ConcurrentQueue<NetworkState.RawServerIPC> _foretellRawServerPackets = new();
-    private readonly System.Collections.Concurrent.ConcurrentQueue<NetworkState.RawClientIPC> _foretellRawClientPackets = new();
     private readonly System.Collections.Concurrent.ConcurrentQueue<NetworkState.RawActorControl> _foretellRawActorControls = new();
+    private long _foretellRawActorControlsPending;
+    private const int MaxForetellActorControlSemanticBacklog = 8192;
+    private const int MaxForetellActorControlSemanticPerFrame = 256;
 
     private readonly ConfigListener<ReplayManagementConfig> _netConfig;
     private readonly EventSubscriptions _subscriptions;
@@ -257,12 +259,11 @@ sealed class WorldStateGameSync : IDisposable
         }
         _globalOps.Clear();
 
-        while (_foretellRawServerPackets.TryDequeue(out var rawServer))
-            _ws.Network.RawServerIPCReceived.Fire(rawServer);
-        while (_foretellRawClientPackets.TryDequeue(out var rawClient))
-            _ws.Network.RawClientIPCSent.Fire(rawClient);
-        while (_foretellRawActorControls.TryDequeue(out var rawControl))
+        for (var i = 0; i < MaxForetellActorControlSemanticPerFrame && _foretellRawActorControls.TryDequeue(out var rawControl); ++i)
+        {
+            Interlocked.Decrement(ref _foretellRawActorControlsPending);
             _ws.Network.RawActorControlReceived.Fire(rawControl);
+        }
 
         _playerEnmity.Clear();
         var uiState = UIState.Instance();
@@ -1241,7 +1242,10 @@ sealed class WorldStateGameSync : IDisposable
         var needPayload = _ws.Network.CaptureRawTransport || _netConfig.Data.RecordServerPackets || _netConfig.Data.DumpServerPackets;
         var rawPayload = needPayload ? payload.ToArray() : Array.Empty<byte>();
         if (_ws.Network.CaptureRawTransport)
-            _foretellRawServerPackets.Enqueue(new(id, opcode, epoch, sourceServerActor, targetServerActor, sendTimestamp, rawPayload));
+        {
+            try { _ws.Network.RawServerIPCCapture?.Invoke(new(id, opcode, epoch, sourceServerActor, targetServerActor, sendTimestamp, rawPayload)); }
+            catch (Exception e) { Service.LogVerbose($"[Foretell] Raw server capture rejected safely: {e.Message}"); }
+        }
 
         // targetServerActor is always a player?..
         var ipc = new NetworkState.ServerIPC(id, opcode, epoch, sourceServerActor, sendTimestamp, rawPayload);
@@ -1259,7 +1263,10 @@ sealed class WorldStateGameSync : IDisposable
     private unsafe void ClientIPCSent(uint opcode, Span<byte> payload)
     {
         if (_ws.Network.CaptureRawTransport)
-            _foretellRawClientPackets.Enqueue(new(opcode, DateTime.UtcNow, payload.ToArray()));
+        {
+            try { _ws.Network.RawClientIPCCapture?.Invoke(new(opcode, DateTime.UtcNow, payload.ToArray())); }
+            catch (Exception e) { Service.LogVerbose($"[Foretell] Raw client capture rejected safely: {e.Message}"); }
+        }
         if (_netConfig.Data.DumpClientPackets)
         {
             var sb = new StringBuilder($"Client IPC [0x{opcode:X4}]: data=");
@@ -1311,7 +1318,22 @@ sealed class WorldStateGameSync : IDisposable
     private void ProcessPacketActorControlDetour(uint actorID, uint category, uint p1, uint p2, uint p3, uint p4, uint p5, uint p6, uint p7, uint p8, ulong targetID, byte replaying)
     {
         _processPacketActorControlHook.Original(actorID, category, p1, p2, p3, p4, p5, p6, p7, p8, targetID, replaying);
-        _foretellRawActorControls.Enqueue(new(actorID, category, p1, p2, p3, p4, p5, p6, p7, p8, targetID, replaying));
+        var raw = new NetworkState.RawActorControl(actorID, category, p1, p2, p3, p4, p5, p6, p7, p8, targetID, replaying);
+        if (_ws.Network.CaptureRawTransport)
+        {
+            try { _ws.Network.RawActorControlCapture?.Invoke(raw); }
+            catch (Exception e) { Service.LogVerbose($"[Foretell] Raw ActorControl capture rejected safely: {e.Message}"); }
+        }
+        if (_ws.Network.RawActorControlReceived.HaveSubscribers())
+        {
+            if (Interlocked.Increment(ref _foretellRawActorControlsPending) <= MaxForetellActorControlSemanticBacklog)
+                _foretellRawActorControls.Enqueue(raw);
+            else
+            {
+                Interlocked.Decrement(ref _foretellRawActorControlsPending);
+                Interlocked.Increment(ref _ws.Network.RejectedActorControlSemantic);
+            }
+        }
         switch ((Network.ServerIPC.ActorControlCategory)category)
         {
             case Network.ServerIPC.ActorControlCategory.TargetIcon:
