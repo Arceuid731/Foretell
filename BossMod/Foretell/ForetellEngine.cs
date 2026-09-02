@@ -1,4 +1,3 @@
-using System.IO;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -20,7 +19,7 @@ public sealed partial class ForetellEngine : IDisposable
 
     private ForetellStore _store;
     private OnlineClassifier _classifier;
-    private StreamWriter? _replay;
+    private ForetellReplayWriter? _replay;
     private string _replayPath = "";
     private long _sequence;
     private DateTime _lastSave;
@@ -57,6 +56,7 @@ public sealed partial class ForetellEngine : IDisposable
     {
         _ws = ws;
         _cfg = Service.Config.Get<ForetellConfig>();
+        ApplyPerformancePolicyMigration();
         _storePath = Path.Combine(configDirectory, "foretell-memory.json");
         _replayDir = Path.Combine(configDirectory, "foretell-replays");
         Directory.CreateDirectory(_replayDir);
@@ -89,6 +89,7 @@ public sealed partial class ForetellEngine : IDisposable
         }
         catch
         {
+            _ws.Network.CaptureRawTransport = false;
             _subscriptions.Dispose();
             DisposeNativeHooks();
             _replay?.Dispose();
@@ -137,7 +138,9 @@ public sealed partial class ForetellEngine : IDisposable
         FinalizeDue(DateTime.MaxValue);
         CompleteSession();
         SaveStore();
+        _ws.Network.CaptureRawTransport = false;
         _replay?.Dispose();
+        _replay = null;
         _subscriptions.Dispose();
         DisposeNativeHooks();
         Service.CommandManager.RemoveHandler("/foretell");
@@ -202,6 +205,7 @@ public sealed partial class ForetellEngine : IDisposable
         _predictions.Clear();
         _effectSequenceEpisodes.Clear();
         _recentSignals.Clear();
+        _actorControlGates.Clear();
         _previousAction = 0;
         _previousSignal = "";
         _inPull = false;
@@ -258,13 +262,25 @@ public sealed partial class ForetellEngine : IDisposable
         return encounter;
     }
 
+    private void ApplyPerformancePolicyMigration()
+    {
+        if (_cfg.ReplayPerformancePolicyVersion >= 1)
+            return;
+
+        // Older builds enabled synchronous JSON replay recording by default. Disable it once for both existing
+        // and new configurations; users can explicitly opt into the new background writer afterwards.
+        _cfg.RecordReplay = false;
+        _cfg.ReplayPerformancePolicyVersion = 1;
+        _cfg.Modified.Fire();
+    }
+
     private void SyncReplayWriter()
     {
+        _ws.Network.CaptureRawTransport = _cfg.RecordReplay;
         if (_cfg.RecordReplay && _replay == null)
             OpenReplayWriter();
         else if (!_cfg.RecordReplay && _replay != null)
         {
-            _replay.Flush();
             _replay.Dispose();
             _replay = null;
         }
@@ -272,7 +288,6 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void ReopenReplayWriter()
     {
-        _replay?.Flush();
         _replay?.Dispose();
         _replay = null;
         if (_cfg.RecordReplay) OpenReplayWriter();
@@ -281,7 +296,7 @@ public sealed partial class ForetellEngine : IDisposable
     private void OpenReplayWriter()
     {
         _replayPath = Path.Combine(_replayDir, $"foretell-T{_territory}-{DateTime.Now:yyyyMMdd-HHmmss}.jsonl");
-        _replay = new(_replayPath, append: true) { AutoFlush = false };
+        _replay ??= new(_replayJson);
     }
 
     private ForetellStore LoadStore()
@@ -301,7 +316,11 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void NormalizeStore()
     {
-        _store.Schema = Math.Max(_store.Schema, 6);
+        // The old live reflection scanner generated hundreds of thousands of dynamic diagnostic paths. Coverage
+        // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
+        if (_store.Schema < 7)
+            _store.Coverage = new();
+        _store.Schema = Math.Max(_store.Schema, 7);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -331,7 +350,6 @@ public sealed partial class ForetellEngine : IDisposable
             var tmp = _storePath + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(_store, _json));
             File.Move(tmp, _storePath, true);
-            _replay?.Flush();
             _lastSave = DateTime.UtcNow;
         }
         catch (Exception e)
@@ -343,8 +361,7 @@ public sealed partial class ForetellEngine : IDisposable
     private void Record(ForetellObservation observation, bool replaying)
     {
         if (replaying || !_cfg.RecordReplay || _replay == null) return;
-        try { _replay.WriteLine(JsonSerializer.Serialize(observation, _replayJson)); }
-        catch (Exception e) { Service.LogVerbose($"[Foretell] Replay write failed: {e.Message}"); }
+        _replay.Enqueue(_replayPath, observation);
     }
 
     private ForetellObservation Observation(ObservationKind kind, Actor? actor = null, uint primary = 0, uint secondary = 0, ulong target = 0,

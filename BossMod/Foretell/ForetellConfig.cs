@@ -40,8 +40,11 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("Safe-position suggestions", tooltip: "Draw a suggested safe destination only for predictions above the strict safe-guidance confidence threshold. Suggestion only: Foretell never moves your character.")]
     public bool SafePositionSuggestions = true;
 
-    [PropertyDisplay("Record local Replay Lab stream", tooltip: "Record compact normalized encounter observations locally. Replay Lab can re-run them through the learner in an isolated sandbox for debugging/regression; this is not a video replay and is never uploaded automatically.")]
-    public bool RecordReplay = true;
+    [PropertyDisplay("Record local Replay Lab stream", tooltip: "Optional high-volume diagnostic capture. Raw packets and normalized encounter observations are serialized on a background thread; this is never uploaded automatically.")]
+    public bool RecordReplay;
+
+    // Serialized migration marker; deliberately not shown in the configuration UI.
+    public int ReplayPerformancePolicyVersion;
 
     [PropertyDisplay("Visual hypothesis threshold (%)", tooltip: "Below this confidence, a learned hypothesis stays hidden from Foretell's combat presentation and remains learning/debug data only.")]
     [PropertySlider(50, 100, Speed = 1)]

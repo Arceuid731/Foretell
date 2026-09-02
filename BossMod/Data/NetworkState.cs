@@ -67,6 +67,7 @@ public sealed class NetworkState
     public Event<RawServerIPC> RawServerIPCReceived = new();
     public Event<RawClientIPC> RawClientIPCSent = new();
     public Event<RawActorControl> RawActorControlReceived = new();
+    public volatile bool CaptureRawTransport;
 
     public IDScrambleFields IDScramble;
 

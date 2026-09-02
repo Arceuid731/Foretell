@@ -6,6 +6,8 @@ namespace BossMod.Foretell;
 public sealed partial class ForetellEngine
 {
     private readonly HashSet<Type> _substitutedWorldOperations = [];
+    private readonly Dictionary<(uint Source, uint Command), ActorControlGate> _actorControlGates = [];
+    private readonly record struct ActorControlGate(ulong Fingerprint, DateTime At);
 
     private void OnActorAdded(Actor actor)
         => ProcessObservation(Observation(ObservationKind.ActorAdded, actor, detail: actor.Type.ToString()));
@@ -271,24 +273,59 @@ public sealed partial class ForetellEngine
 
     private void OnRawServerIPC(NetworkState.RawServerIPC packet)
     {
-        var actor = packet.SourceServerActor != 0 ? _ws.Actors.Find(packet.SourceServerActor) : null;
-        var obs = Observation(ObservationKind.ServerIPC, actor, packet.Opcode, ToUInt(packet.ID) ?? 0, packet.TargetServerActor, detail: packet.ID.ToString());
-        if (actor == null && packet.SourceServerActor != 0)
-        {
-            obs.ActorID = packet.SourceServerActor;
-            obs.SourceKind = SourceKind.Unknown;
-        }
-        ProcessRichObservation(obs, packet);
+        // Transport packets are evidence storage, not learner events. Parsing them into the semantic pipeline here
+        // duplicated ActorControl/ActionEffect and made every network packet pay reflection + correlation costs.
+        if (!_cfg.RecordReplay)
+            return;
+        var obs = RawTransportObservation(ObservationKind.ServerIPC, packet.Opcode, $"transport:server:{packet.ID}", packet.SendTimestamp);
+        obs.ActorID = packet.SourceServerActor;
+        obs.TargetID = packet.TargetServerActor;
+        obs.Numeric["transport.packetID"] = Convert.ToUInt32(packet.ID);
+        obs.Numeric["transport.epoch"] = packet.Epoch;
+        obs.Numeric["transport.payloadLength"] = packet.Payload.Length;
+        obs.Binary["transport.payload"] = packet.Payload;
+        Record(obs, replaying: false);
     }
 
     private void OnRawClientIPC(NetworkState.RawClientIPC packet)
     {
-        var obs = Observation(ObservationKind.ClientIPC, primary: packet.Opcode, detail: "client->server");
-        ProcessRichObservation(obs, packet);
+        if (!_cfg.RecordReplay)
+            return;
+        var obs = RawTransportObservation(ObservationKind.ClientIPC, packet.Opcode, "transport:client", packet.SendTimestamp);
+        obs.Numeric["transport.payloadLength"] = packet.Payload.Length;
+        obs.Binary["transport.payload"] = packet.Payload;
+        Record(obs, replaying: false);
     }
 
     private void OnRawActorControl(NetworkState.RawActorControl control)
     {
+        if (_cfg.RecordReplay)
+        {
+            var raw = RawTransportObservation(ObservationKind.ActorControlRaw, control.Command, "transport:actor-control", ObservationNow());
+            raw.ActorID = control.SourceID;
+            raw.TargetID = control.TargetID;
+            StoreActorControlFields(raw, control);
+            Record(raw, replaying: false);
+        }
+
+        // Preserve every command in the optional raw stream, but admit at most one semantic update per command
+        // and source every 250 ms. This prevents self telemetry from monopolizing the learner in open-world zones.
+        var now = ObservationNow();
+        var key = (control.SourceID, control.Command);
+        var fingerprint = ActorControlFingerprint(control);
+        if (_actorControlGates.TryGetValue(key, out var previous))
+        {
+            var age = (now - previous.At).TotalMilliseconds;
+            if (age < 250 || previous.Fingerprint == fingerprint && age < 2000)
+                return;
+        }
+        _actorControlGates[key] = new(fingerprint, now);
+        if (_actorControlGates.Count > 512)
+        {
+            foreach (var stale in _actorControlGates.Where(kv => (now - kv.Value.At).TotalSeconds > 10).Select(kv => kv.Key).ToArray())
+                _actorControlGates.Remove(stale);
+        }
+
         var actor = control.SourceID != 0 ? _ws.Actors.Find(control.SourceID) : null;
         var obs = Observation(ObservationKind.ActorControlRaw, actor, control.Command, target: control.TargetID, flag: control.Replaying != 0);
         if (actor == null && control.SourceID != 0)
@@ -296,21 +333,56 @@ public sealed partial class ForetellEngine
             obs.ActorID = control.SourceID;
             obs.SourceKind = SourceKind.Unknown;
         }
-        obs.Numeric["actorControl.p1"] = control.P1; obs.Numeric["actorControl.p2"] = control.P2;
-        obs.Numeric["actorControl.p3"] = control.P3; obs.Numeric["actorControl.p4"] = control.P4;
-        obs.Numeric["actorControl.p5"] = control.P5; obs.Numeric["actorControl.p6"] = control.P6;
-        obs.Numeric["actorControl.p7"] = control.P7; obs.Numeric["actorControl.p8"] = control.P8;
-        ProcessRichObservation(obs, control);
+        StoreActorControlFields(obs, control);
+        ProcessObservation(obs, enriched: true);
     }
 
     private void SamplePartyPositions()
     {
-        foreach (var (_, player) in _ws.Party.WithSlot())
+        for (var slot = 0; slot < PartyState.MaxAllies; ++slot)
         {
-            var role = Member(player, "ClassCategory")?.ToString() ?? "";
-            var obs = Observation(ObservationKind.PositionSample, player, secondary: ToUInt(Member(player, "ClassCategory")) ?? 0, detail: role);
-            ProcessObservation(obs);
+            var player = _ws.Party[slot];
+            if (player == null || player.IsDead)
+                continue;
+            var category = player.ClassCategory;
+            var obs = Observation(ObservationKind.PositionSample, player, secondary: (uint)category, detail: category.ToString());
+            ProcessObservation(obs, enriched: true);
         }
+    }
+
+    private ForetellObservation RawTransportObservation(ObservationKind kind, uint opcode, string detail, DateTime at)
+        => new()
+        {
+            Sequence = ++_sequence,
+            At = NormalizeObservationTime(at),
+            TerritoryID = _territory,
+            Kind = kind,
+            SourceKind = SourceKind.Unknown,
+            PrimaryID = opcode,
+            Detail = detail
+        };
+
+    private static void StoreActorControlFields(ForetellObservation obs, NetworkState.RawActorControl control)
+    {
+        obs.Numeric["actorControl.p1"] = control.P1; obs.Numeric["actorControl.p2"] = control.P2;
+        obs.Numeric["actorControl.p3"] = control.P3; obs.Numeric["actorControl.p4"] = control.P4;
+        obs.Numeric["actorControl.p5"] = control.P5; obs.Numeric["actorControl.p6"] = control.P6;
+        obs.Numeric["actorControl.p7"] = control.P7; obs.Numeric["actorControl.p8"] = control.P8;
+        obs.Numeric["actorControl.replaying"] = control.Replaying;
+    }
+
+    private static ulong ActorControlFingerprint(NetworkState.RawActorControl control)
+    {
+        var hash = 14695981039346656037UL;
+        static void Add(ref ulong hash, ulong value)
+        {
+            hash ^= value;
+            hash *= 1099511628211UL;
+        }
+        Add(ref hash, control.P1); Add(ref hash, control.P2); Add(ref hash, control.P3); Add(ref hash, control.P4);
+        Add(ref hash, control.P5); Add(ref hash, control.P6); Add(ref hash, control.P7); Add(ref hash, control.P8);
+        Add(ref hash, control.TargetID); Add(ref hash, control.Replaying);
+        return hash;
     }
 
     private static uint ReadActionID(object ev)

@@ -12,6 +12,9 @@ namespace BossMod.Foretell;
 // encounter-component knowledge: Foretell may consume the same raw game state, but never their authored answers.
 public sealed partial class ForetellEngine
 {
+    // Generic reflection remains available for controlled audits, but it is never allowed in the live frame loop.
+    // Typed semantic sensors are the production path; native readers stay separately quarantined below.
+    private const bool LiveReflectionTelemetryEnabled = false;
     // A root owns its own traversal budget. Runtime state is split into independent roots below, so a large
     // party/actor collection can never starve camera, client, network or environment state. The budget is a
     // recursion/bug guard, not a collection sampling policy.
@@ -33,6 +36,7 @@ public sealed partial class ForetellEngine
     private readonly Dictionary<Type, FieldInfo[]> _fabricFieldCache = [];
     private long _fabricDeferredTraversals;
     private long _fabricRejectedGetters;
+    private string _coreRuntimeFingerprint = "";
 
     private sealed class FabricActorTrack
     {
@@ -53,27 +57,35 @@ public sealed partial class ForetellEngine
         ResetNativeDataFabric();
         _lastFabricSample = default;
         _lastNativeFabricSample = default;
+        _coreRuntimeFingerprint = "";
     }
 
     private void SampleDataFabric(bool force = false)
     {
         var now = ObservationNow();
 
-        // Reflection remains complete over a sweep, but only one independent root and one generic actor are
-        // traversed per slice. This keeps the game/framework thread free of the old half-second aggregate spike.
-        if (force || (now - _lastFabricSample).TotalMilliseconds >= 250)
+        // Production sampling is a small typed snapshot at 1 Hz. The previous 4 Hz reflection sweep discovered
+        // hundreds of thousands of dynamic paths and dominated the framework thread in populated zones.
+        if (force || (now - _lastFabricSample).TotalMilliseconds >= 1000)
         {
             _lastFabricSample = now;
-            RefreshRuntimeContextSlice();
-            SampleGenericActorSlice();
+            SampleCoreRuntimeSnapshot();
+            if (LiveReflectionTelemetryEnabled)
+            {
+                RefreshRuntimeContextSlice();
+                SampleGenericActorSlice();
+            }
             if (NativeTelemetryEnabled)
                 SampleNativeActorSlice(now);
 
-            foreach (var dead in _fabricActorTracks.Keys.Where(id => _ws.Actors.Find(id) == null).ToArray())
+            if (LiveReflectionTelemetryEnabled || NativeTelemetryEnabled)
             {
-                _fabricActorTracks.Remove(dead);
-                _actorFabricFingerprint.Remove(dead);
-                _nativeActorFabricFingerprint.Remove(dead);
+                foreach (var dead in _fabricActorTracks.Keys.Where(id => _ws.Actors.Find(id) == null).ToArray())
+                {
+                    _fabricActorTracks.Remove(dead);
+                    _actorFabricFingerprint.Remove(dead);
+                    _nativeActorFabricFingerprint.Remove(dead);
+                }
             }
         }
 
@@ -87,6 +99,24 @@ public sealed partial class ForetellEngine
         _lastNativeFabricSample = now;
         SampleNativeEnvironment();
         SampleNativeCamera();
+    }
+
+    private void SampleCoreRuntimeSnapshot()
+    {
+        var obs = Observation(ObservationKind.GenericFeature, detail: "runtime.core");
+        StoreFabric(obs, "runtime.core.currentZone", _ws.CurrentZone);
+        StoreFabric(obs, "runtime.core.currentCFCID", _ws.CurrentCFCID);
+        StoreFabric(obs, "runtime.core.isPvPArea", _ws.IsPvPArea);
+        StoreFabric(obs, "runtime.core.actorCount", _ws.Actors.Actors.Count);
+        StoreFabric(obs, "runtime.core.partyMemberCount", _ws.Party.Members.Count(member => member.IsValid()));
+        StoreFabric(obs, "runtime.core.limitBreakCurrent", _ws.Party.LimitBreakCur);
+        StoreFabric(obs, "runtime.core.limitBreakMaximum", _ws.Party.LimitBreakMax);
+
+        var fingerprint = Fingerprint(obs, "runtime.core.");
+        if (fingerprint == _coreRuntimeFingerprint)
+            return;
+        _coreRuntimeFingerprint = fingerprint;
+        ProcessObservation(obs, enriched: true);
     }
 
     private void SampleGenericActorSlice()

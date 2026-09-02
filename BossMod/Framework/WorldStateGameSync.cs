@@ -1238,9 +1238,10 @@ sealed class WorldStateGameSync : IDisposable
     private unsafe void ServerIPCReceived(DateTime sendTimestamp, uint sourceServerActor, uint targetServerActor, ushort opcode, uint epoch, Span<byte> payload)
     {
         var id = _opcodeMap.ID(opcode);
-        // Keep a lossless Foretell copy regardless of BMR recorder configuration. It is delivered on Update().
-        var rawPayload = payload.ToArray();
-        _foretellRawServerPackets.Enqueue(new(id, opcode, epoch, sourceServerActor, targetServerActor, sendTimestamp, rawPayload));
+        var needPayload = _ws.Network.CaptureRawTransport || _netConfig.Data.RecordServerPackets || _netConfig.Data.DumpServerPackets;
+        var rawPayload = needPayload ? payload.ToArray() : Array.Empty<byte>();
+        if (_ws.Network.CaptureRawTransport)
+            _foretellRawServerPackets.Enqueue(new(id, opcode, epoch, sourceServerActor, targetServerActor, sendTimestamp, rawPayload));
 
         // targetServerActor is always a player?..
         var ipc = new NetworkState.ServerIPC(id, opcode, epoch, sourceServerActor, sendTimestamp, rawPayload);
@@ -1257,7 +1258,8 @@ sealed class WorldStateGameSync : IDisposable
 
     private unsafe void ClientIPCSent(uint opcode, Span<byte> payload)
     {
-        _foretellRawClientPackets.Enqueue(new(opcode, DateTime.UtcNow, payload.ToArray()));
+        if (_ws.Network.CaptureRawTransport)
+            _foretellRawClientPackets.Enqueue(new(opcode, DateTime.UtcNow, payload.ToArray()));
         if (_netConfig.Data.DumpClientPackets)
         {
             var sb = new StringBuilder($"Client IPC [0x{opcode:X4}]: data=");

@@ -20,6 +20,7 @@ requirements = {
         "_ws.Actors.EffectResult.Subscribe(OnEffectResult)",
         "private const bool NativeTelemetryEnabled = false",
         "ClassifyNativeTelemetryQuarantine()",
+        "ApplyPerformancePolicyMigration()",
         "InitializeDalamudSignals()",
         "private static DateTime NormalizeObservationTime",
         "At = ObservationNow()",
@@ -29,6 +30,9 @@ requirements = {
         'resolved.Numeric["action.globalSequence"]',
         'obs.Numeric["effectResult.sequence"]',
         'obs.Numeric["actorControl.p8"]',
+        "RawTransportObservation(ObservationKind.ServerIPC",
+        "ProcessObservation(obs, enriched: true)",
+        "age < 250",
         "WorldOperationSubstitution(op)",
         "ActorState.OpMove =>",
         "ClientState.OpActiveCompanionChange",
@@ -50,6 +54,8 @@ requirements = {
         "RefreshRuntimeContextSlice()",
         "SampleGenericActorSlice()",
         "SampleNativeActorSlice(now)",
+        "private const bool LiveReflectionTelemetryEnabled = false",
+        "SampleCoreRuntimeSnapshot()",
         "ProcessObservation(obs, enriched: true)",
         "MaxFabricTraversalMilliseconds",
         "MaxNativeActorsPerSlice",
@@ -77,6 +83,8 @@ requirements = {
         "RadarUnlocked",
         "RadarPositionX",
         "RadarPositionY",
+        "public bool RecordReplay;",
+        "ReplayPerformancePolicyVersion",
     ],
     "BossMod/Foretell/ForetellRenderer.cs": [
         "ForetellRadarWindow",
@@ -106,10 +114,24 @@ requirements = {
     "BossMod/Foretell/ForetellDalamudSignals.cs": [
         "Service.DutyState.DutyWiped += OnDutyWiped",
         "Service.FlyTextGui.FlyTextCreated += OnFlyText",
-        "Service.ChatGui.LogMessage += OnDalamudLogMessage",
-        "Service.ToastGui.Toast += OnNormalToast",
+        "ClassifyNonGameplayDalamudSignals()",
+        'RegisterCapability("dalamud.logMessage"',
+        'RegisterCapability("dalamud.toast.normal"',
         'obs.Binary["dalamud.flyText.text1.raw"]',
         'obs.Binary["dalamud.toast.message.raw"]',
+    ],
+    "BossMod/Foretell/ForetellReplayWriter.cs": [
+        "BlockingCollection<Item>",
+        "IsBackground = true",
+        "JsonSerializer.Serialize(item.Observation",
+        "GetConsumingEnumerable(_stop.Token)",
+    ],
+    "BossMod/Data/NetworkState.cs": [
+        "public volatile bool CaptureRawTransport",
+    ],
+    "BossMod/Framework/WorldStateGameSync.cs": [
+        "if (_ws.Network.CaptureRawTransport)",
+        "var needPayload = _ws.Network.CaptureRawTransport || _netConfig.Data.RecordServerPackets || _netConfig.Data.DumpServerPackets",
     ],
 }
 
@@ -140,6 +162,9 @@ for forbidden in ["FlattenEnumIndexers(", "move.IsFlying()", "move.IsDiving()"]:
 if "NativeActorSlices" in fabric:
     errors.append("Foretell native actor sampling regressed to a population-proportional all-actor slice")
 
+if "if (LiveReflectionTelemetryEnabled)\n            {\n                RefreshRuntimeContextSlice();\n                SampleGenericActorSlice();" not in fabric:
+    errors.append("Foretell generic reflection scanner escaped the disabled live telemetry gate")
+
 if fabric.find("CanTraverseFabricType(type)") > fabric.find("value is IEnumerable enumerable"):
     errors.append("Foretell can enumerate an external live implementation before applying its assembly allowlist")
 
@@ -163,6 +188,23 @@ if "if (NativeTelemetryEnabled)\n                SampleNativeActorSlice(now);" n
     errors.append("Foretell direct native actor reads escaped the fail-closed telemetry gate")
 if "if (!NativeTelemetryEnabled)\n            return;" not in fabric:
     errors.append("Foretell environment/camera native reads escaped the fail-closed telemetry gate")
+if "_replay.Enqueue(_replayPath, observation)" not in engine or "_replay.WriteLine" in engine:
+    errors.append("Foretell replay serialization can run synchronously on the framework thread")
+if "_ws.Network.CaptureRawTransport = _cfg.RecordReplay" not in engine:
+    errors.append("Foretell raw packet copying is not tied to explicit replay opt-in")
+
+observer = read("BossMod/Foretell/ForetellObserver.cs")
+server_handler = observer[observer.find("private void OnRawServerIPC"):observer.find("private void OnRawClientIPC")]
+client_handler = observer[observer.find("private void OnRawClientIPC"):observer.find("private void OnRawActorControl")]
+for name, handler in [("server", server_handler), ("client", client_handler)]:
+    if "ProcessObservation(" in handler or "ProcessRichObservation(" in handler:
+        errors.append(f"Foretell raw {name} transport re-entered the semantic learner")
+if "ProcessObservation(obs, enriched: true)" not in observer[observer.find("private void SamplePartyPositions"):observer.find("private static uint ReadActionID")]:
+    errors.append("Foretell position sampling re-entered full actor/static enrichment")
+
+config = read("BossMod/Foretell/ForetellConfig.cs")
+if "public bool RecordReplay = true" in config:
+    errors.append("Foretell high-volume replay recording became default-on again")
 
 foretell_sources = "\n".join(
     path.read_text(encoding="utf-8-sig")

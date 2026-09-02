@@ -7,7 +7,7 @@ public sealed partial class ForetellEngine
 {
     public ReplayReport ReplayLatest()
     {
-        _replay?.Flush();
+        _replay?.Drain(TimeSpan.FromSeconds(2));
         var latest = Directory.GetFiles(_replayDir, "foretell-*.jsonl")
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .FirstOrDefault();
@@ -99,8 +99,14 @@ public sealed partial class ForetellEngine
             _lastCombatSignal = default;
             StartEncounterSession(_territory);
 
+            var semanticObservations = 0;
             foreach (var observation in observations.OrderBy(o => o.At).ThenBy(o => o.Sequence))
             {
+                // Raw transport is retained losslessly for offline protocol work, but it must not be interpreted a
+                // second time by the semantic mechanic learner during Replay Lab.
+                if (observation.Detail.StartsWith("transport:", StringComparison.Ordinal))
+                    continue;
+                ++semanticObservations;
                 if (observation.TerritoryID != _territory)
                 {
                     FinalizeDue(DateTime.MaxValue);
@@ -119,7 +125,7 @@ public sealed partial class ForetellEngine
 
             report.RediscoveredMechanics = _store.Encounters.Values.Sum(e => e.Mechanics.Count);
             report.AmbiguousMechanics = _store.Encounters.Values.Sum(e => e.Mechanics.Values.Sum(m => m.AmbiguousSamples));
-            report.Status = $"OK - sandbox reprocessed {report.Parsed} observations and rediscovered {report.RediscoveredMechanics} mechanics";
+            report.Status = $"OK - sandbox reprocessed {semanticObservations} semantic observations ({report.Parsed - semanticObservations} raw transport records retained) and rediscovered {report.RediscoveredMechanics} mechanics";
         }
         catch (Exception e)
         {

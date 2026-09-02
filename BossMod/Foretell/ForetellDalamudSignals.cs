@@ -20,14 +20,17 @@ public sealed partial class ForetellEngine
         _subscriptions.Add(new(() => Service.DutyState.DutyCompleted -= OnDutyCompleted));
         Service.FlyTextGui.FlyTextCreated += OnFlyText;
         _subscriptions.Add(new(() => Service.FlyTextGui.FlyTextCreated -= OnFlyText));
-        Service.ChatGui.LogMessage += OnDalamudLogMessage;
-        _subscriptions.Add(new(() => Service.ChatGui.LogMessage -= OnDalamudLogMessage));
-        Service.ToastGui.Toast += OnNormalToast;
-        _subscriptions.Add(new(() => Service.ToastGui.Toast -= OnNormalToast));
-        Service.ToastGui.QuestToast += OnQuestToast;
-        _subscriptions.Add(new(() => Service.ToastGui.QuestToast -= OnQuestToast));
-        Service.ToastGui.ErrorToast += OnErrorToast;
-        _subscriptions.Add(new(() => Service.ToastGui.ErrorToast -= OnErrorToast));
+        ClassifyNonGameplayDalamudSignals();
+    }
+
+    private void ClassifyNonGameplayDalamudSignals()
+    {
+        // UI notifications and plugin log messages are diagnostics, not game-state sensors. Subscribing to them
+        // created feedback/flood paths while adding no encounter evidence; typed SystemLog remains available.
+        RegisterCapability("dalamud.logMessage", typeof(ILogMessage), "LogMessage", false, true, "non-gameplay diagnostic stream");
+        RegisterCapability("dalamud.toast.normal", typeof(ToastOptions), "Toast", false, true, "non-gameplay UI notification");
+        RegisterCapability("dalamud.toast.quest", typeof(QuestToastOptions), "QuestToast", false, true, "non-gameplay UI notification");
+        RegisterCapability("dalamud.toast.error", typeof(SeString), "ErrorToast", false, true, "non-gameplay UI notification");
     }
 
     private void OnDutyStarted(IDutyStateEventArgs args) => OnDutySignal(ObservationKind.DutyStarted, args);
