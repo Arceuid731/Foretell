@@ -65,13 +65,15 @@ public sealed partial class ForetellEngine
                     }
                     break;
                 case 3: // cone/fan with actor padding
-                    if (effectRange > 0 && fanHalfAngle > 0)
+                    if (effectRange > 0)
                     {
                         geometry = GeometryKind.Cone;
                         p1 = effectRange + hitbox;
                         p2 = fanHalfAngle;
-                        confidence = .90f;
-                        why = "CastType padded cone + EffectRange + actor hitbox + Omen angle";
+                        confidence = fanHalfAngle > 0 ? .90f : .62f;
+                        why = fanHalfAngle > 0
+                            ? "CastType padded cone + EffectRange + actor hitbox + Omen angle"
+                            : "CastType identifies padded cone family; angle requires outcome evidence";
                     }
                     break;
                 case 4: // static line
@@ -146,13 +148,15 @@ public sealed partial class ForetellEngine
                     }
                     break;
                 case 13: // cone/fan, no padding
-                    if (effectRange > 0 && fanHalfAngle > 0)
+                    if (effectRange > 0)
                     {
                         geometry = GeometryKind.Cone;
                         p1 = effectRange;
                         p2 = fanHalfAngle;
-                        confidence = .94f;
-                        why = "CastType cone + EffectRange + Omen fan angle";
+                        confidence = fanHalfAngle > 0 ? .94f : .64f;
+                        why = fanHalfAngle > 0
+                            ? "CastType cone + EffectRange + Omen fan angle"
+                            : "CastType identifies cone family; angle requires outcome evidence";
                     }
                     break;
             }
@@ -209,7 +213,8 @@ public sealed partial class ForetellEngine
             mechanic.Evidence[ObservationKind.ClientMetadata] = 1;
             mechanic.LastSeen = DateTime.UtcNow;
 
-            if (p.Geometry != GeometryKind.Unknown && (mechanic.Geometry == GeometryKind.Unknown || mechanic.Observations == 0))
+            if (ForetellInferenceCore.GeometryParametersComplete(p.Geometry, p.P1, p.P2)
+                && (mechanic.Geometry == GeometryKind.Unknown || mechanic.Observations == 0))
             {
                 mechanic.Geometry = p.Geometry;
                 mechanic.Kind = mechanic.Kind == MechanicKind.Unknown ? MechanicKind.GroundAOE : mechanic.Kind;
@@ -218,7 +223,8 @@ public sealed partial class ForetellEngine
             }
         }
 
-        if (p.Geometry == GeometryKind.Unknown || p.Confidence <= 0)
+        if (p.Geometry == GeometryKind.Unknown || p.Confidence <= 0
+            || !ForetellInferenceCore.GeometryParametersComplete(p.Geometry, p.P1, p.P2))
         {
             _lastEvidence = p.Evidence;
             return;

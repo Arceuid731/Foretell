@@ -175,6 +175,35 @@ public static class ForetellInferenceCore
         return Math.Min(evidence, stability);
     }
 
+    // Normal running (including sprint) must not become knockback evidence when the 250 ms sampler is delayed.
+    // Forced movement is characteristically both abrupt and fast; slower movement remains ordinary positional
+    // context without contaminating mechanic classification.
+    public static bool IsAbruptDisplacement(float distance, double seconds)
+    {
+        if (!float.IsFinite(distance) || !double.IsFinite(seconds) || seconds is < .05 or > .75)
+            return false;
+        return distance >= 3f && distance / seconds >= 10f;
+    }
+
+    // Wide cones are common (including attacks whose safe region is only a rear wedge). Outcome fitting must cover
+    // the full cone family instead of silently stopping at a 180-degree total angle.
+    public static float[] ConeHalfAngleCandidatesDegrees()
+        => [15f, 22.5f, 30f, 45f, 60f, 90f, 120f, 135f, 150f, 165f];
+
+    public static bool GeometryParametersComplete(GeometryKind geometry, float p1, float p2)
+    {
+        if (!float.IsFinite(p1) || !float.IsFinite(p2) || p1 < 0 || p2 < 0)
+            return false;
+        return geometry switch
+        {
+            GeometryKind.Circle => p1 > 0,
+            GeometryKind.Donut => p1 > 0 && p2 > p1,
+            GeometryKind.Cone => p1 > 0 && p2 is > 0 and < MathF.PI,
+            GeometryKind.Rectangle or GeometryKind.Cross => p1 > 0 && p2 > 0,
+            _ => false
+        };
+    }
+
     public static GuidanceKind GuidanceFor(MechanicKind kind) => kind switch
     {
         MechanicKind.GroundAOE or MechanicKind.TargetedAOE => GuidanceKind.Avoid,

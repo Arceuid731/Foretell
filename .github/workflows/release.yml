@@ -90,14 +90,15 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Phase-clock and boss-HP forecasting.
+          Arena and prediction lifecycle stabilization from T364, T394 and T638 Analysis ZIPs.
 
-          - Learns occurrence-specific mechanic timing relative to each observed combat phase, including the first predictable event without requiring a preceding cast.
-          - Learns boss HP thresholds only inside independently detected boss arenas, keeping ordinary trash and open-world mobs out of HP-gate inference.
-          - Selects time versus HP from cross-pull stability and deliberately prefers the clock when both correlations are equally plausible.
-          - Estimates HP-threshold arrival from the live health-loss slope with a bounded 12-second anticipation window.
-          - Separates repeated occurrences, encounter sources and bosses within a shared dungeon territory to avoid cross-pack forecasts.
-          - Exposes time/HP anchors and verified hit/miss reliability in Timeline and Analysis ZIP; advances learned-memory schema to 19.
+          - Rejects partial player-centered wall fans as arena boundaries, preventing the expanding blue radar polygon observed in Thornmarch and Urth's Fount.
+          - Lets complete floor-topology scans handle open platforms and removes previously stored false arena boundaries during the schema-20 migration.
+          - Expires rendered mechanics when their caster dies, the pull ends, their forecast context ends, or their normal display lifetime elapses.
+          - Separates ordinary running from abrupt forced movement so delayed position samples cannot turn movement into a knockback hypothesis.
+          - Retains an angle-less client cone as a learnable family and range, but withholds spatial drawing until outcome evidence determines its angle.
+          - Extends outcome fitting through 330-degree cones, including the 270-degree family implicated by Biting Halberd in Containment Bay Z1T9.
+          - Advances learned-memory schema to 20 and adds deterministic regressions for partial wall fans, movement sampling and wide cones.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@

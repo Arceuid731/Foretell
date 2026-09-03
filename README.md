@@ -4,7 +4,7 @@ Foretell is an experimental adaptive encounter-intelligence plugin for FFXIV, bu
 
 It keeps the mature BMR world-state/rendering stack while adding local multi-signal observation, causal and structural protocol learning, calibrated forecast validation, persistent contextual encounter memory, timeline/phase/composite prediction, Replay Lab diagnostics, native arena topology, and predictive world/radar/text guidance.
 
-For cast actions, Foretell also consumes useful local FFXIV client metadata as an immediate prior: `CastType`, `EffectRange`, `XAxisModifier`, `TargetArea`, `Omen`/VFX information and actor hitbox. These priors can make ordinary telegraphs useful from the first cast, but they are never treated as unquestionable ground truth: observed outcomes can confirm, refine or override them, and metadata alone cannot reach the 99% safe-guidance threshold.
+For cast actions, Foretell also consumes useful local FFXIV client metadata as an immediate prior: `CastType`, `EffectRange`, `XAxisModifier`, `TargetArea`, `Omen`/VFX information and actor hitbox. These priors can make ordinary telegraphs useful from the first cast, but they are never treated as unquestionable ground truth: observed outcomes can confirm, refine or override them, and metadata alone cannot reach the 99% safe-guidance threshold. If metadata identifies a cone but provides no angle, Foretell retains the cone family and range for learning without drawing an invented sector.
 
 ## Dalamud custom repository
 
@@ -31,7 +31,7 @@ Foretell separates evidence confidence from verified guidance reliability. A can
 - orange — high-confidence warning-grade inference
 - red — safe-guidance-grade danger (at the configured strict threshold)
 
-The radar also prints confidence percentages. Target-relative geometry is withheld from anticipated spatial drawing until repeated offsets are stable. Safe-position suggestions remain advisory and are only eligible at the strict safe-confidence gate.
+The radar also prints confidence percentages. Target-relative geometry is withheld from anticipated spatial drawing until repeated offsets are stable, and incomplete geometry is likewise kept out of the world and radar overlays. Safe-position suggestions remain advisory and are only eligible at the strict safe-confidence gate.
 
 ## Prediction pipeline
 
@@ -95,7 +95,7 @@ Continuous state is sampled with change detection and rotating actor slices; uni
 
 It must not import BossModule mechanics, state machines, boss components, encounter layouts/presets or equivalent hand-authored safe spots and phase answers. CI checks this boundary and the in-game coverage audit reports any sensor that is truncated, unavailable or not explicitly classified.
 
-The radar can be unlocked and dragged, resized, zoomed in world yalms, or forced to a circle/square. In Auto mode it uses the learned native collision topology once a complete sweep is available and temporarily falls back to a circle while scanning.
+The radar can be unlocked and dragged, resized, zoomed in world yalms, or forced to a circle/square. In Auto mode it accepts a radial collision boundary only when the sweep is nearly enclosed; partial player-centered wall fans are never rendered or persisted as arenas. Open platforms use the denser learned floor topology once a complete sweep is available, with a temporary circle fallback while scanning.
 
 ## Upstream
 

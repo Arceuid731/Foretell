@@ -96,7 +96,7 @@ requirements = {
     "BossMod/Foretell/ForetellModel.cs": [
         "DecisionAuditStage",
         "DecisionAuditEntry",
-        "public int Schema { get; set; } = 19",
+        "public int Schema { get; set; } = 20",
         "List<DecisionAuditEntry> DecisionAudit",
         "SignalTriggerMemory",
         "Dictionary<string, SignalTriggerMemory> TriggerContexts",

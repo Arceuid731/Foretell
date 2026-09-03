@@ -100,6 +100,9 @@ public sealed partial class ForetellEngine
             ApplyActionMetadataPrior(observation);
         AccumulateDataFeatures(observation, correlated);
 
+        if (observation.Kind == ObservationKind.DeathChanged && observation.Flag && observation.ActorID != 0)
+            CancelPredictionsForCaster(observation.ActorID, "caster died");
+
     }
 
     private void UpdateSourceMemory(EncounterMemory encounter, ForetellObservation observation)
@@ -274,6 +277,8 @@ public sealed partial class ForetellEngine
         _bossHealthSnapshots.Clear();
         foreach (var phase in _timelineForecasts.Values.Where(item => item.Phase >= 0).Select(item => item.Phase).Distinct().ToArray())
             CancelTimelineForecasts(phase);
+        foreach (var id in _predictions.Keys.ToArray())
+            ExpirePrediction(id, "pull ended");
     }
 
     private bool TouchOutOfCombatHazardContext(ForetellObservation observation)
@@ -314,8 +319,23 @@ public sealed partial class ForetellEngine
         foreach (var forecast in _timelineForecasts.Values.Where(item => item.Phase == phase).ToArray())
         {
             _timelineForecasts.Remove(forecast.ID);
-            _predictions.Remove(forecast.ID);
+            ExpirePrediction(forecast.ID, "forecast context ended");
         }
+    }
+
+    private void CancelPredictionsForCaster(ulong casterID, string reason)
+    {
+        foreach (var id in _predictions.Where(item => item.Value.CasterID == casterID).Select(item => item.Key).ToArray())
+        {
+            _timelineForecasts.Remove(id);
+            ExpirePrediction(id, reason);
+        }
+    }
+
+    private void ExpirePrediction(long id, string reason)
+    {
+        AuditPredictionOutcome(id, DecisionAuditStage.Expired, null, reason);
+        _predictions.Remove(id);
     }
 
     private static bool IsSignalExcluded(EncounterMemory encounter, ForetellObservation observation)
@@ -1169,7 +1189,7 @@ public sealed partial class ForetellEngine
         });
     }
 
-    private void AuditPredictionOutcome(long id, DecisionAuditStage stage, bool verified, string evidence)
+    private void AuditPredictionOutcome(long id, DecisionAuditStage stage, bool? verified, string evidence)
     {
         if (!_predictions.TryGetValue(id, out var prediction)) return;
         AddDecisionAudit(new()
@@ -1404,7 +1424,7 @@ public sealed partial class ForetellEngine
         {
             var dt = (observation.At - previous.At).TotalSeconds;
             var distance = Vector2.Distance(previous.Position, current);
-            if (dt is >= .08 and <= .75 && distance is >= 2.6f and <= 35f)
+            if (distance <= 35f && ForetellInferenceCore.IsAbruptDisplacement(distance, dt))
             {
                 var delta = current - previous.Position;
                 var displacement = new ForetellObservation
@@ -1706,8 +1726,8 @@ public sealed partial class ForetellEngine
                     var d = MathF.Sqrt(p.TargetDX * p.TargetDX + p.TargetDZ * p.TargetDZ);
                     return d >= inner && d <= outer;
                 });
-        for (var range = 8f; range <= 50f; range += 4f)
-            foreach (var halfDeg in new[] { 15f, 22.5f, 30f, 45f, 60f, 90f })
+        for (var range = 8f; range <= 60f; range += 4f)
+            foreach (var halfDeg in ForetellInferenceCore.ConeHalfAngleCandidatesDegrees())
             {
                 var half = halfDeg * MathF.PI / 180f;
                 Try(GeometryKind.Cone, range, half, p =>

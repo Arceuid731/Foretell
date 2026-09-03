@@ -348,7 +348,7 @@ public sealed partial class ForetellEngine
             ImGui.TextDisabled($"Current view: {_cfg.RadarWorldRadius:F0} yalms from the player to each edge; smaller means more zoom.");
             if (_cfg.RadarShape == ForetellRadarShape.Auto)
                 ImGui.TextDisabled(CurrentArenaBoundary is { } boundary
-                    ? $"Auto uses an observed collision boundary ({boundary.Hits}/{boundary.Rays} wall rays; {(boundary.ArenaLike ? "arena candidate" : "room/corridor")})."
+                    ? $"Auto uses a near-enclosed observed arena boundary ({boundary.Hits}/{boundary.Rays} wall rays)."
                     : _topologyAnalysis is { UnknownCells: 0, PassableCells: > 0 }
                         ? $"Auto uses observed floor topology ({_topologyAnalysis.PassableCells:N0} reachable cells)."
                         : "Auto is scanning collision while you are briefly still outside combat; a circle is used until ready.");
@@ -739,6 +739,8 @@ public sealed partial class ForetellEngine
         GeometryKind.Cone => $"range {mechanic.P1:F1} yalms / half-angle {mechanic.P2 * 180 / MathF.PI:F1} degrees",
         GeometryKind.Rectangle => $"length {mechanic.P1:F1} yalms / half-width {mechanic.P2:F1} yalms",
         GeometryKind.Cross => $"four arms {mechanic.P1:F1} yalms / half-width {mechanic.P2:F1} yalms",
+        _ when mechanic.PriorGeometry == GeometryKind.Cone && mechanic.PriorP1 > 0 && mechanic.PriorP2 <= 0
+            => $"cone family / range {mechanic.PriorP1:F1} yalms; angle still learning from outcomes",
         _ => "geometry not confidently identified yet"
     };
 

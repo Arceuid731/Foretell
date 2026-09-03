@@ -333,7 +333,7 @@ public sealed partial class ForetellEngine : IDisposable
         ExpireHazardContext(now);
         ExpireTimelineForecasts(now);
         foreach (var key in _predictions.Where(p => p.Value.Activation.AddSeconds(1.5) < now).Select(p => p.Key).ToArray())
-            _predictions.Remove(key);
+            ExpirePrediction(key, "display lifetime ended");
 
         // Open-world combat has no duty lifecycle, so retain the inactivity fallback there. In duties the actual
         // combat condition owns pull lifetime; quiet transition phases must not split one pull into several.
@@ -653,7 +653,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 19);
+        _store.Schema = Math.Max(_store.Schema, 20);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -806,7 +806,9 @@ public sealed partial class ForetellEngine : IDisposable
                 foreach (var topologyKey in encounter.Topologies.Keys.ToArray())
                     if (!NormalizeTopology(encounter.Topologies[topologyKey])) encounter.Topologies.Remove(topologyKey);
                 foreach (var boundaryKey in encounter.ArenaBoundaries.Keys.ToArray())
-                    if (!NormalizeArenaBoundary(encounter.ArenaBoundaries[boundaryKey])) encounter.ArenaBoundaries.Remove(boundaryKey);
+                    if (!NormalizeArenaBoundary(encounter.ArenaBoundaries[boundaryKey])
+                        || loadedSchema < 20 && !encounter.ArenaBoundaries[boundaryKey].ArenaLike)
+                        encounter.ArenaBoundaries.Remove(boundaryKey);
                 TrimEncounterCollections(encounter);
                 encounter.Sessions = Math.Max(0, encounter.Sessions);
                 encounter.Pulls = Math.Max(0, encounter.Pulls);

@@ -32,7 +32,7 @@ public sealed partial class ForetellEngine
         get
         {
             var player = _ws.Party[PartyState.PlayerSlot];
-            if (_arenaBoundary is not { } boundary || player == null
+            if (_arenaBoundary is not { ArenaLike: true } boundary || player == null
                 || Math.Abs(player.PosRot.Y - boundary.ReferenceY) > 6
                 || !ForetellArenaBoundaryCore.Contains(boundary.Points, V(player.Position)))
                 return null;
@@ -153,11 +153,13 @@ public sealed partial class ForetellEngine
             return;
         if (_arenaBoundary?.Fingerprint != result.Fingerprint)
             ++_arenaBoundaryChanges;
-        _arenaBoundary = result;
+        // Partial radial visibility polygons are still useful raw evidence, but they are not stable arena frames.
+        // Keep them out of live rendering and persistent knowledge so the denser floor scan can take over.
+        _arenaBoundary = result.ArenaLike ? result : null;
 
         var encounter = Encounter(_territory);
         var now = DateTime.UtcNow;
-        if (!encounter.ArenaBoundaries.TryGetValue(result.Fingerprint, out var memory))
+        if (result.ArenaLike && !encounter.ArenaBoundaries.TryGetValue(result.Fingerprint, out var memory))
         {
             memory = new()
             {
@@ -181,8 +183,12 @@ public sealed partial class ForetellEngine
                 encounter.ArenaBoundaries.Remove(oldest.Fingerprint);
             }
         }
-        memory.LastSeen = now;
-        ++memory.Observations;
+        if (result.ArenaLike)
+        {
+            var acceptedMemory = encounter.ArenaBoundaries[result.Fingerprint];
+            acceptedMemory.LastSeen = now;
+            ++acceptedMemory.Observations;
+        }
 
         var observation = Observation(ObservationKind.TopologySnapshot, detail: $"boundary:{result.Fingerprint}");
         observation.SourceKind = SourceKind.Environment;
@@ -201,7 +207,7 @@ public sealed partial class ForetellEngine
             return false;
         var position = new Vector2(player.X, player.Z);
         var memory = encounter.ArenaBoundaries.Values
-            .Where(item => Math.Abs(player.Y - item.ReferenceY) <= 6
+            .Where(item => item.ArenaLike && Math.Abs(player.Y - item.ReferenceY) <= 6
                 && ForetellArenaBoundaryCore.Contains(item.Points.Select(point => new Vector2(point.X, point.Z)).ToArray(), position))
             .OrderByDescending(item => item.LastSeen)
             .FirstOrDefault();

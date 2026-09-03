@@ -348,6 +348,8 @@ static class ForetellCoreTests
         Check.That(ForetellInferenceCore.TriggerForecastConfidence(3, .95f, 0, 0) >= .8f, "stable three-pull trigger remained hidden");
         Check.That(ForetellInferenceCore.TriggerForecastConfidence(2, 1, 0, 0) == 0, "two-pull trigger escaped abstention");
         Check.That(ForetellInferenceCore.TriggerForecastConfidence(6, 1, 2, 1) < .5f, "poor verified trigger retained excessive confidence");
+        Check.That(!ForetellInferenceCore.IsAbruptDisplacement(3.6f, .6), "normal running became forced movement");
+        Check.That(ForetellInferenceCore.IsAbruptDisplacement(5f, .25), "abrupt knockback was ignored");
     }
 
     private static void GeometryValidationAndGuidance()
@@ -360,6 +362,9 @@ static class ForetellCoreTests
         var stable = new ContextualMechanic { AnchorSamples = 3, AnchorForwardM2 = 1, AnchorSideM2 = 1 };
         var unstable = new ContextualMechanic { AnchorSamples = 3, AnchorForwardM2 = 30, AnchorSideM2 = 30 };
         Check.That(stable.AnchorStdDev < 3 && unstable.AnchorStdDev > 3, "anchor stability gate is incorrect");
+        Check.That(ForetellInferenceCore.ConeHalfAngleCandidatesDegrees().Contains(135f), "270-degree cone cannot be learned");
+        Check.That(!ForetellInferenceCore.GeometryParametersComplete(GeometryKind.Cone, 50, 0), "angle-less cone became drawable geometry");
+        Check.That(ForetellInferenceCore.GeometryParametersComplete(GeometryKind.Cone, 50, 135f * MathF.PI / 180), "wide cone was rejected");
     }
 
     private static void ArenaBoundaryInference()
@@ -382,6 +387,15 @@ static class ForetellCoreTests
         }
         var hallway = ForetellArenaBoundaryCore.Analyze(Vector2.Zero, 0, corridor, hits, 42);
         Check.That(!hallway.ArenaLike && hallway.AspectRatio > 2.6f, "long corridor was classified as a boss arena");
+        var partialDistances = Enumerable.Repeat(20f, rays).ToArray();
+        var partialHits = Enumerable.Repeat(true, rays).ToArray();
+        for (var i = 0; i < 12; ++i)
+        {
+            partialHits[i] = false;
+            partialDistances[i] = 42;
+        }
+        var partial = ForetellArenaBoundaryCore.Analyze(Vector2.Zero, 0, partialDistances, partialHits, 42);
+        Check.That(!partial.ArenaLike, "partial wall fan became an expanding arena boundary");
         Check.That(!ForetellArenaBoundaryCore.IsBossCandidate(2_200, 2_200, 2_000, 1), "ordinary trash was classified as a boss");
         Check.That(ForetellArenaBoundaryCore.IsBossCandidate(12_000, 12_000, 2_000, 2), "high-health boss was not recognized");
         Check.That(!ForetellArenaBoundaryCore.IsBossCandidate(2_000, 12_000, 2_000, 2), "boss add was classified as the boss");
@@ -498,7 +512,7 @@ static class ForetellCoreTests
             MeanBossHPRatio = .7
         };
         var copy = JsonSerializer.Deserialize<ForetellStore>(JsonSerializer.Serialize(store));
-        Check.That(copy?.Schema == 19 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
+        Check.That(copy?.Schema == 20 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
         var entry = copy!.DecisionAudit[0];
         Check.That(entry.Stage == DecisionAuditStage.Proposed && entry.Geometry == GeometryKind.Cone
             && entry.DisplayEligible && entry.SessionID == "test-session", "decision audit fields did not round-trip");

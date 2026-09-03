@@ -59,7 +59,10 @@ internal static class ForetellArenaBoundaryCore
         var height = Math.Max(.01f, maxZ - minZ);
         var aspect = Math.Max(width, height) / Math.Min(width, height);
         var hitRatio = hitCount / (float)distances.Count;
-        var arenaLike = hitRatio >= .70f && Math.Min(width, height) >= 12 && area >= 150
+        // A miss is represented by a point at maximumRadius. Accepting a merely partial wall fan therefore
+        // manufactures the expanding blue spikes seen when the player moves through a room. A reusable arena
+        // boundary needs near-complete enclosure; open platforms are handled by the floor-topology fallback.
+        var arenaLike = hitRatio >= .875f && Math.Min(width, height) >= 12 && area >= 150
             && aspect <= 2.6f && compactness >= .18f;
         var fingerprint = Fingerprint(origin, distances, hits, maximumRadius);
         return new(fingerprint, origin, referenceY, points, distances.Count, hitCount, area, compactness, aspect, arenaLike);
