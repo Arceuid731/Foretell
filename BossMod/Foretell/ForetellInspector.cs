@@ -51,7 +51,7 @@ public sealed partial class ForetellEngine
             case "MODE":
                 if (args.Length < 2 || !Enum.TryParse<ForetellMode>(args[1], true, out var mode))
                 {
-                    Service.ChatGui.Print("Foretell modes: legacy | observe | compare | hybrid | foretell");
+                    Service.ChatGui.Print("Foretell modes: legacy | observe | hybrid | foretell");
                     return true;
                 }
                 SetMode(mode);
@@ -111,7 +111,7 @@ public sealed partial class ForetellEngine
 
     private void PrintCommandHelp()
     {
-        Service.ChatGui.Print("Foretell commands: /foretell, inspect, stats, mode <legacy|observe|compare|hybrid|foretell>, learning <on|off>, record <on|off>, replay, export, save, help");
+        Service.ChatGui.Print("Foretell commands: /foretell, inspect, stats, mode <legacy|observe|hybrid|foretell>, learning <on|off>, record <on|off>, replay, export, save, help");
     }
 
     private void SetMode(ForetellMode mode)
@@ -125,8 +125,7 @@ public sealed partial class ForetellEngine
     {
         ForetellMode.Legacy => "BossMod Reborn presentation only; Foretell guidance is hidden.",
         ForetellMode.Observe => "Recommended first step: Foretell learns silently while BMR remains your guide.",
-        ForetellMode.Compare => "Shows BMR and Foretell together so you can compare what Foretell inferred.",
-        ForetellMode.Hybrid => "Foretell guidance is primary; BMR keeps only its arena as a visual safety baseline.",
+        ForetellMode.Hybrid => "Shows the complete BMR and Foretell presentations together.",
         ForetellMode.Foretell => "Pure Foretell presentation; legacy BMR encounter hints are hidden.",
         _ => ""
     };
@@ -183,8 +182,6 @@ public sealed partial class ForetellEngine
         DrawModeButton(ForetellMode.Legacy);
         ImGui.SameLine();
         DrawModeButton(ForetellMode.Observe);
-        ImGui.SameLine();
-        DrawModeButton(ForetellMode.Compare);
         ImGui.SameLine();
         DrawModeButton(ForetellMode.Hybrid);
         ImGui.SameLine();
@@ -686,10 +683,9 @@ public sealed partial class ForetellEngine
         {
             ForetellMode.Legacy => "Foretell is hidden. Switch to Observe to learn without changing the combat UI.",
             ForetellMode.Observe when learned < 3 => "Stay in Observe: more repeated evidence is needed before comparison is useful.",
-            ForetellMode.Observe => $"{learned} candidates learned, including {high} high-confidence. Compare is the useful next step.",
-            ForetellMode.Compare when high < 3 => "Keep Compare enabled and review Learned mechanics while evidence accumulates.",
-            ForetellMode.Compare => $"{high} high-confidence candidates. If the overlay matches the fight, Hybrid is ready to test.",
-            ForetellMode.Hybrid => "Validation mode: Foretell guides while only BMR's arena remains as a reference.",
+            ForetellMode.Observe => $"{learned} candidates learned, including {high} high-confidence. Hybrid is the useful next step.",
+            ForetellMode.Hybrid when high < 3 => "Keep Hybrid enabled: BMR remains complete while you review Foretell's learned mechanics.",
+            ForetellMode.Hybrid => $"Combined validation mode: BMR and Foretell are both active; {high} Foretell candidates are high-confidence.",
             ForetellMode.Foretell => "Pure Foretell is active. Review ambiguous mechanics after the run.",
             _ => ""
         };
@@ -1145,7 +1141,7 @@ public sealed partial class ForetellEngine
         if (ImGui.CollapsingHeader("Commands"))
         {
             ImGui.BulletText("/foretell - toggle cockpit");
-            ImGui.BulletText("/foretell mode observe|compare|hybrid|foretell|legacy");
+            ImGui.BulletText("/foretell mode observe|hybrid|foretell|legacy");
             ImGui.BulletText("/foretell learning on|off");
             ImGui.BulletText("/foretell record on|off");
             ImGui.BulletText("/foretell replay | export | save");

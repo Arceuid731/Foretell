@@ -397,6 +397,9 @@ public sealed partial class ForetellEngine : IDisposable
 
         // Persisted config is user-editable and survives plugin upgrades. Never let NaN, infinity or an obsolete
         // enum value reach ImGui/DX11; invalid window geometry is capable of destabilising the graphics driver.
+        // Numeric configs from the short-lived v0.8.1 Hybrid mode used value 3; both old presentation variants
+        // intentionally converge on the new combined BMR + Foretell Hybrid mode.
+        if ((int)_cfg.Mode == 3) { _cfg.Mode = ForetellMode.Hybrid; changed = true; }
         changed |= NormalizeEnum(ref _cfg.Mode, ForetellMode.Observe);
         changed |= NormalizeEnum(ref _cfg.RadarShape, ForetellRadarShape.Auto);
         changed |= NormalizeFinite(ref _cfg.VisualConfidence, 75, 50, 100);

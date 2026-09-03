@@ -24,14 +24,14 @@ public sealed class BossModuleMainWindow : UIWindow
     {
         var foretellMode = Service.Config.Get<Foretell.ForetellConfig>().Mode;
         // In pure Foretell mode keep legacy BMR modules running as a compatibility/sensor baseline,
-        // but suppress their presentation. Hybrid retains only BMR's arena as a visual safety baseline.
+        // but suppress their presentation. Hybrid retains the complete BMR presentation alongside Foretell.
         if (foretellMode == Foretell.ForetellMode.Foretell)
         {
             IsOpen = false;
             return;
         }
 
-        var showZoneModule = foretellMode != Foretell.ForetellMode.Hybrid && ShowZoneModule();
+        var showZoneModule = ShowZoneModule();
         IsOpen = BossModuleManager.Config.Enable && (_mgr.LoadedModules.Count > 0 || showZoneModule);
         ShowCloseButton = _mgr.ActiveModule != null && !showZoneModule;
         WindowName = (showZoneModule ? $"Zone module ({_zmm.ActiveModule?.GetType().Name})" : _mgr.ActiveModule != null ? $"Boss module ({_mgr.ActiveModule.GetType().Name})" : "Loaded boss modules") + _windowID;
@@ -48,7 +48,7 @@ public sealed class BossModuleMainWindow : UIWindow
 
         ForceMainWindow = BossModuleManager.Config.TrishaMode;
 
-        if (foretellMode != Foretell.ForetellMode.Hybrid && BossModuleManager.Config.ShowWorldArrows && _mgr.ActiveModule != null && _mgr.WorldState.Party[PartyState.PlayerSlot] is var pc && pc != null)
+        if (BossModuleManager.Config.ShowWorldArrows && _mgr.ActiveModule != null && _mgr.WorldState.Party[PartyState.PlayerSlot] is var pc && pc != null)
         {
             DrawMovementHints(_mgr.ActiveModule.CalculateMovementHintsForRaidMember(PartyState.PlayerSlot, pc), pc.PosRot.Y);
         }
@@ -87,7 +87,7 @@ public sealed class BossModuleMainWindow : UIWindow
 
     public override void Draw()
     {
-        if (Service.Config.Get<Foretell.ForetellConfig>().Mode != Foretell.ForetellMode.Hybrid && ShowZoneModule())
+        if (ShowZoneModule())
         {
             _zmm.ActiveModule?.DrawGlobalHints();
         }
@@ -95,8 +95,7 @@ public sealed class BossModuleMainWindow : UIWindow
         {
             try
             {
-                var hybrid = Service.Config.Get<Foretell.ForetellConfig>().Mode == Foretell.ForetellMode.Hybrid;
-                _mgr.ActiveModule.Draw(BossModuleManager.Config.RotateArena ? _mgr.WorldState.Client.CameraAzimuth : BossModuleManager.Config.FlipArena ? 180f.Degrees() : default, PartyState.PlayerSlot, !hybrid && !BossModuleManager.Config.HintsInSeparateWindow, true);
+                _mgr.ActiveModule.Draw(BossModuleManager.Config.RotateArena ? _mgr.WorldState.Client.CameraAzimuth : BossModuleManager.Config.FlipArena ? 180f.Degrees() : default, PartyState.PlayerSlot, !BossModuleManager.Config.HintsInSeparateWindow, true);
             }
             catch (Exception ex)
             {

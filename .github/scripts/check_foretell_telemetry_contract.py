@@ -124,6 +124,9 @@ requirements = {
         "n is Foretell.ForetellConfig",
     ],
     "BossMod/Foretell/ForetellConfig.cs": [
+        "Hybrid = 2",
+        "Foretell = 4",
+        'string.Equals(mode.GetString(), "Compare"',
         "public enum ForetellRadarShape",
         "RadarShape = ForetellRadarShape.Auto",
         "RadarUnlocked",
@@ -443,6 +446,13 @@ if "ProcessObservation(obs, enriched: true)" not in observer[observer.find("priv
 config = read("BossMod/Foretell/ForetellConfig.cs")
 if "public bool RecordReplay = true" in config:
     errors.append("Foretell high-volume replay recording became default-on again")
+if re.search(r"^\s*Compare\s*[=,]", config, re.MULTILINE):
+    errors.append("Foretell reintroduced the redundant Compare presentation mode")
+
+main_window = read("BossMod/BossModule/BossModuleMainWindow.cs")
+hints_window = read("BossMod/BossModule/BossModuleHintsWindow.cs")
+if "ForetellMode.Hybrid" in main_window or "ForetellMode.Hybrid" in hints_window:
+    errors.append("Hybrid no longer preserves the complete BMR presentation")
 
 typed_snapshots = read("BossMod/Foretell/ForetellTypedSnapshots.cs")
 hot_client_snapshot = typed_snapshots[typed_snapshots.find("private void StoreClient("):typed_snapshots.find("private void StoreDeepDungeon(")]

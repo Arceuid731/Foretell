@@ -1,12 +1,14 @@
+using System.IO;
+using System.Text.Json;
+
 namespace BossMod.Foretell;
 
 public enum ForetellMode
 {
-    Legacy,
-    Observe,
-    Compare,
-    Hybrid,
-    Foretell
+    Legacy = 0,
+    Observe = 1,
+    Hybrid = 2,
+    Foretell = 4
 }
 
 public enum ForetellRadarShape
@@ -19,8 +21,33 @@ public enum ForetellRadarShape
 [ConfigDisplay(Name = "Foretell", Order = 0)]
 public sealed class ForetellConfig : ConfigNode
 {
-    [PropertyDisplay("Presentation mode", tooltip: "Recommended path: Observe -> Compare -> Hybrid. Legacy shows BMR only. Observe learns silently while BMR guides you. Compare shows the complete BMR and Foretell presentations together. Hybrid makes Foretell guidance primary and retains only BMR's arena as a visual safety baseline. Foretell hides legacy encounter presentation and shows the adaptive layer only. Use /foretell for the guided dashboard.")]
+    [PropertyDisplay("Presentation mode", tooltip: "Recommended path: Observe -> Hybrid. Legacy shows BMR only. Observe learns silently while BMR guides you. Hybrid shows the complete BMR and Foretell presentations together. Foretell hides legacy encounter presentation and shows the adaptive layer only. Use /foretell for the guided dashboard.")]
     public ForetellMode Mode = ForetellMode.Observe;
+
+    public override void Deserialize(JsonElement json, JsonSerializerOptions options)
+    {
+        // v0.8.1 serialized the combined presentation as "Compare". Rewrite that one legacy value before the
+        // shared enum converter sees it; the old "Hybrid" name already maps to the new combined mode.
+        if (json.TryGetProperty(nameof(Mode), out var mode) && mode.ValueKind == JsonValueKind.String
+            && string.Equals(mode.GetString(), "Compare", StringComparison.OrdinalIgnoreCase))
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartObject();
+                foreach (var property in json.EnumerateObject())
+                {
+                    if (property.NameEquals(nameof(Mode))) writer.WriteString(nameof(Mode), nameof(ForetellMode.Hybrid));
+                    else property.WriteTo(writer);
+                }
+                writer.WriteEndObject();
+            }
+            using var migrated = JsonDocument.Parse(stream.ToArray());
+            base.Deserialize(migrated.RootElement, options);
+            return;
+        }
+        base.Deserialize(json, options);
+    }
 
     [PropertyDisplay("Adaptive learning", tooltip: "When ON, Foretell updates persistent mechanics, sources, timelines and the local ML model from new evidence. When OFF, those learned data are read-only; live observation and guidance from existing memory can continue.")]
     public bool EnableLearning = true;

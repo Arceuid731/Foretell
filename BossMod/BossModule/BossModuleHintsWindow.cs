@@ -17,7 +17,7 @@ public sealed class BossModuleHintsWindow : UIWindow
 
     public override void PreOpenCheck()
     {
-        if (Service.Config.Get<Foretell.ForetellConfig>().Mode is Foretell.ForetellMode.Hybrid or Foretell.ForetellMode.Foretell)
+        if (Service.Config.Get<Foretell.ForetellConfig>().Mode == Foretell.ForetellMode.Foretell)
         {
             IsOpen = false;
             return;

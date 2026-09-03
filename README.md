@@ -15,8 +15,8 @@ For cast actions, Foretell also consumes useful local FFXIV client metadata as a
 1. Install Foretell from the custom repository and disable a separate BossMod Reborn installation while testing; Foretell already contains the BMR stack.
 2. Run `/foretell` to open the Foretell cockpit.
 3. Start in **Observe** on familiar content. Foretell learns silently while BMR remains your reference.
-4. After a few pulls/runs, switch to **Compare** and review **Learned mechanics**.
-5. Move to **Hybrid** when the learned results match the fight. Use pure **Foretell** only when you intentionally want to hide legacy BMR encounter presentation.
+4. After a few pulls/runs, switch to **Hybrid** to display complete BMR and Foretell guidance together, then review **Learned mechanics**.
+5. Use pure **Foretell** only when you intentionally want to hide legacy BMR encounter presentation.
 
 The dedicated in-game cockpit provides Dashboard, Knowledge explorer, Timeline, Live feed, Replay & storage, Settings and Help tabs. The Knowledge explorer is organized as content category → territory/duty → arena/environment/source → mechanic, with confirmed deletion at every useful level. It also exposes learned causal links, raw protocol families, phase transitions and simultaneous patterns individually.
 
@@ -41,8 +41,7 @@ Repeated signal transitions produce branch-aware timeline forecasts. Ambiguous b
 
 - **Legacy** — BMR presentation only; Foretell guidance is hidden.
 - **Observe** — recommended starting point; Foretell learns silently.
-- **Compare** — BMR and Foretell are displayed together for validation.
-- **Hybrid** — adaptive Foretell guidance with BMR retained as a reference/safety net.
+- **Hybrid** — complete BMR and Foretell presentations displayed together for validation.
 - **Foretell** — pure adaptive presentation; legacy BMR encounter hints are hidden.
 
 ## Inspector and commands
@@ -50,7 +49,7 @@ Repeated signal transitions produce branch-aware timeline forecasts. Ambiguous b
 `/foretell` opens the Foretell cockpit. Useful commands include:
 
 - `/foretell inspect` / `stats` / `debug`
-- `/foretell mode observe|compare|hybrid|foretell|legacy`
+- `/foretell mode observe|hybrid|foretell|legacy`
 - `/foretell learning on|off`
 - `/foretell record on|off`
 - `/foretell replay`
