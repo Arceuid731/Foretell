@@ -90,17 +90,17 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Performance, prediction hygiene and combat-presentation hotfix.
+          Out-of-combat hazard learning, user-managed signal filters and open-world performance update.
 
-          - Fixes mismatched hook timestamps, false open-world/duty pull attribution and player/environment source collisions that polluted learned timelines and Likely next.
-          - Migrates affected derived memory while preserving reusable mechanic samples.
-          - Fixes radar placement against the real ImGui viewport and keeps it clamped on screen.
-          - Makes text guidance movable and action-oriented: AVOID, STACK, SPREAD, SOAK, LOOK AWAY, KNOCKBACK, RAIDWIDE and other useful instructions now use action or mechanic names instead of internal keys and hexadecimal fallbacks.
-          - Makes Compare and Hybrid distinct: Compare keeps the complete BMR and Foretell presentations; Hybrid makes Foretell primary while retaining only the legacy arena baseline.
-          - Removes periodic inventory/progression/cooldown sweeps from the combat path, reduces native snapshot cadence and actor traversal, and debounces collision-topology scans.
-          - Keeps exact compressed raw packets while moving expensive per-opcode structural analysis out of the live frame path and into Replay Lab.
-          - Keeps autosave outside combat, excludes the transient capability ledger from learned-memory JSON and hard-limits optional JSONL replay segments to 512 MiB.
-          - Adds typed snapshot, native actor, raw feature drain and topology timings to diagnostics for the next performance validation.
+          - Learns recurring casts, map effects, VFX, tethers and other hazards that occur while FFXIV reports the player as out of combat.
+          - Keeps those hazards in a dedicated Out-of-combat hazards timeline instead of mixing them with boss phases or inventing combat pulls.
+          - Ends duty pull state as soon as the game's InCombat condition clears, preventing unrelated packs and corridor mechanics from being linked together.
+          - Adds an Ignore action to readable timeline signals. Ignored signals stop triggering predictive learning and overlays for that territory while raw capture and diagnostics remain intact.
+          - Makes exclusions persistent, restorable and portable through foretell-signal-filters.json, with bounded and validated import/merge support.
+          - Keeps player and alliance position sampling at 4 Hz and adds the active combat chocobo to the same lightweight positional model.
+          - Removes stale former-party position tracks so they cannot contaminate later mechanic participant sets.
+          - Limits expensive native actor snapshots to 120 yalms unless the actor is casting, engaged, targeting the party or was prioritized by an exact event. Exact semantic and raw events remain distance-independent.
+          - Separates combat and out-of-combat forecast resolution so identical signals cannot validate predictions from the wrong context.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@
