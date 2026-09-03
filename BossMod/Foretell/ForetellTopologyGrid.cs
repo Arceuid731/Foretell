@@ -43,6 +43,48 @@ internal sealed class ForetellTopologyGrid
         Cursor = 0;
     }
 
+    public void Clear()
+    {
+        OriginX = OriginZ = ReferenceY = Resolution = 0;
+        Width = Height = Cursor = 0;
+        Cells = [];
+        Heights = [];
+    }
+
+    public ForetellTopologyGrid Snapshot()
+        => new()
+        {
+            OriginX = OriginX,
+            OriginZ = OriginZ,
+            ReferenceY = ReferenceY,
+            Resolution = Resolution,
+            Width = Width,
+            Height = Height,
+            Cursor = Cursor,
+            Cells = Cells.ToArray(),
+            Heights = Heights.ToArray()
+        };
+
+    public bool Restore(float originX, float originZ, float referenceY, float resolution, int width, int height,
+        byte[] connectedCells, short[] heightCentimeters)
+    {
+        var count = (long)width * height;
+        if (!float.IsFinite(originX) || !float.IsFinite(originZ) || !float.IsFinite(referenceY)
+            || !float.IsFinite(resolution) || resolution is < .5f or > 4f || width <= 0 || height <= 0
+            || count > 1_000_000 || connectedCells.Length != count || heightCentimeters.Length != count)
+            return false;
+        OriginX = originX;
+        OriginZ = originZ;
+        ReferenceY = referenceY;
+        Resolution = resolution;
+        Width = width;
+        Height = height;
+        Cells = connectedCells.ToArray();
+        Heights = heightCentimeters.Select(value => value == short.MinValue ? float.NaN : referenceY + value / 100f).ToArray();
+        Cursor = CellCount;
+        return true;
+    }
+
     public Vector2 CellCenter(int index)
     {
         var x = index % Width;

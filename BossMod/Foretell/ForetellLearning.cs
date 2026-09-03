@@ -91,10 +91,10 @@ public sealed partial class ForetellEngine
         }
 
         var correlated = excludedSignal ? null : CorrelateObservation(observation);
-        var mayStartEpisode = !excludedSignal && IsEpisodeTrigger(observation) && (observation.Kind != ObservationKind.SystemLog || _inPull);
-        if (!excludedSignal && (observation.Kind == ObservationKind.CastStart || (mayStartEpisode && correlated == null)))
+        var mayStartEpisode = !excludedSignal && IsEpisodeTrigger(observation);
+        if (mayStartEpisode && (observation.Kind == ObservationKind.CastStart || correlated == null))
             StartEpisode(observation, encounter);
-        if (!excludedSignal && observation.Kind == ObservationKind.CastStart)
+        if (mayStartEpisode && observation.Kind == ObservationKind.CastStart)
             ApplyActionMetadataPrior(observation);
         AccumulateDataFeatures(observation, correlated);
 
@@ -410,17 +410,8 @@ public sealed partial class ForetellEngine
     }
 
     private static bool IsEpisodeTrigger(ForetellObservation observation)
-    {
-        if (observation.SourceKind is SourceKind.Player or SourceKind.Pet) return false;
-        if (observation.Kind == ObservationKind.NativeVFXSpawn && observation.ActorID == 0 && observation.TargetID == 0) return false;
-        if (observation.Kind is ObservationKind.StatusGain or ObservationKind.StatusLose or ObservationKind.ActorControlRaw
-            && observation.ActorID == 0 && observation.TargetID == 0) return false;
-        return observation.Kind is ObservationKind.CastStart or ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
-            or ObservationKind.StatusGain or ObservationKind.ActorControlRaw
-            or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ActionTimelineEvent or ObservationKind.ActionTimelineSync
-            or ObservationKind.NpcYell or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
-            or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn or ObservationKind.SystemLog;
-    }
+        => ForetellInferenceCore.CanStartMechanicEpisode(observation.Kind, observation.SourceKind,
+            observation.ActorID, observation.ActorOID);
 
     private static string SignalKey(ForetellObservation observation)
         => $"{observation.ActorOID:X}:{observation.Kind}:{observation.PrimaryID:X}";
@@ -645,6 +636,8 @@ public sealed partial class ForetellEngine
 
     private void StartEpisode(ForetellObservation trigger, EncounterMemory? encounter)
     {
+        if (!IsEpisodeTrigger(trigger))
+            return;
         // Correlation is intentionally linear over the bounded live set. A large combat pack used to grow this
         // to 512 and scan it twice for every target/effect callback, producing catastrophic frame loss.
         const int maxLiveEpisodes = 64;
@@ -795,8 +788,7 @@ public sealed partial class ForetellEngine
 
     private MechanicEpisode? CorrelateObservation(ForetellObservation observation)
     {
-        if (observation.Kind is ObservationKind.ActorAdded or ObservationKind.ActorRemoved or ObservationKind.PositionSample
-            or ObservationKind.CastStart or ObservationKind.CastFinish or ObservationKind.RenderFlagsChanged)
+        if (!ForetellInferenceCore.IsMechanicOutcomeEvidence(observation.Kind, observation.SourceKind))
             return null;
 
         var episode = BestEpisode(observation);
@@ -904,7 +896,7 @@ public sealed partial class ForetellEngine
                 best = episode;
             }
         }
-        return best;
+        return bestScore <= 3.5 ? best : null;
     }
 
     private static bool IsResolutionEvidence(ObservationKind kind)
@@ -924,6 +916,14 @@ public sealed partial class ForetellEngine
         var key = $"{episode.SignalKey}>{effectKey}";
         if (!encounter.CausalEdges.TryGetValue(key, out var edge))
         {
+            const int maxEffectsPerCause = 64;
+            var sameCause = encounter.CausalEdges.Where(item => item.Value.Cause == episode.SignalKey).ToArray();
+            if (sameCause.Length >= maxEffectsPerCause)
+            {
+                var weakest = sameCause.MinBy(item => (item.Value.Confidence, item.Value.Count, item.Value.LastSeen));
+                encounter.CausalEdges.Remove(weakest.Key);
+                ++_learningEvictions;
+            }
             if (encounter.CausalEdges.Count >= 8192)
             {
                 encounter.CausalEdges.Remove(encounter.CausalEdges.MinBy(item => (item.Value.Confidence, item.Value.Count, item.Value.LastSeen)).Key);
@@ -1027,6 +1027,8 @@ public sealed partial class ForetellEngine
     {
         if (episode.Finalized) return;
         episode.Finalized = true;
+        if (!IsEpisodeTrigger(episode.Trigger))
+            return;
         ++_session.MechanicsFinalized;
 
         if (!_cfg.EnableLearning)

@@ -67,7 +67,7 @@ requirements = {
         "LooksLikeGaze",
         "LooksLikeProximity",
         "CaptureResolutionPose",
-        "observation.Kind != ObservationKind.SystemLog || _inPull",
+        "ForetellInferenceCore.CanStartMechanicEpisode",
         "FiniteOrZero(observation.X)",
         "IssueMechanicPrediction",
         "ScheduleTimelineForecast",
@@ -138,7 +138,6 @@ requirements = {
         'string.Equals(mode.GetString(), "Compare"',
         "public enum ForetellRadarShape",
         "RadarShape = ForetellRadarShape.Auto",
-        "EnableCollisionTopology",
         "RadarUnlocked",
         "RadarPositionX",
         "RadarPositionY",
@@ -161,7 +160,6 @@ requirements = {
         "DrawRadarFrame",
         "ForetellRadarShape.Square",
         "RadarWorldRadius",
-        "_cfg.EnableCollisionTopology",
         "MaxRenderedMechanics",
         "FiniteViewport(viewport)",
     ],
@@ -302,7 +300,8 @@ requirements = {
         'obs.Numeric[$"raw.window.binaryBucket[{i}]"]',
     ],
     "BossMod/Foretell/ForetellTopology.cs": [
-        "!_cfg.EnableCollisionTopology",
+        "PollCompletedTopologyAnalysis",
+        "Task.Run",
         "RaycastMaterialFilter",
         "MaxTopologyRaysPerFrame",
         "MaxTopologyMillisecondsPerFrame",
@@ -410,8 +409,16 @@ episode_trigger = learning[learning.find("private static bool IsEpisodeTrigger")
 for noisy_trigger in ["DalamudLogMessage", "NormalToast", "QuestToast", "ErrorToast"]:
     if noisy_trigger in episode_trigger:
         errors.append(f"Foretell creates mechanic episodes from a diagnostic/UI stream: {noisy_trigger}")
-if "observation.ActorID == 0 && observation.TargetID == 0" not in episode_trigger:
+inference = read("BossMod/Foretell/ForetellInferenceCore.cs")
+mechanic_source_gate = inference[inference.find("public static bool CanStartMechanicEpisode"):inference.find("public static bool IsMechanicOutcomeEvidence")]
+if "actorID != 0 && actorOID != 0" not in mechanic_source_gate:
     errors.append("Foretell can create mechanic episodes from unbound ambient native VFX")
+if "SourceKind.Player or SourceKind.Pet" not in mechanic_source_gate:
+    errors.append("Foretell can create learned mechanic episodes from player or pet actions")
+if "if (mayStartEpisode && observation.Kind == ObservationKind.CastStart)" not in learning:
+    errors.append("Foretell action metadata can bypass the mechanic-source admission gate")
+if "episode ??= correlated ?? BestEpisode(observation)" in fabric:
+    errors.append("Foretell ambient feature snapshots can attach to an unrelated episode by timestamp alone")
 
 engine = read("BossMod/Foretell/ForetellEngine.cs")
 if "SampleDataFabric(force: true, includeNative: false)" not in engine:
@@ -494,7 +501,9 @@ for start, end, name in [
         errors.append(f"Foretell {name} detour does not enqueue its primitive capture")
 
 topology = read("BossMod/Foretell/ForetellTopology.cs")
-invalidate = topology[topology.find("private void InvalidateTopology()") : topology.find("// Collision calls")]
+if "ConditionFlag.InCombat" not in topology or "Task.Run" not in topology:
+    errors.append("Foretell automatic arena topology escaped its combat/native-thread safety policy")
+invalidate = topology[topology.find("private void InvalidateTopology()") : topology.find("// Collision pointers")]
 if "_topology.Cursor = 0" in invalidate:
     errors.append("Frequent topology invalidations can restart and starve the bounded sweep")
 

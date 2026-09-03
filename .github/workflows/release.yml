@@ -90,14 +90,15 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Emergency dense-combat performance hotfix.
+          Encounter-source correctness and automatic arena topology.
 
-          - Prevents synchronous learned-memory saves and storage maintenance whenever the game reports active combat, including trash packs without telegraphed enemy casts.
-          - Adds a hard per-frame budget for semantic callbacks and their enrichment, shedding only derived live work while the bounded exact raw journal remains available for later replay.
-          - Caps live mechanic correlation at 64 episodes and simultaneous composite learning at 12 signals.
-          - Reduces individual generic event-enrichment slices from 1 ms to 0.25 ms.
-          - Makes native collision-topology probing an explicit opt-in and never runs it during combat; the normal circle/square radar and learned mechanic overlays remain active.
-          - Exposes semantic budget trips and shed observations in diagnostics and the telemetry cockpit.
+          - Prevents player and pet casts, effects and buffs from creating or confirming learned encounter mechanics; party positions, displacements and deaths remain available for spatial inference.
+          - Correctly excludes minions/companions and admits only bound enemies, encounter objects and explicit environment channels as mechanic sources.
+          - Migrates learned memory schema 16 to remove existing player/pet/unbound mechanics, their dependent timeline/causal products and contaminated ML weights.
+          - Stops ambient logs, snapshots, raw windows and unrelated world operations from being attached to the nearest mechanic merely by timestamp.
+          - Renames the misleading boss bucket to Enemies & mechanic sources; ordinary encounter mobs remain valid sources when they emit mechanics.
+          - Makes collision topology automatic in duties: tiny pre-pull native probe slices, background managed analysis, remembered arena reuse during combat and a circle fallback until ready.
+          - Reduces the topology grid to 2-yalm resolution and four probes per frame while retaining a 48-yalm arena radius; native probes never execute during combat.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@

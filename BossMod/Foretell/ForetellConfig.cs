@@ -68,11 +68,8 @@ public sealed class ForetellConfig : ConfigNode
     public float RadarPositionX = -1;
     public float RadarPositionY = -1;
 
-    [PropertyDisplay("Radar arena frame", tooltip: "Auto uses a learned collision topology when one is available and otherwise falls back to a circle. Circle and Square force the presentation shape without changing learned mechanics.")]
+    [PropertyDisplay("Radar arena frame", tooltip: "Auto learns collision topology outside combat in duties, reuses it during boss pulls, and otherwise falls back to a circle. Circle and Square force the presentation shape without changing learned mechanics.")]
     public ForetellRadarShape RadarShape = ForetellRadarShape.Auto;
-
-    [PropertyDisplay("Experimental collision topology", tooltip: "Opt-in native collision scan used to outline irregular arenas on the radar. Disabled by default because some game scenes can stall individual collision probes; Circle/Square radar and mechanic overlays continue to work without it.")]
-    public bool EnableCollisionTopology;
 
     [PropertyDisplay("Text hints", tooltip: "Show adaptive mechanic, countdown, confidence and likely-next information.")]
     public bool TextHints = true;

@@ -6,6 +6,44 @@ public static class ForetellInferenceCore
 {
     public const int OutOfCombatHazardPhase = -1;
 
+    // Raw telemetry remains complete, but only sources that can plausibly own an encounter mechanic may create
+    // learned episodes. Player/pet actions are observations and positional context, never mechanic sources.
+    public static bool CanStartMechanicEpisode(ObservationKind kind, SourceKind sourceKind, ulong actorID, uint actorOID)
+    {
+        if (sourceKind is SourceKind.Player or SourceKind.Pet)
+            return false;
+
+        var actorBound = actorID != 0 && actorOID != 0;
+        if (sourceKind is SourceKind.Enemy or SourceKind.EventObject)
+        {
+            if (!actorBound)
+                return false;
+            return kind is ObservationKind.CastStart or ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
+                or ObservationKind.StatusGain or ObservationKind.ActorControlRaw
+                or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation
+                or ObservationKind.ActionTimelineEvent or ObservationKind.ActionTimelineSync or ObservationKind.NpcYell
+                or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn;
+        }
+
+        // Actorless signals are admitted only for explicit encounter/environment channels. In particular, an
+        // actorless CastStart must never turn a player action (player OIDs are zero) into an environment mechanic.
+        return sourceKind == SourceKind.Environment && kind is (ObservationKind.MapEffect or ObservationKind.LegacyMapEffect
+            or ObservationKind.DirectorUpdate or ObservationKind.ObjectEffect
+            or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation);
+    }
+
+    public static bool IsMechanicOutcomeEvidence(ObservationKind kind, SourceKind sourceKind)
+    {
+        // Party motion/death is outcome evidence for knockbacks and lethal zones. Party casts, effects and buffs
+        // remain excluded so normal rotations cannot teach or confirm encounter mechanics.
+        if (sourceKind is SourceKind.Player or SourceKind.Pet)
+            return kind is ObservationKind.Displacement or ObservationKind.DeathChanged;
+        return kind is ObservationKind.ActionResolved or ObservationKind.AffectedTarget or ObservationKind.EffectResult
+            or ObservationKind.StatusGain or ObservationKind.StatusLose or ObservationKind.TetherStart or ObservationKind.TetherEnd
+            or ObservationKind.VFX or ObservationKind.NativeVFXSpawn or ObservationKind.Displacement or ObservationKind.DeathChanged
+            or ObservationKind.TargetableChanged or ObservationKind.ModelStateChanged or ObservationKind.ObjectEffect;
+    }
+
     public static int TimelinePhase(bool inPull, int combatPhase)
         => inPull ? Math.Max(0, combatPhase) : OutOfCombatHazardPhase;
 

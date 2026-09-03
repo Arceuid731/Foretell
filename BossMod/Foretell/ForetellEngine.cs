@@ -629,7 +629,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 15);
+        _store.Schema = Math.Max(_store.Schema, 16);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -652,6 +652,8 @@ public sealed partial class ForetellEngine : IDisposable
         _store.Sessions.RemoveAll(session => session == null);
         if (_store.Sessions.Count > 100) _store.Sessions = _store.Sessions.OrderByDescending(session => session.Started).Take(100).OrderBy(session => session.Started).ToList();
 
+        var migratedInvalidActions = new HashSet<uint>();
+        var migratedInvalidMechanics = 0;
         foreach (var encounterKey in _store.Encounters.Keys.ToArray())
         {
             try
@@ -682,6 +684,8 @@ public sealed partial class ForetellEngine : IDisposable
                 RemoveNullValues(encounter.ExcludedSignals);
                 if (loadedSchema < 14)
                     MigrateUnreliableV08DerivedMemory(encounter);
+                if (loadedSchema < 16)
+                    migratedInvalidMechanics += MigrateInvalidMechanicSources(encounter, migratedInvalidActions);
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
                 foreach (var edge in encounter.CausalEdges.Values)
@@ -759,6 +763,25 @@ public sealed partial class ForetellEngine : IDisposable
                 Service.Log($"[Foretell] Rejected malformed learned encounter {encounterKey} safely: {e.Message}");
             }
         }
+        if (loadedSchema < 16)
+        {
+            var validEnemyActions = _store.Encounters.Values.SelectMany(encounter => encounter.Mechanics.Values)
+                .Where(mechanic => mechanic.TriggerKind == ObservationKind.CastStart && mechanic.SourceKind is not SourceKind.Player and not SourceKind.Pet)
+                .Select(mechanic => mechanic.TriggerID)
+                .ToHashSet();
+            migratedInvalidActions.ExceptWith(validEnemyActions);
+            foreach (var action in migratedInvalidActions)
+                _store.Mechanics.Remove(action);
+            foreach (var key in _store.Timeline.Where(item => migratedInvalidActions.Contains(item.Value.From) || migratedInvalidActions.Contains(item.Value.To)).Select(item => item.Key).ToArray())
+                _store.Timeline.Remove(key);
+            if (migratedInvalidMechanics > 0)
+            {
+                // The classifier was trained from the same contaminated episodes and has no source attribution in
+                // its persisted weights, so retaining it would keep player rotations influencing future labels.
+                _store.ML = new();
+                Service.Log($"[Foretell] Removed {migratedInvalidMechanics} invalid player/pet/unbound mechanics and reset contaminated derived ML state.");
+            }
+        }
     }
 
     private static void MigrateUnreliableV08DerivedMemory(EncounterMemory encounter)
@@ -784,6 +807,55 @@ public sealed partial class ForetellEngine : IDisposable
             environment.NameID = 0;
             environment.Name = "";
         }
+    }
+
+    private static int MigrateInvalidMechanicSources(EncounterMemory encounter, HashSet<uint> invalidActions)
+    {
+        var invalid = encounter.Mechanics
+            .Where(item => !ForetellInferenceCore.CanStartMechanicEpisode(item.Value.TriggerKind, item.Value.SourceKind,
+                item.Value.SourceOID == 0 ? 0 : 1, item.Value.SourceOID))
+            .ToArray();
+        if (invalid.Length == 0)
+            return 0;
+
+        var invalidSignals = invalid.Select(item => item.Key).ToHashSet();
+        foreach (var item in invalid)
+        {
+            if (item.Value.TriggerKind == ObservationKind.CastStart && item.Value.TriggerID != 0)
+                invalidActions.Add(item.Value.TriggerID);
+            encounter.Mechanics.Remove(item.Key);
+        }
+        foreach (var key in encounter.Timeline.Where(item => invalidSignals.Contains(item.Value.From) || invalidSignals.Contains(item.Value.To)).Select(item => item.Key).ToArray())
+            encounter.Timeline.Remove(key);
+        foreach (var phase in encounter.Phases.Values)
+        {
+            phase.Signals ??= [];
+            foreach (var signal in phase.Signals.Keys.Where(invalidSignals.Contains).ToArray())
+                phase.Signals.Remove(signal);
+        }
+        foreach (var key in encounter.Composites.Where(item => item.Value.Signals?.Any(invalidSignals.Contains) == true).Select(item => item.Key).ToArray())
+            encounter.Composites.Remove(key);
+        foreach (var key in encounter.CausalEdges.Where(item => invalidSignals.Contains(item.Value.Cause)).Select(item => item.Key).ToArray())
+            encounter.CausalEdges.Remove(key);
+        foreach (var key in encounter.Sources.Where(item => item.Value.Kind is SourceKind.Player or SourceKind.Pet).Select(item => item.Key).ToArray())
+            encounter.Sources.Remove(key);
+
+        // These streams were previously admitted as generic evidence merely because they happened during the
+        // episode window. Keep the underlying telemetry/raw files, but remove the spurious evidence counters.
+        var ambientEvidence = new[]
+        {
+            ObservationKind.WorldOperation, ObservationKind.NativeVFXDestroy, ObservationKind.FlyText,
+            ObservationKind.DalamudLogMessage, ObservationKind.NormalToast, ObservationKind.QuestToast,
+            ObservationKind.ErrorToast, ObservationKind.ActorSnapshot, ObservationKind.EnvironmentSnapshot,
+            ObservationKind.CameraSnapshot, ObservationKind.GenericFeature
+        };
+        foreach (var mechanic in encounter.Mechanics.Values)
+        {
+            mechanic.Evidence ??= [];
+            foreach (var kind in ambientEvidence)
+                mechanic.Evidence.Remove(kind);
+        }
+        return invalid.Length;
     }
 
     private static void RemoveNullValues<TKey, TValue>(Dictionary<TKey, TValue> dictionary) where TKey : notnull where TValue : class
@@ -978,11 +1050,15 @@ public sealed partial class ForetellEngine : IDisposable
 
     private static SourceKind ClassifySource(Actor actor)
     {
-        if (actor.Type == ActorType.Player) return SourceKind.Player;
-        if (actor.Type is ActorType.Pet or ActorType.Chocobo or ActorType.Buddy) return SourceKind.Pet;
-        var type = actor.Type.ToString();
-        if (type.Contains("Event", StringComparison.OrdinalIgnoreCase) || type.Contains("Object", StringComparison.OrdinalIgnoreCase)) return SourceKind.EventObject;
-        return SourceKind.Enemy;
+        return actor.Type switch
+        {
+            ActorType.Player => SourceKind.Player,
+            ActorType.Pet or ActorType.Chocobo or ActorType.Buddy or ActorType.Companion => SourceKind.Pet,
+            ActorType.Enemy when actor.IsAlly => SourceKind.Pet,
+            ActorType.Enemy or ActorType.Part or ActorType.Helper => SourceKind.Enemy,
+            ActorType.EventNpc or ActorType.EventObj or ActorType.Area => SourceKind.EventObject,
+            _ => SourceKind.Unknown
+        };
     }
 
     private static Vector2 V(WPos p) => new(p.X, p.Z);

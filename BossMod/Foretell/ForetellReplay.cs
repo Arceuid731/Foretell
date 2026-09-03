@@ -388,7 +388,7 @@ public sealed partial class ForetellEngine
                 _cfg.MiniRadar,
                 _cfg.RadarUnlocked,
                 _cfg.RadarShape,
-                _cfg.EnableCollisionTopology,
+                topologyAutomatic = true,
                 _cfg.RadarSize,
                 _cfg.RadarWorldRadius,
                 _cfg.RecordReplay,

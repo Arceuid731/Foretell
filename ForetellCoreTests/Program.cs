@@ -30,6 +30,7 @@ static class ForetellCoreTests
         InferenceReliabilityAndAbstention();
         CausalAndTimelineConfidence();
         GeometryValidationAndGuidance();
+        MechanicSourcesExcludePartyActions();
         OutOfCombatHazardContextIsScoped();
         StorageMaintenanceProtectsActiveFiles();
         Console.WriteLine("Foretell core tests passed.");
@@ -350,6 +351,19 @@ static class ForetellCoreTests
         Check.That(!ForetellInferenceCore.OpensOutOfCombatHazardContext(ObservationKind.CastStart, SourceKind.Player, 10, 0), "player cast opened hazard context");
         Check.That(!ForetellInferenceCore.OpensOutOfCombatHazardContext(ObservationKind.NativeVFXSpawn, SourceKind.Environment, 0, 0), "unbound native VFX opened hazard context");
         Check.That(!ForetellInferenceCore.OpensOutOfCombatHazardContext(ObservationKind.ActorControlRaw, SourceKind.Unknown, 0, 0), "unbound actor control opened hazard context");
+    }
+
+    private static void MechanicSourcesExcludePartyActions()
+    {
+        Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.CastStart, SourceKind.Player, 10, 0), "player cast became a mechanic episode");
+        Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.CastStart, SourceKind.Pet, 11, 123), "pet cast became a mechanic episode");
+        Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.CastStart, SourceKind.Environment, 0, 0), "actorless cast became an environment mechanic");
+        Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.CastStart, SourceKind.Unknown, 30, 456), "unknown actor became a mechanic source");
+        Check.That(ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.CastStart, SourceKind.Enemy, 30, 456), "enemy cast was rejected");
+        Check.That(ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.MapEffect, SourceKind.Environment, 0, 0), "arena map effect was rejected");
+        Check.That(!ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.ActionResolved, SourceKind.Player), "player action became outcome evidence");
+        Check.That(ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.Displacement, SourceKind.Player), "player displacement was lost as knockback evidence");
+        Check.That(ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.DeathChanged, SourceKind.Player), "player death was lost as lethal evidence");
     }
 
     private static void StorageMaintenanceProtectsActiveFiles()

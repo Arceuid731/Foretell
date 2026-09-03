@@ -1013,8 +1013,11 @@ public sealed partial class ForetellEngine
 
     private void AccumulateDataFeatures(ForetellObservation observation, MechanicEpisode? correlated = null)
     {
+        if (observation.SourceKind is (SourceKind.Player or SourceKind.Pet)
+            && observation.Kind is not ObservationKind.Displacement and not ObservationKind.DeathChanged)
+            return;
         MechanicEpisode? episode = _episodes.GetValueOrDefault(observation.Sequence);
-        episode ??= correlated ?? BestEpisode(observation);
+        episode ??= correlated;
         if (episode == null) return;
         if (observation.Kind == ObservationKind.ActorSnapshot && observation.ActorID != episode.Trigger.ActorID && !episode.ParticipantPositions.ContainsKey(observation.ActorID))
             return;

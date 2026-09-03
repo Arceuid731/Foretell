@@ -7,10 +7,13 @@ namespace BossMod.Foretell;
 public sealed partial class ForetellEngine
 {
     private const float TopologyRadius = 48f;
-    private const float TopologyResolution = 1f;
-    private const int MaxTopologyRaysPerFrame = 16;
-    private const double MaxTopologyMillisecondsPerFrame = .30;
+    private const float TopologyResolution = 2f;
+    private const int MaxTopologyRaysPerFrame = 4;
+    private const double MaxTopologyMillisecondsPerFrame = .12;
     private readonly ForetellTopologyGrid _topology = new();
+    private sealed record TopologyAnalysisWork(long Generation, ForetellTopologyGrid Grid, Vector2 Player, TopologyAnalysis Analysis);
+    private Task<TopologyAnalysisWork>? _topologyAnalysisTask;
+    private long _topologyGeneration;
     private TopologyAnalysis? _topologyAnalysis;
     private string _topologyFingerprint = "";
     private DateTime _topologySuspendedUntil;
@@ -32,9 +35,10 @@ public sealed partial class ForetellEngine
 
     private void ResetTopology()
     {
+        ++_topologyGeneration;
         _topologyAnalysis = null;
         _topologyFingerprint = "";
-        _topology.Cursor = 0;
+        _topology.Clear();
         _topologyConsecutiveOverruns = 0;
         _topologySuspendedUntil = default;
         _topologySweepRequested = true;
@@ -49,20 +53,23 @@ public sealed partial class ForetellEngine
         _topologyRescanAfter = DateTime.UtcNow.AddMilliseconds(500);
     }
 
-    // Collision calls already back BMR line-of-sight checks. Foretell performs a bounded downward probe sweep on
-    // the framework thread: no collision pointers cross threads and one slow probe trips the watchdog.
+    // Collision pointers never cross threads. A tiny bounded probe slice runs on the framework thread while out of
+    // combat; the managed flood/contour analysis runs asynchronously and the learned result is reused in combat.
     private unsafe void SampleNativeTopology()
     {
         var now = DateTime.UtcNow;
-        // Native collision is opt-in until every supported scene has proven bounded. Never probe during combat:
-        // one driver/game-scene call cannot be pre-empted by the managed stopwatch after it has entered native code.
-        if (!_cfg.EnableCollisionTopology || Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]
-            || now < _topologySuspendedUntil)
+        PollCompletedTopologyAnalysis();
+        // Never probe during combat: one driver/game-scene call cannot be pre-empted by a managed stopwatch after
+        // it has entered native code. A completed pre-pull or remembered topology remains active for rendering.
+        if (_cfg.RadarShape != ForetellRadarShape.Auto
+            || Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat] || now < _topologySuspendedUntil)
             return;
         var player = _ws.Party[PartyState.PlayerSlot];
-        if (player == null || (!_inPull && _ws.CurrentCFCID == 0))
+        if (player == null || _ws.CurrentCFCID == 0)
             return;
         if (!_topologySweepInProgress && (!_topologySweepRequested || now < _topologyRescanAfter))
+            return;
+        if (_topologyAnalysisTask != null)
             return;
 
         var framework = FFXIVFramework.Instance();
@@ -79,6 +86,8 @@ public sealed partial class ForetellEngine
             RegisterCapability("native.topology.collision", typeof(BGCollisionModule), "RaycastMaterialFilter", false, false, "non-finite player position rejected before native call");
             return;
         }
+        if (_topology.CellCount == 0)
+            TryRestoreKnownTopology(player3);
         var needsReset = _topology.CellCount == 0
             || !_topology.Contains(new(player3.X, player3.Z))
             || Math.Abs(player3.Y - _topology.ReferenceY) > 6
@@ -173,8 +182,38 @@ public sealed partial class ForetellEngine
 
     private void CompleteTopologySweep(Vector2 player)
     {
+        if (_topologyAnalysisTask != null)
+            return;
         ++_topologySweeps;
-        var analysis = _topology.Analyze(player);
+        var snapshot = _topology.Snapshot();
+        var generation = _topologyGeneration;
+        _topologyAnalysisTask = Task.Run(() => new TopologyAnalysisWork(generation, snapshot, player, snapshot.Analyze(player)));
+    }
+
+    private void PollCompletedTopologyAnalysis()
+    {
+        var task = _topologyAnalysisTask;
+        if (task == null || !task.IsCompleted)
+            return;
+        _topologyAnalysisTask = null;
+        TopologyAnalysisWork work;
+        try
+        {
+            work = task.GetAwaiter().GetResult();
+        }
+        catch (Exception e)
+        {
+            ++_topologyFailures;
+            RegisterCapability("native.topology.analysis", typeof(ForetellTopologyGrid), "Analyze", false, false, $"managed analysis rejected safely: {e.GetType().Name}");
+            return;
+        }
+        if (work.Generation != _topologyGeneration)
+            return;
+        ApplyTopologyAnalysis(work.Grid, work.Analysis);
+    }
+
+    private void ApplyTopologyAnalysis(ForetellTopologyGrid grid, TopologyAnalysis analysis)
+    {
         _topologyAnalysis = analysis;
         if (analysis.UnknownCells != 0 || analysis.PassableCells == 0 || analysis.Fingerprint == _topologyFingerprint)
             return;
@@ -188,12 +227,12 @@ public sealed partial class ForetellEngine
             memory = new()
             {
                 Fingerprint = analysis.Fingerprint,
-                OriginX = _topology.OriginX,
-                OriginZ = _topology.OriginZ,
-                ReferenceY = _topology.ReferenceY,
-                Resolution = _topology.Resolution,
-                Width = _topology.Width,
-                Height = _topology.Height,
+                OriginX = grid.OriginX,
+                OriginZ = grid.OriginZ,
+                ReferenceY = grid.ReferenceY,
+                Resolution = grid.Resolution,
+                Width = grid.Width,
+                Height = grid.Height,
                 Cells = analysis.ConnectedCells.ToArray(),
                 HeightCentimeters = analysis.HeightCentimeters.ToArray(),
                 Contours = analysis.Contours.Select((loop, index) => new TopologyContourMemory
@@ -219,12 +258,12 @@ public sealed partial class ForetellEngine
 
         var obs = Observation(ObservationKind.TopologySnapshot, detail: $"collision:{analysis.Fingerprint}");
         obs.SourceKind = SourceKind.Environment;
-        StoreNative(obs, "native.topology.origin.x", _topology.OriginX);
-        StoreNative(obs, "native.topology.origin.z", _topology.OriginZ);
-        StoreNative(obs, "native.topology.referenceY", _topology.ReferenceY);
-        StoreNative(obs, "native.topology.resolution", _topology.Resolution);
-        StoreNative(obs, "native.topology.width", _topology.Width);
-        StoreNative(obs, "native.topology.height", _topology.Height);
+        StoreNative(obs, "native.topology.origin.x", grid.OriginX);
+        StoreNative(obs, "native.topology.origin.z", grid.OriginZ);
+        StoreNative(obs, "native.topology.referenceY", grid.ReferenceY);
+        StoreNative(obs, "native.topology.resolution", grid.Resolution);
+        StoreNative(obs, "native.topology.width", grid.Width);
+        StoreNative(obs, "native.topology.height", grid.Height);
         StoreNative(obs, "native.topology.passableCells", analysis.PassableCells);
         StoreNative(obs, "native.topology.blockedCells", analysis.BlockedCells);
         StoreNative(obs, "native.topology.components", analysis.Components);
@@ -232,6 +271,27 @@ public sealed partial class ForetellEngine
         obs.Text["native.topology.fingerprint"] = analysis.Fingerprint;
         obs.Binary["native.topology.cells"] = analysis.ConnectedCells.ToArray();
         ProcessObservation(obs, enriched: true);
+    }
+
+    private bool TryRestoreKnownTopology(Vector3 player)
+    {
+        if (!_store.Encounters.TryGetValue(_territory, out var encounter))
+            return false;
+        var memory = encounter.Topologies.Values
+            .Where(item => Math.Abs(player.Y - item.ReferenceY) <= 6
+                && player.X >= item.OriginX && player.Z >= item.OriginZ
+                && player.X < item.OriginX + item.Width * item.Resolution
+                && player.Z < item.OriginZ + item.Height * item.Resolution)
+            .OrderByDescending(item => item.LastSeen)
+            .FirstOrDefault();
+        if (memory == null || !_topology.Restore(memory.OriginX, memory.OriginZ, memory.ReferenceY, memory.Resolution,
+            memory.Width, memory.Height, memory.Cells, memory.HeightCentimeters))
+            return false;
+        _topologyFingerprint = memory.Fingerprint;
+        _topologyAnalysis = new(memory.Fingerprint, memory.Cells.ToArray(), memory.HeightCentimeters.ToArray(),
+            memory.Contours.Select(contour => contour.Points.Select(point => new Vector2(point.X, point.Z)).ToList()).ToList(),
+            memory.PassableCells, memory.BlockedCells, memory.UnknownCells, memory.Components);
+        return true;
     }
 
     internal bool? IsTopologyPassable(Vector2 world)
