@@ -147,13 +147,49 @@ internal sealed class PendingTimelineForecast
     public long ID { get; init; }
     public uint TerritoryID { get; init; }
     public int Phase { get; init; }
-    public string EdgeKey { get; init; } = "";
-    public string CompositeKey { get; init; } = "";
+    public string EdgeKey { get; set; } = "";
+    public string CompositeKey { get; set; } = "";
+    public string TriggerContextKey { get; set; } = "";
+    public PredictiveTriggerBasis TriggerBasis { get; set; }
     public string ExpectedSignal { get; init; } = "";
     public string MechanicKey { get; init; } = "";
     public DateTime Due { get; init; }
     public DateTime Expires { get; init; }
 }
+
+internal enum PredictiveTriggerBasis
+{
+    None,
+    PhaseClock,
+    BossHealth
+}
+
+internal sealed class BossHealthTrack
+{
+    public DateTime At { get; private set; }
+    public double Ratio { get; private set; }
+    public double LossPerSecond { get; private set; }
+
+    public void Update(DateTime at, double ratio)
+    {
+        ratio = double.IsFinite(ratio) ? Math.Clamp(ratio, 0, 1) : 0;
+        if (At != default && at > At)
+        {
+            var seconds = (at - At).TotalSeconds;
+            var loss = Ratio - ratio;
+            if (seconds is >= .05 and <= 5 && loss is >= 0 and <= .25)
+            {
+                var instantaneous = loss / seconds;
+                if (instantaneous > .00001)
+                    LossPerSecond = LossPerSecond <= 0 ? instantaneous : LossPerSecond * .72 + instantaneous * .28;
+            }
+        }
+        At = at;
+        Ratio = ratio;
+    }
+}
+
+internal readonly record struct BossHealthSnapshot(Actor Boss, double Ratio, double LossPerSecond);
 
 internal sealed class LiveSessionStats
 {

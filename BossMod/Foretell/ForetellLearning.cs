@@ -79,6 +79,8 @@ public sealed partial class ForetellEngine
         {
             if (encounter != null)
                 ResolveTimelineForecasts(encounter, observation);
+            if (_inPull && encounter != null && !lifecycleSignal)
+                ObserveSignalTriggerContext(encounter, observation);
             if (_cfg.EnableLearning && encounter != null)
                 LearnSignalTimeline(encounter, observation);
             else
@@ -208,21 +210,35 @@ public sealed partial class ForetellEngine
         if (inDuty && !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat])
             return;
         if (!_inPull || (!inDuty && (observation.At - _lastCombatSignal).TotalSeconds > 30))
-        {
-            _inPull = true;
-            ResetHazardContext(cancelForecasts: true);
-            _pullStartedAt = observation.At;
-            ++_session.Pulls;
-            if (_cfg.EnableLearning && encounter != null)
-                ++encounter.Pulls;
-            _session.Phase = 0;
-            _previousSignal = "";
-            _lastPhaseBoundary = default;
-            _lastPhaseBoundarySignal = "";
-            _phaseBoundariesThisPull.Clear();
-            _phaseTopologyFingerprint = "";
-        }
+            BeginCombatPull(encounter, observation.At);
         _lastCombatSignal = observation.At;
+    }
+
+    private void BeginCombatPull(EncounterMemory? encounter, DateTime at)
+    {
+        _inPull = true;
+        ResetHazardContext(cancelForecasts: true);
+        _pullStartedAt = at;
+        _phaseStartedAt = at;
+        _lastCombatSignal = at;
+        ++_session.Pulls;
+        if (_cfg.EnableLearning && encounter != null)
+            ++encounter.Pulls;
+        _session.Phase = 0;
+        _previousSignal = "";
+        _previousSignalTime = default;
+        _previousAction = 0;
+        _previousActionTime = default;
+        _lastPhaseBoundary = default;
+        _lastPhaseBoundarySignal = "";
+        _phaseBoundariesThisPull.Clear();
+        _phaseTopologyFingerprint = "";
+        _signalOccurrencesThisPull.Clear();
+        _skippedTriggerContextsThisPull.Clear();
+        _bossHealthTracks.Clear();
+        _bossHealthSnapshots.Clear();
+        RefreshTriggerForecastCandidates(encounter);
+        _retryTriggerForecastCandidates = _triggerForecastCandidates.Count == 0;
     }
 
     private int CurrentTimelinePhase => ForetellInferenceCore.TimelinePhase(_inPull, _session.Phase);
@@ -237,15 +253,25 @@ public sealed partial class ForetellEngine
         if (!_inPull) return;
         _inPull = false;
         _pullStartedAt = default;
+        _phaseStartedAt = default;
+        _lastContextForecastSample = default;
         _lastCombatSignal = default;
         _session.Phase = 0;
         _previousSignal = "";
         _previousSignalTime = default;
+        _previousAction = 0;
+        _previousActionTime = default;
         _lastPhaseBoundary = default;
         _lastPhaseBoundarySignal = "";
         _untargetableSince.Clear();
         _phaseBoundariesThisPull.Clear();
         _phaseTopologyFingerprint = "";
+        _signalOccurrencesThisPull.Clear();
+        _skippedTriggerContextsThisPull.Clear();
+        _triggerForecastCandidates.Clear();
+        _retryTriggerForecastCandidates = false;
+        _bossHealthTracks.Clear();
+        _bossHealthSnapshots.Clear();
         foreach (var phase in _timelineForecasts.Values.Where(item => item.Phase >= 0).Select(item => item.Phase).Distinct().ToArray())
             CancelTimelineForecasts(phase);
     }
@@ -403,11 +429,18 @@ public sealed partial class ForetellEngine
     {
         if (signature == _lastPhaseBoundarySignal && (observation.At - _lastPhaseBoundary).TotalSeconds < 10) return;
         if ((observation.At - _lastPhaseBoundary).TotalSeconds < 3) return;
+        var previousPhase = _session.Phase;
         _lastPhaseBoundary = observation.At;
         _lastPhaseBoundarySignal = signature;
         _phaseBoundariesThisPull.Add(signature);
         ++_session.Phase;
+        _phaseStartedAt = observation.At;
         _previousSignal = "";
+        _previousSignalTime = default;
+        CancelTimelineForecasts(previousPhase);
+        _skippedTriggerContextsThisPull.Clear();
+        RefreshTriggerForecastCandidates(_store.Encounters.GetValueOrDefault(observation.TerritoryID));
+        _retryTriggerForecastCandidates = _triggerForecastCandidates.Count == 0;
     }
 
     private static bool IsEpisodeTrigger(ForetellObservation observation)
@@ -456,6 +489,315 @@ public sealed partial class ForetellEngine
 
         if (observation.Kind == ObservationKind.CastStart && observation.PrimaryID != 0)
             LearnLegacyTimeline(observation.PrimaryID, observation.At);
+    }
+
+    private static string TriggerContextKey(uint contextOID, int phase, string signal, int occurrence)
+        => $"{contextOID:X}:{phase}:{occurrence}:{signal}";
+
+    private static string SignalOccurrenceKey(int phase, string signal)
+        => $"{phase}:{signal}";
+
+    private void ObserveSignalTriggerContext(EncounterMemory encounter, ForetellObservation observation)
+    {
+        var phase = TimelinePhaseFor(observation);
+        if (phase < 0 || _phaseStartedAt == default)
+            return;
+        var signal = SignalKey(observation);
+        var occurrenceKey = SignalOccurrenceKey(phase, signal);
+        var occurrence = _signalOccurrencesThisPull.GetValueOrDefault(occurrenceKey) + 1;
+        _signalOccurrencesThisPull[occurrenceKey] = occurrence;
+        if (!_cfg.EnableLearning || occurrence > 32 || (!IsEpisodeTrigger(observation) && !encounter.Mechanics.ContainsKey(signal)))
+            return;
+
+        var hasBossHealth = TryBossHealth(observation.ActorOID, observation.ActorID, observation.At,
+            out var boss, out var hpRatio, out _);
+        var contextOID = hasBossHealth ? boss.OID : ResolvePullContextOID(observation);
+        if (contextOID == 0)
+            return;
+        if (_retryTriggerForecastCandidates)
+        {
+            RefreshTriggerForecastCandidates(encounter);
+            _retryTriggerForecastCandidates = false;
+        }
+        var key = TriggerContextKey(contextOID, phase, signal, occurrence);
+        if (!encounter.TriggerContexts.TryGetValue(key, out var memory))
+        {
+            if (encounter.TriggerContexts.Count >= 4096)
+            {
+                var weakest = encounter.TriggerContexts.MinBy(item => (item.Value.Samples, item.Value.HealthSamples, item.Value.LastSeen));
+                encounter.TriggerContexts.Remove(weakest.Key);
+                ++_learningEvictions;
+            }
+            encounter.TriggerContexts[key] = memory = new()
+            {
+                Key = key,
+                Signal = signal,
+                Phase = phase,
+                Occurrence = occurrence,
+                ContextOID = contextOID
+            };
+        }
+        // One occurrence bucket is sampled at most once per pull. This keeps a packet duplicate or replayed
+        // callback from manufacturing confidence without independent encounter repetitions.
+        if (memory.LastPull == encounter.Pulls)
+            return;
+        memory.LastPull = encounter.Pulls;
+        memory.LastSeen = DateTime.UtcNow;
+        var seconds = Math.Clamp((observation.At - _phaseStartedAt).TotalSeconds, 0, 1800);
+        ++memory.Samples;
+        var timeDelta = seconds - memory.MeanPhaseSeconds;
+        memory.MeanPhaseSeconds += timeDelta / memory.Samples;
+        memory.PhaseSecondsM2 += timeDelta * (seconds - memory.MeanPhaseSeconds);
+
+        if (hasBossHealth)
+        {
+            memory.BossOID = boss.OID;
+            ++memory.HealthSamples;
+            var healthDelta = hpRatio - memory.MeanBossHPRatio;
+            memory.MeanBossHPRatio += healthDelta / memory.HealthSamples;
+            memory.BossHPRatioM2 += healthDelta * (hpRatio - memory.MeanBossHPRatio);
+        }
+    }
+
+    private void RefreshTriggerForecastCandidates(EncounterMemory? encounter)
+    {
+        _triggerForecastCandidates.Clear();
+        if (encounter == null || !_inPull)
+            return;
+        _triggerForecastCandidates.AddRange(encounter.TriggerContexts.Values
+            .Where(memory => memory.Phase == _session.Phase && memory.Occurrence is >= 1 and <= 32
+                && (memory.Samples >= 3 || memory.HealthSamples >= 3)
+                && encounter.Mechanics.ContainsKey(memory.Signal)
+                && !encounter.ExcludedSignals.ContainsKey(memory.Signal)
+                && TriggerContextIsActive(memory, encounter.Mechanics[memory.Signal]))
+            .OrderByDescending(memory => Math.Max(memory.TimeStability, memory.HealthStability))
+            .ThenByDescending(memory => Math.Max(memory.Samples, memory.HealthSamples))
+            .Take(256));
+    }
+
+    private uint ResolvePullContextOID(ForetellObservation observation)
+    {
+        if (observation.SourceKind == SourceKind.Enemy && observation.ActorOID != 0)
+            return observation.ActorOID;
+        var player = _ws.Party[PartyState.PlayerSlot];
+        Actor? best = null;
+        foreach (var actor in _ws.Actors)
+        {
+            if (actor.Type != ActorType.Enemy || actor.IsAlly || actor.IsDeadOrDestroyed || !actor.IsTargetable)
+                continue;
+            if (player != null && Vector2.Distance(V(actor.Position), V(player.Position)) > 80)
+                continue;
+            if (!actor.InCombat && !actor.AggroPlayer && actor.TargetID == 0)
+                continue;
+            if (best == null || actor.HPMP.MaxHP > best.HPMP.MaxHP)
+                best = actor;
+        }
+        return best?.OID ?? 0;
+    }
+
+    private bool TriggerContextIsActive(SignalTriggerMemory memory, ContextualMechanic mechanic)
+    {
+        var contextOID = memory.ContextOID != 0 ? memory.ContextOID : memory.BossOID != 0 ? memory.BossOID : mechanic.SourceOID;
+        if (contextOID == 0)
+            return false;
+        var player = _ws.Party[PartyState.PlayerSlot];
+        foreach (var actor in _ws.Actors)
+        {
+            if (actor.OID != contextOID || actor.Type != ActorType.Enemy || actor.IsAlly || actor.IsDeadOrDestroyed || !actor.IsTargetable)
+                continue;
+            if (player != null && Vector2.Distance(V(actor.Position), V(player.Position)) > 80)
+                continue;
+            if (actor.InCombat || actor.AggroPlayer || actor.TargetID != 0)
+                return true;
+        }
+        return false;
+    }
+
+    private void UpdateTriggerContextForecasts(DateTime now)
+    {
+        if (!_inPull || _phaseStartedAt == default || now < _phaseStartedAt)
+            return;
+        if (_lastContextForecastSample != default && (now - _lastContextForecastSample).TotalMilliseconds < 200)
+            return;
+        _lastContextForecastSample = now;
+        if (!_store.Encounters.TryGetValue(_territory, out var encounter))
+            return;
+        _bossHealthSnapshots.Clear();
+
+        foreach (var memory in _triggerForecastCandidates)
+        {
+            if (_skippedTriggerContextsThisPull.Contains(memory.Key))
+                continue;
+            var occurrence = _signalOccurrencesThisPull.GetValueOrDefault(SignalOccurrenceKey(memory.Phase, memory.Signal));
+            if (memory.Occurrence != occurrence + 1)
+                continue;
+            if (_timelineForecasts.Values.Any(forecast => forecast.Phase == memory.Phase
+                && forecast.ExpectedSignal == memory.Signal && now <= forecast.Expires))
+                continue;
+            if (!encounter.Mechanics.TryGetValue(memory.Signal, out var mechanic))
+                continue;
+
+            if (memory.PreferHealth)
+            {
+                if (!_bossHealthSnapshots.TryGetValue(memory.BossOID, out var health))
+                {
+                    health = TryBossHealth(memory.BossOID, 0, now, out var boss, out var ratio, out var lossPerSecond)
+                        ? new BossHealthSnapshot(boss, ratio, lossPerSecond)
+                        : null;
+                    _bossHealthSnapshots[memory.BossOID] = health;
+                }
+                if (health is { } snapshot)
+                    TryScheduleHealthTriggerForecast(encounter, memory, mechanic, now, snapshot);
+            }
+            else
+                TryScheduleTimeTriggerForecast(encounter, memory, mechanic, now);
+        }
+    }
+
+    private void TryScheduleTimeTriggerForecast(EncounterMemory encounter, SignalTriggerMemory memory,
+        ContextualMechanic mechanic, DateTime now)
+    {
+        var confidence = ForetellInferenceCore.TriggerForecastConfidence(memory.Samples, memory.TimeStability,
+            memory.TimeHits, memory.TimeMisses);
+        if (confidence <= 0)
+            return;
+        var expected = _phaseStartedAt.AddSeconds(memory.MeanPhaseSeconds);
+        var tolerance = Math.Clamp(memory.PhaseSecondsStdDev * 2 + 1, 1.5, 10);
+        if (now > expected.AddSeconds(tolerance))
+        {
+            _skippedTriggerContextsThisPull.Add(memory.Key);
+            return;
+        }
+        if ((expected - now).TotalSeconds > 12)
+            return;
+        var activation = expected < now ? now : expected;
+        ScheduleTriggerContextForecast(encounter, memory, mechanic, activation, expected.AddSeconds(tolerance),
+            PredictiveTriggerBasis.PhaseClock, confidence, null, now,
+            $"phase clock T+{memory.MeanPhaseSeconds:F1}s +/- {memory.PhaseSecondsStdDev:F1}s; {memory.Samples} pulls");
+    }
+
+    private void TryScheduleHealthTriggerForecast(EncounterMemory encounter, SignalTriggerMemory memory,
+        ContextualMechanic mechanic, DateTime now, BossHealthSnapshot health)
+    {
+        var confidence = ForetellInferenceCore.TriggerForecastConfidence(memory.HealthSamples, memory.HealthStability,
+            memory.HealthHits, memory.HealthMisses);
+        if (confidence <= 0)
+            return;
+        var boss = health.Boss;
+        var currentRatio = health.Ratio;
+        var lossPerSecond = health.LossPerSecond;
+        var threshold = Math.Clamp(memory.MeanBossHPRatio, 0, 1);
+        var passedTolerance = Math.Max(.015, memory.BossHPRatioStdDev * 2);
+        if (currentRatio < threshold - passedTolerance)
+        {
+            _skippedTriggerContextsThisPull.Add(memory.Key);
+            return;
+        }
+
+        double eta;
+        if (currentRatio <= threshold)
+            eta = 0;
+        else if (lossPerSecond > .00001)
+            eta = (currentRatio - threshold) / lossPerSecond;
+        else if (currentRatio - threshold <= .015)
+            eta = 0;
+        else
+            return;
+        if (!double.IsFinite(eta) || eta > 12)
+            return;
+        eta = Math.Clamp(eta, 0, 12);
+        var activation = now.AddSeconds(eta);
+        var hpTimingTolerance = lossPerSecond > .00001 ? memory.BossHPRatioStdDev / lossPerSecond : 2;
+        var tolerance = Math.Clamp(hpTimingTolerance * 2 + 1, 2, 10);
+        ScheduleTriggerContextForecast(encounter, memory, mechanic, activation, activation.AddSeconds(tolerance),
+            PredictiveTriggerBasis.BossHealth, confidence, boss, now,
+            $"boss HP {threshold:P1} +/- {memory.BossHPRatioStdDev:P1}; current {currentRatio:P1}; ETA {eta:F1}s; {memory.HealthSamples} pulls");
+    }
+
+    private void ScheduleTriggerContextForecast(EncounterMemory encounter, SignalTriggerMemory memory,
+        ContextualMechanic mechanic, DateTime activation, DateTime expires, PredictiveTriggerBasis basis,
+        float confidence, Actor? boss, DateTime now, string evidence)
+    {
+        var actor = boss ?? (mechanic.SourceOID == 0 ? null : _ws.Actors.FirstOrDefault(candidate => candidate.OID == mechanic.SourceOID));
+        var trigger = new ForetellObservation
+        {
+            At = now,
+            TerritoryID = encounter.TerritoryID,
+            Kind = mechanic.TriggerKind,
+            SourceKind = mechanic.SourceKind,
+            ActorID = actor?.InstanceID ?? 0,
+            ActorOID = mechanic.SourceOID,
+            PrimaryID = mechanic.TriggerID,
+            X = actor?.Position.X ?? 0,
+            Z = actor?.Position.Z ?? 0,
+            Rotation = actor?.Rotation.Rad ?? 0,
+            Detail = mechanic.TriggerDetail
+        };
+        if (BuildMechanicPrediction(mechanic, trigger, activation, anticipated: true) is not ActivePrediction prediction)
+            return;
+        var id = _nextForecastID--;
+        if (_nextForecastID == long.MinValue) _nextForecastID = -1;
+        var forecastPrediction = prediction with
+        {
+            Confidence = Math.Min(prediction.Confidence, confidence),
+            Evidence = $"{(basis == PredictiveTriggerBasis.BossHealth ? "HP-threshold" : "absolute-time")} forecast; {evidence}"
+        };
+        StorePrediction(id, forecastPrediction, trigger);
+        _timelineForecasts[id] = new()
+        {
+            ID = id,
+            TerritoryID = encounter.TerritoryID,
+            Phase = memory.Phase,
+            TriggerContextKey = memory.Key,
+            TriggerBasis = basis,
+            ExpectedSignal = memory.Signal,
+            MechanicKey = mechanic.Key,
+            Due = activation,
+            Expires = expires
+        };
+        if (basis == PredictiveTriggerBasis.BossHealth) ++memory.HealthForecasts;
+        else ++memory.TimeForecasts;
+    }
+
+    private bool TryBossHealth(uint preferredOID, ulong preferredInstanceID, DateTime now,
+        out Actor boss, out double ratio, out double lossPerSecond)
+    {
+        boss = null!;
+        ratio = 0;
+        lossPerSecond = 0;
+        // HP thresholds are boss-only evidence. A large trash mob in a corridor must never become a fake HP gate;
+        // require the independently observed arena boundary and the same boss-candidate test used by the radar.
+        if (_ws.CurrentCFCID == 0 || CurrentArenaBoundary is not { ArenaLike: true } boundary)
+            return false;
+        var summary = ArenaEnemySummary(boundary);
+        if (!summary.HasBossCandidate)
+            return false;
+        Actor? best = null;
+        foreach (var actor in _ws.Actors)
+        {
+            if (!LiveArenaEnemy(actor, boundary))
+                continue;
+            if (!IsBossCandidate(actor, summary.MaximumHP, summary.PlayerMaximumHP))
+                continue;
+            var preferred = preferredInstanceID != 0 && actor.InstanceID == preferredInstanceID
+                || preferredOID != 0 && actor.OID == preferredOID;
+            if (preferred)
+            {
+                best = actor;
+                break;
+            }
+            if (best == null || actor.HPMP.MaxHP > best.HPMP.MaxHP || actor.HPMP.MaxHP == best.HPMP.MaxHP && actor.HPMP.CurHP > best.HPMP.CurHP)
+                best = actor;
+        }
+        if (best == null)
+            return false;
+        boss = best;
+        ratio = Math.Clamp(best.HPMP.CurHP / (double)Math.Max(1u, best.HPMP.MaxHP), 0, 1);
+        if (!_bossHealthTracks.TryGetValue(best.InstanceID, out var track))
+            _bossHealthTracks[best.InstanceID] = track = new();
+        track.Update(now, ratio);
+        lossPerSecond = track.LossPerSecond;
+        return true;
     }
 
     private void ScheduleTimelineForecast(EncounterMemory encounter, ForetellObservation observation)
@@ -527,6 +869,11 @@ public sealed partial class ForetellEngine
         {
             if (!string.IsNullOrEmpty(forecast.EdgeKey) && encounter.Timeline.TryGetValue(forecast.EdgeKey, out var edge)) ++edge.Hits;
             if (!string.IsNullOrEmpty(forecast.CompositeKey) && encounter.Composites.TryGetValue(forecast.CompositeKey, out var composite)) ++composite.Hits;
+            if (!string.IsNullOrEmpty(forecast.TriggerContextKey) && encounter.TriggerContexts.TryGetValue(forecast.TriggerContextKey, out var trigger))
+            {
+                if (forecast.TriggerBasis == PredictiveTriggerBasis.BossHealth) ++trigger.HealthHits;
+                else if (forecast.TriggerBasis == PredictiveTriggerBasis.PhaseClock) ++trigger.TimeHits;
+            }
             AuditPredictionOutcome(forecast.ID, DecisionAuditStage.Verified, true, $"expected signal observed: {signal}");
             _timelineForecasts.Remove(forecast.ID);
             _predictions.Remove(forecast.ID);
@@ -541,6 +888,11 @@ public sealed partial class ForetellEngine
             {
                 if (!string.IsNullOrEmpty(forecast.EdgeKey) && encounter.Timeline.TryGetValue(forecast.EdgeKey, out var edge)) ++edge.Misses;
                 if (!string.IsNullOrEmpty(forecast.CompositeKey) && encounter.Composites.TryGetValue(forecast.CompositeKey, out var composite)) ++composite.Misses;
+                if (!string.IsNullOrEmpty(forecast.TriggerContextKey) && encounter.TriggerContexts.TryGetValue(forecast.TriggerContextKey, out var trigger))
+                {
+                    if (forecast.TriggerBasis == PredictiveTriggerBasis.BossHealth) ++trigger.HealthMisses;
+                    else if (forecast.TriggerBasis == PredictiveTriggerBasis.PhaseClock) ++trigger.TimeMisses;
+                }
             }
             AuditPredictionOutcome(forecast.ID, DecisionAuditStage.Expired, false, $"expected signal not observed before {forecast.Expires:u}");
             _timelineForecasts.Remove(forecast.ID);

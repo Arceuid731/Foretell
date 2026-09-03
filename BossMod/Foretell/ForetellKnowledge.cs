@@ -137,6 +137,8 @@ public sealed partial class ForetellEngine
             encounter.CausalEdges.Remove(causalKey);
         foreach (var compositeKey in encounter.Composites.Where(kv => kv.Value.Signals.Contains(key)).Select(kv => kv.Key).ToArray())
             encounter.Composites.Remove(compositeKey);
+        foreach (var triggerKey in encounter.TriggerContexts.Where(kv => kv.Value.Signal == key).Select(kv => kv.Key).ToArray())
+            PurgeTriggerContext(territoryID, triggerKey);
 
         foreach (var episodeID in _episodes.Where(kv => kv.Value.SignalKey == key).Select(kv => kv.Key).ToArray())
         {
@@ -174,6 +176,9 @@ public sealed partial class ForetellEngine
             encounter.Composites.Remove(compositeKey);
         foreach (var causalKey in encounter.CausalEdges.Where(item => item.Value.Cause.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).Select(item => item.Key).ToArray())
             encounter.CausalEdges.Remove(causalKey);
+        foreach (var triggerKey in encounter.TriggerContexts.Where(item => item.Value.Signal.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            || item.Value.BossOID == sourceOID).Select(item => item.Key).ToArray())
+            PurgeTriggerContext(territoryID, triggerKey);
         foreach (var episodeID in _episodes.Where(item => item.Value.Trigger.TerritoryID == territoryID && item.Value.Trigger.ActorOID == sourceOID).Select(item => item.Key).ToArray())
         {
             _episodes.Remove(episodeID);
@@ -200,6 +205,12 @@ public sealed partial class ForetellEngine
             _effectSequenceEpisodes.Clear();
             _timelineForecasts.Clear();
             _tracks.Clear();
+            _signalOccurrencesThisPull.Clear();
+            _skippedTriggerContextsThisPull.Clear();
+            _triggerForecastCandidates.Clear();
+            _retryTriggerForecastCandidates = false;
+            _bossHealthTracks.Clear();
+            _bossHealthSnapshots.Clear();
             _session = NewSession(_territory);
         }
         foreach (var actionID in actionIDs)
@@ -240,6 +251,18 @@ public sealed partial class ForetellEngine
         }
     }
 
+    private void PurgeTriggerContext(uint territoryID, string key)
+    {
+        if (_store.Encounters.TryGetValue(territoryID, out var encounter))
+            encounter.TriggerContexts.Remove(key);
+        foreach (var forecast in _timelineForecasts.Values.Where(item => item.TerritoryID == territoryID && item.TriggerContextKey == key).ToArray())
+        {
+            _timelineForecasts.Remove(forecast.ID);
+            _predictions.Remove(forecast.ID);
+        }
+        _triggerForecastCandidates.RemoveAll(item => item.Key == key);
+    }
+
     private void PurgeCausalEdge(uint territoryID, string key)
     {
         if (_store.Encounters.TryGetValue(territoryID, out var encounter))
@@ -260,6 +283,8 @@ public sealed partial class ForetellEngine
             PurgeTimelineEdge(territoryID, key);
         foreach (var key in encounter.Composites.Where(item => item.Value.Phase == phase).Select(item => item.Key).ToArray())
             encounter.Composites.Remove(key);
+        foreach (var key in encounter.TriggerContexts.Where(item => item.Value.Phase == phase).Select(item => item.Key).ToArray())
+            PurgeTriggerContext(territoryID, key);
     }
 
     private void PurgePhaseSignal(uint territoryID, int phase, string signal)
@@ -273,6 +298,8 @@ public sealed partial class ForetellEngine
             encounter.Composites.Remove(key);
         foreach (var key in encounter.CausalEdges.Where(item => item.Value.Cause == signal).Select(item => item.Key).ToArray())
             encounter.CausalEdges.Remove(key);
+        foreach (var key in encounter.TriggerContexts.Where(item => item.Value.Phase == phase && item.Value.Signal == signal).Select(item => item.Key).ToArray())
+            PurgeTriggerContext(territoryID, key);
     }
 
     private void IgnoreSignal(uint territoryID, string signal, string label)
@@ -310,6 +337,8 @@ public sealed partial class ForetellEngine
             PurgeComposite(territoryID, key);
         foreach (var key in encounter.CausalEdges.Where(item => item.Value.Cause == signal).Select(item => item.Key).ToArray())
             encounter.CausalEdges.Remove(key);
+        foreach (var key in encounter.TriggerContexts.Where(item => item.Value.Signal == signal).Select(item => item.Key).ToArray())
+            PurgeTriggerContext(territoryID, key);
         foreach (var episodeID in _episodes.Where(item => item.Value.SignalKey == signal).Select(item => item.Key).ToArray())
             RemoveEpisode(episodeID);
         foreach (var forecast in _timelineForecasts.Values.Where(item => item.ExpectedSignal == signal || item.MechanicKey == signal).ToArray())

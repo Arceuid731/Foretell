@@ -215,6 +215,41 @@ public sealed class SignalTimelineEdge
     [JsonIgnore] public float ForecastReliability => ForetellInferenceCore.WilsonLowerBound(Hits, Hits + Misses);
 }
 
+// Occurrence-specific trigger context. Keeping the occurrence number prevents a repeating cast from collapsing
+// several points in one phase into one meaningless average. Phase-clock and boss-HP evidence are learned in
+// parallel; inference chooses the more stable explanation instead of assuming that every correlation is causal.
+public sealed class SignalTriggerMemory
+{
+    public string Key { get; set; } = "";
+    public string Signal { get; set; } = "";
+    public int Phase { get; set; }
+    public int Occurrence { get; set; }
+    public uint ContextOID { get; set; }
+    public uint BossOID { get; set; }
+    public int Samples { get; set; }
+    public int LastPull { get; set; } = -1;
+    public double MeanPhaseSeconds { get; set; }
+    public double PhaseSecondsM2 { get; set; }
+    public int HealthSamples { get; set; }
+    public double MeanBossHPRatio { get; set; }
+    public double BossHPRatioM2 { get; set; }
+    public int TimeForecasts { get; set; }
+    public int TimeHits { get; set; }
+    public int TimeMisses { get; set; }
+    public int HealthForecasts { get; set; }
+    public int HealthHits { get; set; }
+    public int HealthMisses { get; set; }
+    public DateTime LastSeen { get; set; }
+
+    [JsonIgnore] public double PhaseSecondsStdDev => Samples > 1 ? Math.Sqrt(Math.Max(0, PhaseSecondsM2) / (Samples - 1)) : 0;
+    [JsonIgnore] public double BossHPRatioStdDev => HealthSamples > 1 ? Math.Sqrt(Math.Max(0, BossHPRatioM2) / (HealthSamples - 1)) : 0;
+    [JsonIgnore] public float TimeStability => ForetellInferenceCore.PhaseClockStability(Samples, MeanPhaseSeconds, PhaseSecondsStdDev);
+    [JsonIgnore] public float HealthStability => ForetellInferenceCore.BossHealthStability(HealthSamples, BossHPRatioStdDev);
+    [JsonIgnore] public float TimeForecastReliability => ForetellInferenceCore.WilsonLowerBound(TimeHits, TimeHits + TimeMisses);
+    [JsonIgnore] public float HealthForecastReliability => ForetellInferenceCore.WilsonLowerBound(HealthHits, HealthHits + HealthMisses);
+    [JsonIgnore] public bool PreferHealth => ForetellInferenceCore.PreferBossHealthTrigger(Samples, MeanPhaseSeconds, PhaseSecondsStdDev, HealthSamples, BossHPRatioStdDev);
+}
+
 public sealed class SignalExclusion
 {
     public string Signal { get; set; } = "";
@@ -374,6 +409,7 @@ public sealed class EncounterMemory
     public Dictionary<uint, SourceMemory> Sources { get; set; } = [];
     public Dictionary<string, ContextualMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, SignalTimelineEdge> Timeline { get; set; } = [];
+    public Dictionary<string, SignalTriggerMemory> TriggerContexts { get; set; } = [];
     public Dictionary<int, PhaseMemory> Phases { get; set; } = [];
     public Dictionary<string, PhaseBoundaryMemory> PhaseBoundaries { get; set; } = [];
     public Dictionary<string, CompositeMechanicMemory> Composites { get; set; } = [];
@@ -445,7 +481,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 18;
+    public int Schema { get; set; } = 19;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];

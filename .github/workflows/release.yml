@@ -90,14 +90,14 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Complete post-duty analysis bundle.
+          Phase-clock and boss-HP forecasting.
 
-          - Adds a one-click Analysis ZIP per learned duty/content in Knowledge explorer.
-          - Packages matching sealed raw journals, the complete learned encounter snapshot, settings and runtime/capture health in the background.
-          - Persists a bounded semantic audit for Detected, Proposed, Classified, Verified and Expired decisions, including geometry, confidence, labels and display eligibility.
-          - Includes the optional readable replay when enabled and safely closed, while keeping the exact compressed raw journal authoritative.
-          - Detects the raw file actually held by the background writer so an active gzip is never silently presented as a complete archive.
-          - Advances learned-memory schema to 18 with safe migration and bounded audit retention.
+          - Learns occurrence-specific mechanic timing relative to each observed combat phase, including the first predictable event without requiring a preceding cast.
+          - Learns boss HP thresholds only inside independently detected boss arenas, keeping ordinary trash and open-world mobs out of HP-gate inference.
+          - Selects time versus HP from cross-pull stability and deliberately prefers the clock when both correlations are equally plausible.
+          - Estimates HP-threshold arrival from the live health-loss slope with a bounded 12-second anticipation window.
+          - Separates repeated occurrences, encounter sources and bosses within a shared dungeon territory to avoid cross-pack forecasts.
+          - Exposes time/HP anchors and verified hit/miss reliability in Timeline and Analysis ZIP; advances learned-memory schema to 19.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@

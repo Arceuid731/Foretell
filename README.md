@@ -20,7 +20,7 @@ For cast actions, Foretell also consumes useful local FFXIV client metadata as a
 
 The dedicated in-game cockpit provides Dashboard, Knowledge explorer, Timeline, Live feed, Replay & storage, Settings and Help tabs. The Knowledge explorer is organized as content category → territory/duty → arena/environment/source → mechanic, with confirmed deletion at every useful level. It also exposes learned causal links, raw protocol families, phase transitions and simultaneous patterns individually.
 
-After leaving a duty, expand that content in **Knowledge explorer** and click **Analysis ZIP**. Foretell creates one shareable archive containing the matching sealed raw journal(s), the full learned encounter snapshot, configuration and health counters, plus a bounded decision audit from accepted trigger through proposed prediction, classification and verification/expiry. The optional readable JSONL replay is included when it was enabled and is safely closed; it is not required for the bundle to contain the authoritative raw input and semantic decisions.
+After leaving a duty, expand that content in **Knowledge explorer** and click **Analysis ZIP**. Foretell creates one shareable archive containing the matching sealed raw journal(s), the full cumulative learned encounter snapshot, configuration and health counters, plus a bounded decision audit for the latest completed territory session from accepted trigger through proposed prediction, classification and verification/expiry. The optional readable JSONL replay is included when it was enabled and is safely closed; it is not required for the bundle to contain the authoritative raw input and semantic decisions.
 
 ## Confidence visualization
 
@@ -37,7 +37,9 @@ The radar also prints confidence percentages. Target-relative geometry is withhe
 
 Every eligible encounter signal—not only cast bars—can become a learned trigger: casts, icons, tethers, statuses, action timelines, event objects, map/director state, ActorControl, native VFX paths and NPC calls. Outcomes such as ActionEffect, sequence-linked EffectResult, displacement, statuses and deaths validate or reject the resulting mechanic hypothesis.
 
-Repeated signal transitions produce branch-aware timeline forecasts. Ambiguous branches cause Foretell to abstain. Stable simultaneous patterns can forecast their other components, while learned causal links improve assignment of later effects to the correct trigger. Each issued mechanic, timeline and composite forecast records hits and misses so reliability is measured rather than inferred from repetition alone.
+Repeated signal transitions produce branch-aware timeline forecasts. Ambiguous branches cause Foretell to abstain. In parallel, every mechanic occurrence learns its offset from the current phase clock and—only for independently detected boss arenas—the boss HP ratio at which it appeared. Cross-pull variance decides whether elapsed time or HP is the more credible trigger; a stable clock wins ties so similar group DPS cannot manufacture a false HP gate. HP forecasts estimate threshold arrival from the observed health-loss slope, while occurrence indexing keeps repeated cycles distinct.
+
+Stable simultaneous patterns can forecast their other components, while learned causal links improve assignment of later effects to the correct trigger. Each issued mechanic, sequence, phase-clock, HP-threshold and composite forecast records hits and misses so reliability is measured rather than inferred from repetition alone.
 
 ## Foretell modes
 

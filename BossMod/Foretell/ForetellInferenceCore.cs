@@ -126,6 +126,55 @@ public static class ForetellInferenceCore
         return total == 0 ? 0 : Math.Clamp(edge.Count / (float)total, 0, 1);
     }
 
+    public static float PhaseClockStability(int samples, double meanSeconds, double stdDevSeconds)
+    {
+        if (samples < 2 || !double.IsFinite(meanSeconds) || !double.IsFinite(stdDevSeconds) || meanSeconds < 0 || stdDevSeconds < 0)
+            return 0;
+        // A one-second wobble is acceptable even for an early mechanic; long phase clocks receive a bounded
+        // proportional tolerance so a loosely timed event cannot look stable merely because it happens late.
+        var tolerance = Math.Clamp(meanSeconds * .10 + .75, 1.25, 6);
+        return Math.Clamp(1f - (float)(stdDevSeconds / tolerance), 0, 1);
+    }
+
+    public static float BossHealthStability(int samples, double stdDevRatio)
+    {
+        if (samples < 2 || !double.IsFinite(stdDevRatio) || stdDevRatio < 0)
+            return 0;
+        // Six percentage points of dispersion is deliberately treated as fully unstable. Real HP gates tend to
+        // cluster much more tightly, while ordinary time-based mechanics drift with group DPS.
+        return Math.Clamp(1f - (float)(stdDevRatio / .06), 0, 1);
+    }
+
+    public static bool PreferBossHealthTrigger(int timeSamples, double meanSeconds, double timeStdDev,
+        int healthSamples, double healthStdDev)
+    {
+        if (healthSamples < 3)
+            return false;
+        var health = BossHealthStability(healthSamples, healthStdDev);
+        if (health < .65f)
+            return false;
+        var time = PhaseClockStability(timeSamples, meanSeconds, timeStdDev);
+        // When both clocks are equally stable, prefer time: identical group DPS can create a coincidental HP
+        // correlation. HP wins only with meaningful timing drift or materially stronger cross-pull evidence.
+        var timingDrift = timeStdDev >= Math.Max(1.5, meanSeconds * .08);
+        return timeSamples < 3 || timingDrift || health >= time + .15f;
+    }
+
+    public static float TriggerForecastConfidence(int samples, float stability, int hits, int misses)
+    {
+        samples = Math.Max(0, samples);
+        stability = float.IsFinite(stability) ? Math.Clamp(stability, 0, 1) : 0;
+        hits = Math.Max(0, hits);
+        misses = Math.Max(0, misses);
+        if (samples < 3 || stability < .55f)
+            return 0;
+        var attempts = hits + misses;
+        if (attempts >= 3)
+            return Math.Min(stability, WilsonLowerBound(hits, attempts));
+        var evidence = Math.Min(.94f, .70f + samples * .04f);
+        return Math.Min(evidence, stability);
+    }
+
     public static GuidanceKind GuidanceFor(MechanicKind kind) => kind switch
     {
         MechanicKind.GroundAOE or MechanicKind.TargetedAOE => GuidanceKind.Avoid,

@@ -750,7 +750,7 @@ public sealed partial class ForetellEngine
             return;
         }
 
-        ImGui.TextUnformatted($"{encounter.Phases.Count} learned contexts  |  {encounter.Timeline.Count} transitions  |  {encounter.Composites.Count} simultaneous patterns");
+        ImGui.TextUnformatted($"{encounter.Phases.Count} phases  |  {encounter.Timeline.Count} transitions  |  {encounter.TriggerContexts.Count} time/HP anchors  |  {encounter.Composites.Count} simultaneous patterns");
         ImGui.TextDisabled("Names come from the game's own data sheets; IDs remain visible only when no name exists.");
         ImGui.TextDisabled("Ignore suppresses a recurring signal for this territory while keeping raw capture and diagnostics intact.");
         if (ImGui.Button("Export signal filters"))
@@ -814,6 +814,46 @@ public sealed partial class ForetellEngine
                 }
             }
             ImGui.TreePop();
+        }
+
+        if (encounter.TriggerContexts.Count > 0 && ImGui.CollapsingHeader($"Phase-clock / boss-HP triggers ({encounter.TriggerContexts.Count})", ImGuiTreeNodeFlags.DefaultOpen))
+        {
+            ImGui.TextDisabled("Occurrence-specific evidence chooses boss HP only when it is more stable across pulls than elapsed time; otherwise the phase clock wins.");
+            if (ImGui.BeginTable("ForetellTriggerContexts", 9, ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+            {
+                ImGui.TableSetupColumn("Phase");
+                ImGui.TableSetupColumn("Mechanic");
+                ImGui.TableSetupColumn("Occurrence");
+                ImGui.TableSetupColumn("Phase time");
+                ImGui.TableSetupColumn("Boss HP");
+                ImGui.TableSetupColumn("Chosen basis");
+                ImGui.TableSetupColumn("Samples");
+                ImGui.TableSetupColumn("Forecasts");
+                ImGui.TableSetupColumn("Manage");
+                ImGui.TableHeadersRow();
+                foreach (var pair in encounter.TriggerContexts
+                    .OrderByDescending(item => Math.Max(item.Value.TimeStability, item.Value.HealthStability))
+                    .ThenByDescending(item => Math.Max(item.Value.Samples, item.Value.HealthSamples)).Take(180))
+                {
+                    var trigger = pair.Value;
+                    var healthBasis = trigger.PreferHealth;
+                    ImGui.TableNextRow();
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(TimelinePhaseLabel(trigger.Phase));
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(SignalDisplayName(encounter, trigger.Signal));
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted($"#{trigger.Occurrence}");
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted($"T+{trigger.MeanPhaseSeconds:F1}s +/- {trigger.PhaseSecondsStdDev:F1}s ({trigger.TimeStability:P0})");
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(trigger.HealthSamples == 0 ? "—" : $"{trigger.MeanBossHPRatio:P1} +/- {trigger.BossHPRatioStdDev:P1} ({trigger.HealthStability:P0})");
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(healthBasis ? "Boss HP" : "Phase clock");
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted($"{trigger.Samples} time / {trigger.HealthSamples} HP");
+                    ImGui.TableNextColumn(); ImGui.TextUnformatted(healthBasis
+                        ? trigger.HealthForecasts == 0 ? "not tested" : $"{trigger.HealthHits}/{trigger.HealthForecasts} · lower {trigger.HealthForecastReliability:P0}"
+                        : trigger.TimeForecasts == 0 ? "not tested" : $"{trigger.TimeHits}/{trigger.TimeForecasts} · lower {trigger.TimeForecastReliability:P0}");
+                    ImGui.TableNextColumn();
+                    if (ImGui.SmallButton($"Delete##delete-trigger-context-{pair.Key}"))
+                        RequestPurge("Time/HP trigger", "Delete this occurrence-specific trigger model? It can be relearned from future pulls.", () => PurgeTriggerContext(encounter.TerritoryID, pair.Key));
+                }
+                ImGui.EndTable();
+            }
         }
 
         ImGui.Separator();

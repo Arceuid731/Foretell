@@ -31,6 +31,7 @@ static class ForetellCoreTests
         ClassifierRejectsNonFiniteStateAndInput();
         InferenceReliabilityAndAbstention();
         CausalAndTimelineConfidence();
+        PhaseClockAndHealthTriggerSelection();
         GeometryValidationAndGuidance();
         MechanicSourcesExcludePartyActions();
         RadarIsCameraRelative();
@@ -334,6 +335,21 @@ static class ForetellCoreTests
         Check.That(ForetellInferenceCore.WilsonLowerBound(10, 10) > ForetellInferenceCore.WilsonLowerBound(5, 10), "reliability ordering regressed");
     }
 
+    private static void PhaseClockAndHealthTriggerSelection()
+    {
+        var exactClock = ForetellInferenceCore.PhaseClockStability(4, 30, .25);
+        var driftingClock = ForetellInferenceCore.PhaseClockStability(4, 30, 5);
+        var exactHealth = ForetellInferenceCore.BossHealthStability(4, .005);
+        Check.That(exactClock > .9f && driftingClock < exactClock, "phase-clock stability is not ordered");
+        Check.That(exactHealth > .9f, "stable boss HP threshold was rejected");
+        Check.That(!ForetellInferenceCore.PreferBossHealthTrigger(4, 30, .25, 4, .005), "coincidental HP correlation displaced a stable phase clock");
+        Check.That(ForetellInferenceCore.PreferBossHealthTrigger(4, 30, 5, 4, .005), "stable HP threshold did not beat a drifting phase clock");
+        Check.That(!ForetellInferenceCore.PreferBossHealthTrigger(4, 30, 5, 2, .001), "two HP samples created a predictive threshold");
+        Check.That(ForetellInferenceCore.TriggerForecastConfidence(3, .95f, 0, 0) >= .8f, "stable three-pull trigger remained hidden");
+        Check.That(ForetellInferenceCore.TriggerForecastConfidence(2, 1, 0, 0) == 0, "two-pull trigger escaped abstention");
+        Check.That(ForetellInferenceCore.TriggerForecastConfidence(6, 1, 2, 1) < .5f, "poor verified trigger retained excessive confidence");
+    }
+
     private static void GeometryValidationAndGuidance()
     {
         Check.That(ForetellInferenceCore.GeometryMatches(GeometryKind.Circle, 10, 0, GeometryKind.Circle, 11, 0), "near geometry was rejected");
@@ -467,10 +483,27 @@ static class ForetellCoreTests
             DisplayEligible = true,
             Label = "Test cone"
         });
+        store.Encounters[192] = new() { TerritoryID = 192 };
+        store.Encounters[192].TriggerContexts["BEEF:0:1:BEEF:CastStart:123"] = new()
+        {
+            Key = "BEEF:0:1:BEEF:CastStart:123",
+            Signal = "BEEF:CastStart:123",
+            Phase = 0,
+            Occurrence = 1,
+            ContextOID = 0xBEEF,
+            BossOID = 0xBEEF,
+            Samples = 4,
+            MeanPhaseSeconds = 12.5,
+            HealthSamples = 4,
+            MeanBossHPRatio = .7
+        };
         var copy = JsonSerializer.Deserialize<ForetellStore>(JsonSerializer.Serialize(store));
-        Check.That(copy?.Schema == 18 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
+        Check.That(copy?.Schema == 19 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
         var entry = copy!.DecisionAudit[0];
         Check.That(entry.Stage == DecisionAuditStage.Proposed && entry.Geometry == GeometryKind.Cone
             && entry.DisplayEligible && entry.SessionID == "test-session", "decision audit fields did not round-trip");
+        var trigger = copy.Encounters[192].TriggerContexts.Single().Value;
+        Check.That(trigger.Samples == 4 && trigger.HealthSamples == 4 && Math.Abs(trigger.MeanBossHPRatio - .7) < .0001,
+            "time/HP trigger memory did not round-trip");
     }
 }

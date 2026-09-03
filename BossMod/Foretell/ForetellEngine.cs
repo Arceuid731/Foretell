@@ -72,12 +72,20 @@ public sealed partial class ForetellEngine : IDisposable
     private bool _inPull;
     private DateTime _lastCombatSignal;
     private DateTime _pullStartedAt;
+    private DateTime _phaseStartedAt;
+    private DateTime _lastContextForecastSample;
     private DateTime _hazardContextUntil;
     private DateTime _lastPhaseBoundary;
     private string _lastPhaseBoundarySignal = "";
     private readonly Dictionary<ulong, DateTime> _untargetableSince = [];
     private readonly HashSet<string> _phaseBoundariesThisPull = [];
     private string _phaseTopologyFingerprint = "";
+    private readonly Dictionary<string, int> _signalOccurrencesThisPull = [];
+    private readonly HashSet<string> _skippedTriggerContextsThisPull = [];
+    private readonly List<SignalTriggerMemory> _triggerForecastCandidates = [];
+    private bool _retryTriggerForecastCandidates;
+    private readonly Dictionary<ulong, BossHealthTrack> _bossHealthTracks = [];
+    private readonly Dictionary<uint, BossHealthSnapshot?> _bossHealthSnapshots = [];
 
     private bool _inspectorOpen;
     private ReplayReport _lastReplayReport = new();
@@ -293,6 +301,11 @@ public sealed partial class ForetellEngine : IDisposable
         else if (_store.Encounters.TryGetValue(_territory, out var currentEncounter) && _ws.CurrentCFCID != 0 && currentEncounter.ContentFinderConditionID != _ws.CurrentCFCID)
             RefreshEncounterIdentity(currentEncounter, _ws.CurrentCFCID);
 
+        // The duty combat flag normally changes before the first cast packet. Starting the phase clock here lets
+        // an already learned T+N mechanic be announced before its trigger instead of using that trigger as T0.
+        if (!_inPull && _ws.CurrentCFCID != 0 && gameInCombat)
+            BeginCombatPull(_store.Encounters.GetValueOrDefault(_territory), now);
+
         SyncReplayWriter();
         if ((DateTime.UtcNow - _rawOpenedAt).TotalHours >= 1)
             OpenRawJournal();
@@ -312,6 +325,7 @@ public sealed partial class ForetellEngine : IDisposable
         {
             SamplePartyPositions();
             SampleDataFabric();
+            UpdateTriggerContextForecasts(now);
             _lastPositionSample = now;
         }
 
@@ -382,12 +396,20 @@ public sealed partial class ForetellEngine : IDisposable
         _previousSignal = "";
         _inPull = false;
         _pullStartedAt = default;
+        _phaseStartedAt = default;
+        _lastContextForecastSample = default;
         _hazardContextUntil = default;
         _lastPhaseBoundary = default;
         _lastPhaseBoundarySignal = "";
         _untargetableSince.Clear();
         _phaseBoundariesThisPull.Clear();
         _phaseTopologyFingerprint = "";
+        _signalOccurrencesThisPull.Clear();
+        _skippedTriggerContextsThisPull.Clear();
+        _triggerForecastCandidates.Clear();
+        _retryTriggerForecastCandidates = false;
+        _bossHealthTracks.Clear();
+        _bossHealthSnapshots.Clear();
         _territory = territory;
         _session = NewSession(territory);
         StartEncounterSession(territory);
@@ -631,7 +653,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 18);
+        _store.Schema = Math.Max(_store.Schema, 19);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -687,6 +709,7 @@ public sealed partial class ForetellEngine : IDisposable
                 encounter.Sources ??= [];
                 encounter.Mechanics ??= [];
                 encounter.Timeline ??= [];
+                encounter.TriggerContexts ??= [];
                 encounter.Phases ??= [];
                 encounter.PhaseBoundaries ??= [];
                 encounter.Composites ??= [];
@@ -698,6 +721,7 @@ public sealed partial class ForetellEngine : IDisposable
                 RemoveNullValues(encounter.Sources);
                 RemoveNullValues(encounter.Mechanics);
                 RemoveNullValues(encounter.Timeline);
+                RemoveNullValues(encounter.TriggerContexts);
                 RemoveNullValues(encounter.Phases);
                 RemoveNullValues(encounter.PhaseBoundaries);
                 RemoveNullValues(encounter.Composites);
@@ -712,6 +736,7 @@ public sealed partial class ForetellEngine : IDisposable
                     migratedInvalidMechanics += MigrateInvalidMechanicSources(encounter, migratedInvalidActions);
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
+                foreach (var trigger in encounter.TriggerContexts.Values) NormalizeSignalTriggerMemory(trigger);
                 foreach (var edge in encounter.CausalEdges.Values)
                 {
                     edge.Cause ??= "";
@@ -818,6 +843,7 @@ public sealed partial class ForetellEngine : IDisposable
         // v0.8 mixed local WorldState time with UTC native-hook time. Keep expensive empirical mechanic samples,
         // but discard timing/forecast products whose delays and hit rates can therefore be off by a timezone.
         encounter.Timeline.Clear();
+        encounter.TriggerContexts.Clear();
         encounter.Phases.Clear();
         encounter.PhaseBoundaries.Clear();
         encounter.Composites.Clear();
@@ -856,6 +882,8 @@ public sealed partial class ForetellEngine : IDisposable
         }
         foreach (var key in encounter.Timeline.Where(item => invalidSignals.Contains(item.Value.From) || invalidSignals.Contains(item.Value.To)).Select(item => item.Key).ToArray())
             encounter.Timeline.Remove(key);
+        foreach (var key in encounter.TriggerContexts.Where(item => invalidSignals.Contains(item.Value.Signal)).Select(item => item.Key).ToArray())
+            encounter.TriggerContexts.Remove(key);
         foreach (var phase in encounter.Phases.Values)
         {
             phase.Signals ??= [];
@@ -900,6 +928,8 @@ public sealed partial class ForetellEngine : IDisposable
             foreach (var key in encounter.Mechanics.OrderByDescending(item => item.Value.GuidanceConfidence).ThenByDescending(item => item.Value.LastSeen).Skip(2048).Select(item => item.Key).ToArray()) encounter.Mechanics.Remove(key);
         if (encounter.Timeline.Count > 8192)
             foreach (var key in encounter.Timeline.OrderByDescending(item => item.Value.Count).Skip(8192).Select(item => item.Key).ToArray()) encounter.Timeline.Remove(key);
+        if (encounter.TriggerContexts.Count > 4096)
+            foreach (var key in encounter.TriggerContexts.OrderByDescending(item => Math.Max(item.Value.Samples, item.Value.HealthSamples)).ThenByDescending(item => item.Value.LastSeen).Skip(4096).Select(item => item.Key).ToArray()) encounter.TriggerContexts.Remove(key);
         if (encounter.Phases.Count > 512)
             foreach (var key in encounter.Phases.OrderBy(item => item.Key).Skip(512).Select(item => item.Key).ToArray()) encounter.Phases.Remove(key);
         if (encounter.PhaseBoundaries.Count > 512)
@@ -981,6 +1011,28 @@ public sealed partial class ForetellEngine : IDisposable
         edge.Forecasts = Math.Max(0, edge.Forecasts);
         edge.Hits = Math.Clamp(edge.Hits, 0, edge.Forecasts);
         edge.Misses = Math.Clamp(edge.Misses, 0, edge.Forecasts - edge.Hits);
+    }
+
+    private static void NormalizeSignalTriggerMemory(SignalTriggerMemory trigger)
+    {
+        trigger.Key ??= "";
+        trigger.Signal ??= "";
+        trigger.Phase = Math.Clamp(trigger.Phase, 0, 511);
+        trigger.Occurrence = Math.Clamp(trigger.Occurrence, 1, 32);
+        if (trigger.ContextOID == 0) trigger.ContextOID = trigger.BossOID;
+        trigger.Samples = Math.Max(0, trigger.Samples);
+        trigger.LastPull = Math.Max(-1, trigger.LastPull);
+        trigger.MeanPhaseSeconds = Finite(trigger.MeanPhaseSeconds, 0, 0, 1800);
+        trigger.PhaseSecondsM2 = Finite(trigger.PhaseSecondsM2, 0, 0, double.MaxValue);
+        trigger.HealthSamples = Math.Clamp(trigger.HealthSamples, 0, trigger.Samples);
+        trigger.MeanBossHPRatio = Finite(trigger.MeanBossHPRatio, 0, 0, 1);
+        trigger.BossHPRatioM2 = Finite(trigger.BossHPRatioM2, 0, 0, double.MaxValue);
+        trigger.TimeForecasts = Math.Max(0, trigger.TimeForecasts);
+        trigger.TimeHits = Math.Clamp(trigger.TimeHits, 0, trigger.TimeForecasts);
+        trigger.TimeMisses = Math.Clamp(trigger.TimeMisses, 0, trigger.TimeForecasts - trigger.TimeHits);
+        trigger.HealthForecasts = Math.Max(0, trigger.HealthForecasts);
+        trigger.HealthHits = Math.Clamp(trigger.HealthHits, 0, trigger.HealthForecasts);
+        trigger.HealthMisses = Math.Clamp(trigger.HealthMisses, 0, trigger.HealthForecasts - trigger.HealthHits);
     }
 
     private static bool NormalizeTopology(ArenaTopologyMemory topology)
