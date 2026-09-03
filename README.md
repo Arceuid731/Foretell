@@ -4,7 +4,7 @@ Foretell is an experimental adaptive encounter-intelligence plugin for FFXIV, bu
 
 It keeps the mature BMR world-state/rendering stack while adding local multi-signal observation, causal and structural protocol learning, calibrated forecast validation, persistent contextual encounter memory, timeline/phase/composite prediction, Replay Lab diagnostics, native arena topology, and predictive world/radar/text guidance.
 
-For cast actions, Foretell also consumes useful local FFXIV client metadata as an immediate prior: `CastType`, `EffectRange`, `XAxisModifier`, `TargetArea`, `Omen`/VFX information and actor hitbox. These priors can make ordinary telegraphs useful from the first cast, but they are never treated as unquestionable ground truth: observed outcomes can confirm, refine or override them, and metadata alone cannot reach the 99% safe-guidance threshold. If metadata identifies a cone but provides no angle, Foretell retains the cone family and range for learning without drawing an invented sector.
+For cast actions, Foretell also consumes useful local FFXIV client metadata as an immediate prior: `CastType`, `EffectRange`, `XAxisModifier`, `TargetArea`, `Omen`/VFX information and actor hitbox. These priors can make ordinary telegraphs useful from the first cast, but they are never treated as unquestionable ground truth: observed outcomes can confirm, refine or override them, and metadata alone cannot reach the 99% safe-guidance threshold. If metadata identifies a cone but provides no angle, Foretell retains the cone family and range for learning without drawing an invented sector. Long observed casts with no provable spatial shape remain visible as text-only `WATCH` entries.
 
 ## Dalamud custom repository
 
@@ -91,7 +91,7 @@ Foretell starts without authored encounter answers. It learns from:
 - native weather/time/transition state, camera matrices/viewport and a budgeted collision sweep used to learn reachable arena contours;
 - explicitly classified Dalamud gameplay services, Lumina metadata and observed outcomes.
 
-Continuous state is sampled with change detection and rotating actor slices; unique events remain exact. Heavy compression and normalized replay serialization run off the game thread, while learned-memory autosave is deferred until combat is inactive. Every framework-frame drain has a count and time budget, persistent learning collections have pressure limits, and the Dashboard exposes backlog, rejection, eviction, failure and timing counters. A degraded sensor is reported instead of silently presented as complete.
+Continuous state is sampled with change detection and rotating actor slices; unique events remain exact. Heavy compression and normalized replay serialization run off the game thread, while learned-memory autosave is deferred until combat is inactive. Every framework-frame drain has a count and time budget, with a small reserve for sparse enemy casts and resolutions during high-volume alliance-raid frames. Persistent learning collections have pressure limits, and the Dashboard exposes backlog, rejection, eviction, failure and timing counters. A degraded sensor is reported instead of silently presented as complete.
 
 It must not import BossModule mechanics, state machines, boss components, encounter layouts/presets or equivalent hand-authored safe spots and phase answers. CI checks this boundary and the in-game coverage audit reports any sensor that is truncated, unavailable or not explicitly classified.
 

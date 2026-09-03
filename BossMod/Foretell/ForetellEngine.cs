@@ -55,7 +55,10 @@ public sealed partial class ForetellEngine : IDisposable
     // while the independently queued raw transport journal remains exact and replayable.
     private const int MaxSemanticObservationsPerFrame = 48;
     private const double MaxSemanticMillisecondsPerFrame = 0.85;
+    private const int MaxPrioritySemanticObservationsPerFrame = 72;
+    private const double MaxPrioritySemanticMillisecondsPerFrame = 1.5;
     private long _semanticBudgetFrameTicks;
+    private long _semanticBudgetTrippedFrameTicks;
     private int _semanticObservationsThisFrame;
     private double _semanticMillisecondsThisFrame;
     private long _semanticObservationsRejected;
@@ -106,7 +109,7 @@ public sealed partial class ForetellEngine : IDisposable
     private bool _disposed;
     internal bool PerformanceThrottled => DateTime.UtcNow < _adaptiveThrottleUntil;
 
-    private bool SemanticBudgetAvailable()
+    private bool SemanticBudgetAvailable(bool priority = false)
     {
         var frameTicks = _ws.CurrentTime.Ticks;
         if (frameTicks != _semanticBudgetFrameTicks)
@@ -115,13 +118,15 @@ public sealed partial class ForetellEngine : IDisposable
             _semanticObservationsThisFrame = 0;
             _semanticMillisecondsThisFrame = 0;
         }
-        return _semanticObservationsThisFrame < MaxSemanticObservationsPerFrame
-            && _semanticMillisecondsThisFrame < MaxSemanticMillisecondsPerFrame;
+        var maxObservations = priority ? MaxPrioritySemanticObservationsPerFrame : MaxSemanticObservationsPerFrame;
+        var maxMilliseconds = priority ? MaxPrioritySemanticMillisecondsPerFrame : MaxSemanticMillisecondsPerFrame;
+        return _semanticObservationsThisFrame < maxObservations
+            && _semanticMillisecondsThisFrame < maxMilliseconds;
     }
 
-    private bool TryEnterSemanticBudget()
+    private bool TryEnterSemanticBudget(bool priority = false)
     {
-        if (!SemanticBudgetAvailable())
+        if (!SemanticBudgetAvailable(priority))
         {
             ++_semanticObservationsRejected;
             return false;
@@ -135,12 +140,14 @@ public sealed partial class ForetellEngine : IDisposable
         var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         _semanticMillisecondsThisFrame += elapsed;
         _semanticPeakMilliseconds = Math.Max(_semanticPeakMilliseconds, elapsed);
-        if (_semanticMillisecondsThisFrame < MaxSemanticMillisecondsPerFrame)
+        if (_semanticMillisecondsThisFrame < MaxSemanticMillisecondsPerFrame
+            || _semanticBudgetTrippedFrameTicks == _semanticBudgetFrameTicks)
             return;
+        _semanticBudgetTrippedFrameTicks = _semanticBudgetFrameTicks;
         ++_semanticBudgetTrips;
-        var cooldown = DateTime.UtcNow.AddSeconds(10);
-        if (cooldown > _adaptiveThrottleUntil) _adaptiveThrottleUntil = cooldown;
-        if (cooldown > _topologySuspendedUntil) _topologySuspendedUntil = cooldown;
+        // The per-frame rejection gate already bounds callback cost. Cross-frame throttling is reserved for the
+        // Update watchdog below, where three genuinely slow frames demonstrate sustained load; otherwise a normal
+        // alliance-raid burst could keep optional VFX/topology ingestion suspended for the entire encounter.
     }
 
     internal ForetellStore Store => _store;
@@ -387,6 +394,7 @@ public sealed partial class ForetellEngine : IDisposable
         _nextForecastID = -1;
         _effectSequenceEpisodes.Clear();
         _semanticBudgetFrameTicks = 0;
+        _semanticBudgetTrippedFrameTicks = 0;
         _semanticObservationsThisFrame = 0;
         _semanticMillisecondsThisFrame = 0;
         _finalizationBudgetFrameTicks = 0;
@@ -734,6 +742,8 @@ public sealed partial class ForetellEngine : IDisposable
                     MigrateUnreliableV08DerivedMemory(encounter);
                 if (loadedSchema < 17)
                     migratedInvalidMechanics += MigrateInvalidMechanicSources(encounter, migratedInvalidActions);
+                if (loadedSchema < 20)
+                    ResetPre20ForecastOutcomes(encounter);
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
                 foreach (var trigger in encounter.TriggerContexts.Values) NormalizeSignalTriggerMemory(trigger);
@@ -863,6 +873,41 @@ public sealed partial class ForetellEngine : IDisposable
             environment.Kind = SourceKind.Environment;
             environment.NameID = 0;
             environment.Name = "";
+        }
+    }
+
+    private static void ResetPre20ForecastOutcomes(EncounterMemory encounter)
+    {
+        // Before schema 20, an avoided spatial telegraph (no affected/safe split) was recorded as a false miss,
+        // and busy alliance frames could shed the expected signal itself. Those counters cannot be repaired from
+        // aggregate memory, so retain the learned mechanics/timing while restarting only their validation history.
+        foreach (var mechanic in encounter.Mechanics.Values)
+        {
+            mechanic.Forecasts = 0;
+            mechanic.ForecastHits = 0;
+            mechanic.ForecastMisses = 0;
+            mechanic.BrierScoreSum = 0;
+        }
+        foreach (var edge in encounter.Timeline.Values)
+        {
+            edge.Forecasts = 0;
+            edge.Hits = 0;
+            edge.Misses = 0;
+        }
+        foreach (var trigger in encounter.TriggerContexts.Values)
+        {
+            trigger.TimeForecasts = 0;
+            trigger.TimeHits = 0;
+            trigger.TimeMisses = 0;
+            trigger.HealthForecasts = 0;
+            trigger.HealthHits = 0;
+            trigger.HealthMisses = 0;
+        }
+        foreach (var composite in encounter.Composites.Values)
+        {
+            composite.Forecasts = 0;
+            composite.Hits = 0;
+            composite.Misses = 0;
         }
     }
 

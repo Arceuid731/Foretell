@@ -19,7 +19,7 @@ public sealed partial class ForetellEngine
         {
             var confidenceCut = _cfg.VisualConfidence / 100f;
             var displayed = 0;
-            foreach (var p in _predictions.Values.Where(ValidPrediction).OrderBy(p => p.Activation))
+            foreach (var p in _predictions.Values.Where(p => ValidPrediction(p) && HasSpatialPresentation(p)).OrderBy(p => p.Activation))
             {
                 if (p.Confidence < confidenceCut || displayed++ >= _cfg.MaxRenderedMechanics) continue;
                 if (_cfg.WorldOverlay) DrawWorld(p);
@@ -430,7 +430,7 @@ public sealed partial class ForetellEngine
         DrawRadarActors(draw, player, playerPos, cameraAzimuth, center, radius, scale);
 
         var displayed = 0;
-        foreach (var p in _predictions.Values.Where(ValidPrediction).OrderBy(p => p.Activation))
+        foreach (var p in _predictions.Values.Where(p => ValidPrediction(p) && HasSpatialPresentation(p)).OrderBy(p => p.Activation))
         {
             if (p.Confidence < _cfg.VisualConfidence / 100f || displayed++ >= _cfg.MaxRenderedMechanics)
                 continue;
@@ -537,7 +537,11 @@ public sealed partial class ForetellEngine
             draw.AddCircleFilled(position, actorRadius, color, 20);
             draw.AddCircle(position, actorRadius + 1, Pack(10, 10, 15, 230), 20, 1.5f);
             if (actor.CastInfo != null)
+            {
                 draw.AddCircle(position, actorRadius + 3, Pack(255, 210, 90, 230), 24, 1.5f);
+                if (boss)
+                    draw.AddText(position + new Vector2(actorRadius + 5, -8), Pack(255, 210, 90, 230), "CAST");
+            }
             ++enemiesDrawn;
         }
 
@@ -738,6 +742,9 @@ public sealed partial class ForetellEngine
             && float.IsFinite(prediction.Rotation) && float.IsFinite(prediction.P1) && prediction.P1 is >= 0 and <= 200
             && float.IsFinite(prediction.P2) && prediction.P2 is >= 0 and <= 200
             && float.IsFinite(prediction.Confidence) && prediction.Confidence is >= 0 and <= 1;
+
+    private static bool HasSpatialPresentation(ActivePrediction prediction)
+        => prediction.Geometry != GeometryKind.Unknown || prediction.Guidance != GuidanceKind.None;
 
     private static bool FiniteVector(Vector2 value)
         => float.IsFinite(value.X) && float.IsFinite(value.Y);

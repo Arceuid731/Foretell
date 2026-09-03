@@ -226,6 +226,18 @@ public sealed partial class ForetellEngine
         if (p.Geometry == GeometryKind.Unknown || p.Confidence <= 0
             || !ForetellInferenceCore.GeometryParametersComplete(p.Geometry, p.P1, p.P2))
         {
+            // The cast itself is certain even when its danger shape is not. Surface longer encounter casts as a
+            // text-only WATCH item, while deliberately leaving geometry and guidance empty so no fake world/radar
+            // telegraph or safe position can be produced. This also keeps angle-less cone families honest.
+            if (ForetellInferenceCore.ShouldSurfaceUnshapedCast(trigger.Value1) && !_predictions.ContainsKey(trigger.Sequence))
+            {
+                var watchSource = new Vector2(trigger.X, trigger.Z);
+                var watchTarget = new Vector2(trigger.TargetX, trigger.TargetZ);
+                var evidence = $"Observed {trigger.Value1:F1}s cast; spatial geometry incomplete; {p.Evidence}";
+                StorePrediction(trigger.Sequence, new(trigger.ActorID, trigger.PrimaryID, GeometryKind.Unknown, MechanicKind.Unknown,
+                    watchSource, watchTarget, trigger.Rotation, 0, 0, trigger.At.AddSeconds(Math.Clamp(trigger.Value1, 0, 120)), .76f, evidence,
+                    SignalKey(trigger), trigger.TargetID, GuidanceKind.None, false, LookupActionName(trigger.PrimaryID) ?? $"Action 0x{trigger.PrimaryID:X}"), trigger);
+            }
             _lastEvidence = p.Evidence;
             return;
         }

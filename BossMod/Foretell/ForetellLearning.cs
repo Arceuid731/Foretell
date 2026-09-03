@@ -11,7 +11,7 @@ public sealed partial class ForetellEngine
             ProcessObservationCore(observation, replaying: true, enriched: enriched);
             return;
         }
-        if (!TryEnterSemanticBudget())
+        if (!TryEnterSemanticBudget(ForetellInferenceCore.IsPrioritySemanticObservation(observation.Kind, observation.SourceKind)))
             return;
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
@@ -1183,7 +1183,7 @@ public sealed partial class ForetellEngine
             Anticipated = prediction.Anticipated,
             DisplayEligible = _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell
                 && prediction.Confidence >= _cfg.VisualConfidence / 100f
-                && (_cfg.WorldOverlay || _cfg.TextHints || _cfg.MiniRadar),
+                && (_cfg.TextHints || HasSpatialPresentation(prediction) && (_cfg.WorldOverlay || _cfg.MiniRadar)),
             Label = prediction.Label,
             Evidence = prediction.Evidence
         });
@@ -1668,8 +1668,15 @@ public sealed partial class ForetellEngine
         mechanic.AnchorSideM2 += sideDelta * (side - mechanic.MeanAnchorSide);
     }
 
-    private static bool ValidateMechanicForecast(ContextualMechanic mechanic, MechanicEpisode episode, MechanicKind observedKind, FitResult? fit)
+    private static bool? ValidateMechanicForecast(ContextualMechanic mechanic, MechanicEpisode episode, MechanicKind observedKind, FitResult? fit)
     {
+        // A correctly avoided spatial telegraph produces no affected/safe split, hence no empirical shape fit.
+        // That is missing validation evidence, not a forecast miss. Only score a spatial claim when the outcome
+        // actually contains enough information to compare geometry.
+        if (episode.ForecastGeometry != GeometryKind.Unknown && fit == null)
+            return null;
+        if (episode.ForecastGeometry == GeometryKind.Unknown && observedKind == MechanicKind.Unknown)
+            return null;
         ++mechanic.Forecasts;
         var kindMatches = episode.ForecastKind == MechanicKind.Unknown || observedKind == MechanicKind.Unknown || episode.ForecastKind == observedKind;
         var geometryMatches = episode.ForecastGeometry == GeometryKind.Unknown

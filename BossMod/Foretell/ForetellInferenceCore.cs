@@ -204,6 +204,26 @@ public static class ForetellInferenceCore
         };
     }
 
+    // Sparse encounter-defining signals must retain a small reserve beyond the ordinary per-frame semantic
+    // budget. In alliance raids, a fan-out of position/effect observations can otherwise consume the whole
+    // budget immediately before a boss cast arrives, even though the raw packet journal remains complete.
+    public static bool IsPrioritySemanticObservation(ObservationKind kind, SourceKind sourceKind)
+    {
+        // Player rotations are the dominant CastStart/ActionResolved traffic in a 24-player duty. They remain
+        // available through the ordinary budget, but must not consume the reserve intended for sparse boss casts.
+        if (kind is ObservationKind.CastStart or ObservationKind.ActionResolved)
+            return sourceKind is SourceKind.Enemy or SourceKind.EventObject or SourceKind.Environment;
+        return kind is ObservationKind.DutyStarted or ObservationKind.DutyWiped or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted
+            or ObservationKind.Icon or ObservationKind.TetherStart or ObservationKind.TetherEnd
+            or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
+            or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ObjectEffect
+            or ObservationKind.ActionTimelineEvent or ObservationKind.ActionTimelineSync or ObservationKind.NpcYell
+            or ObservationKind.TargetableChanged or ObservationKind.DeathChanged;
+    }
+
+    public static bool ShouldSurfaceUnshapedCast(float remainingSeconds)
+        => float.IsFinite(remainingSeconds) && remainingSeconds >= 2.5f;
+
     public static GuidanceKind GuidanceFor(MechanicKind kind) => kind switch
     {
         MechanicKind.GroundAOE or MechanicKind.TargetedAOE => GuidanceKind.Avoid,

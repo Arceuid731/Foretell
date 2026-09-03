@@ -301,7 +301,7 @@ public sealed partial class ForetellEngine
     {
         // Enrichment includes bounded reflection and sheet lookups, so it must be inside the callback budget rather
         // than paid before ProcessObservation gets a chance to reject a burst.
-        if (!TryEnterSemanticBudget())
+        if (!TryEnterSemanticBudget(ForetellInferenceCore.IsPrioritySemanticObservation(observation.Kind, observation.SourceKind)))
             return;
         var started = Stopwatch.GetTimestamp();
         try

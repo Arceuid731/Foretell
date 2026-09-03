@@ -90,7 +90,7 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Arena and prediction lifecycle stabilization from T364, T394 and T638 Analysis ZIPs.
+          Arena, rendering and alliance-raid telemetry stabilization from T364, T394, T638 and T174 Analysis ZIPs.
 
           - Rejects partial player-centered wall fans as arena boundaries, preventing the expanding blue radar polygon observed in Thornmarch and Urth's Fount.
           - Lets complete floor-topology scans handle open platforms and removes previously stored false arena boundaries during the schema-20 migration.
@@ -98,7 +98,11 @@ jobs:
           - Separates ordinary running from abrupt forced movement so delayed position samples cannot turn movement into a knockback hypothesis.
           - Retains an angle-less client cone as a learnable family and range, but withholds spatial drawing until outcome evidence determines its angle.
           - Extends outcome fitting through 330-degree cones, including the 270-degree family implicated by Biting Halberd in Containment Bay Z1T9.
-          - Advances learned-memory schema to 20 and adds deterministic regressions for partial wall fans, movement sampling and wide cones.
+          - Reserves semantic processing capacity for enemy casts and resolutions so 24-player position/action fan-out cannot hide sparse boss telegraphs such as Phlegethon's Ancient Flare.
+          - Keeps per-frame shedding local to the overloaded frame; only the sustained-frame watchdog now suspends optional VFX/topology ingestion.
+          - Surfaces long observed casts as text-only WATCH entries when client metadata cannot prove a spatial shape, without inventing world or radar geometry.
+          - Treats a fully avoided spatial prediction as unverified rather than false, and resets pre-20 validation counters whose reliability was contaminated by that rule or dropped signals.
+          - Advances learned-memory schema to 20 and adds deterministic regressions for partial wall fans, movement sampling, wide cones, priority signals and unshaped casts.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@

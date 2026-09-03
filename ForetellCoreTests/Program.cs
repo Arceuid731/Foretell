@@ -350,6 +350,12 @@ static class ForetellCoreTests
         Check.That(ForetellInferenceCore.TriggerForecastConfidence(6, 1, 2, 1) < .5f, "poor verified trigger retained excessive confidence");
         Check.That(!ForetellInferenceCore.IsAbruptDisplacement(3.6f, .6), "normal running became forced movement");
         Check.That(ForetellInferenceCore.IsAbruptDisplacement(5f, .25), "abrupt knockback was ignored");
+        Check.That(ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.CastStart, SourceKind.Enemy), "boss casts have no reserved semantic budget");
+        Check.That(ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.ActionResolved, SourceKind.Enemy), "enemy instant actions have no reserved semantic budget");
+        Check.That(!ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.CastStart, SourceKind.Player), "player casts can consume the boss reserve");
+        Check.That(!ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.ActionResolved, SourceKind.Pet), "pet actions can consume the boss reserve");
+        Check.That(!ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.PositionSample, SourceKind.Player), "position samples can consume the priority reserve");
+        Check.That(ForetellInferenceCore.ShouldSurfaceUnshapedCast(2.5f) && !ForetellInferenceCore.ShouldSurfaceUnshapedCast(2.49f), "unshaped cast visibility threshold is incorrect");
     }
 
     private static void GeometryValidationAndGuidance()
