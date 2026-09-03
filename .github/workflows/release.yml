@@ -90,13 +90,14 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Simplified Foretell presentation modes.
+          Emergency dense-combat performance hotfix.
 
-          - Removes the redundant Compare mode from the cockpit, settings, commands and documentation.
-          - Redefines Hybrid as the single combined validation mode: complete BossMod Reborn presentation and complete Foretell guidance are displayed together.
-          - Keeps Observe for silent Foretell learning with BMR guidance, Foretell for the adaptive presentation alone, and Legacy for BMR alone.
-          - Migrates both the former Compare setting and the short-lived former Hybrid setting to the new combined Hybrid mode without resetting other configuration.
-          - Adds a CI contract assertion preventing the redundant mode or reduced BMR presentation from returning accidentally.
+          - Prevents synchronous learned-memory saves and storage maintenance whenever the game reports active combat, including trash packs without telegraphed enemy casts.
+          - Adds a hard per-frame budget for semantic callbacks and their enrichment, shedding only derived live work while the bounded exact raw journal remains available for later replay.
+          - Caps live mechanic correlation at 64 episodes and simultaneous composite learning at 12 signals.
+          - Reduces individual generic event-enrichment slices from 1 ms to 0.25 ms.
+          - Makes native collision-topology probing an explicit opt-in and never runs it during combat; the normal circle/square radar and learned mechanic overlays remain active.
+          - Exposes semantic budget trips and shed observations in diagnostics and the telemetry cockpit.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@
