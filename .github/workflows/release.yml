@@ -90,15 +90,15 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Encounter-source correctness and automatic arena topology.
+          Player-relative radar and independently observed arena boundaries.
 
-          - Prevents player and pet casts, effects and buffs from creating or confirming learned encounter mechanics; party positions, displacements and deaths remain available for spatial inference.
-          - Correctly excludes minions/companions and admits only bound enemies, encounter objects and explicit environment channels as mechanic sources.
-          - Migrates learned memory schema 16 to remove existing player/pet/unbound mechanics, their dependent timeline/causal products and contaminated ML weights.
-          - Stops ambient logs, snapshots, raw windows and unrelated world operations from being attached to the nearest mechanic merely by timestamp.
-          - Renames the misleading boss bucket to Enemies & mechanic sources; ordinary encounter mobs remain valid sources when they emit mechanics.
-          - Makes collision topology automatic in duties: tiny pre-pull native probe slices, background managed analysis, remembered arena reuse during combat and a circle fallback until ready.
-          - Reduces the topology grid to 2-yalm resolution and four probes per frame while retaining a 48-yalm arena radius; native probes never execute during combat.
+          - Rotates the radar with the player, adds enemies, party members, the combat companion, range rings and a clear forward marker.
+          - Learns nearby room/arena outlines from bounded native collision probes outside combat and remembers them for later pulls.
+          - Never reads BMR BossModule arena definitions, layouts or state machines; Hybrid only displays BMR and Foretell side by side.
+          - Separates credible dungeon/raid bosses and their adds from ordinary trash and open-world mobs using observed collision plus generic actor health/size evidence.
+          - Prevents doors, keys, shortcuts, director state and raw control noise from becoming learned mechanics, and migrates contaminated schema-16 memory to schema 17.
+          - Adds one-click focused Knowledge Explorer export and per-boundary inspection/deletion.
+          - Replaces the expensive fallback topology sweep with a 64-ray wall scan and a coarser 36-yalm floor fallback; probes never execute during combat and retain the watchdog cooldown.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@
