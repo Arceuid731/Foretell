@@ -90,21 +90,19 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Data-complete, bounded and verified predictive pipeline.
+          Performance, prediction hygiene and combat-presentation hotfix.
 
-          Foretell now learns and forecasts from casts, icons, statuses, tethers, action timelines, ActorControl, event objects, map/director signals, NPC calls and native VFX paths. Repeated transitions are branch-aware and ambiguous branches abstain; stable simultaneous patterns forecast their remaining components. ActionEffect and exact GlobalSequence-linked EffectResult outcomes, movement, statuses and deaths validate issued forecasts.
+          - Fixes mismatched hook timestamps, false open-world/duty pull attribution and player/environment source collisions that polluted learned timelines and Likely next.
+          - Migrates affected derived memory while preserving reusable mechanic samples.
+          - Fixes radar placement against the real ImGui viewport and keeps it clamped on screen.
+          - Makes text guidance movable and action-oriented: AVOID, STACK, SPREAD, SOAK, LOOK AWAY, KNOCKBACK, RAIDWIDE and other useful instructions now use action or mechanic names instead of internal keys and hexadecimal fallbacks.
+          - Makes Compare and Hybrid distinct: Compare keeps the complete BMR and Foretell presentations; Hybrid makes Foretell primary while retaining only the legacy arena baseline.
+          - Removes periodic inventory/progression/cooldown sweeps from the combat path, reduces native snapshot cadence and actor traversal, and debounces collision-topology scans.
+          - Keeps exact compressed raw packets while moving expensive per-opcode structural analysis out of the live frame path and into Replay Lab.
+          - Keeps autosave outside combat, excludes the transient capability ledger from learned-memory JSON and hard-limits optional JSONL replay segments to 512 MiB.
+          - Adds typed snapshot, native actor, raw feature drain and topology timings to diagnostics for the next performance validation.
 
-          Evidence confidence is separated from verified guidance reliability. Hits, misses, Wilson lower bounds and Brier error prevent repetition alone from reaching warning/safe gates. Unstable target-relative offsets remain textual warnings instead of guessed world geometry. Learned causal edges improve outcome attribution.
-
-          Exact server/client IPC and ActorControl remain in rotating compressed journals. Bounded 250 ms windows now learn per-opcode lengths, byte stability, sequence hashes and protocol transitions while the original bytes stay intact. Replay Lab correlates every raw journal overlapping a session and restores live state after its isolated run.
-
-          Native coverage includes queued actor/static VFX paths and ObjectEffect, rotating Character snapshots with both tether slots and progress, timeline/model/transformation state, environment and camera state, plus a watchdog-protected collision sweep that learns reachable arena contours. ActionEffect bytes remain complete and EffectResult is linked by GlobalSequence.
-
-          The dedicated cockpit exposes a named content hierarchy, learned arenas, environment, bosses/mobs, mechanics, phases, timelines, simultaneous patterns, causal edges, raw protocol families and session/storage files. Each useful level has confirmed deletion. The movable radar supports Auto collision topology, circle or square frames, screen size and world-distance zoom. Optional retention/quota cleanup runs outside combat and protects active recordings and learned memory.
-
-          Packet callbacks only copy/enqueue raw evidence; compression and replay serialization stay off the game thread. Typed and native state use change detection, rotating slices, time/count budgets, bounded queues and persistent-memory limits. Autosave stays outside combat. The health dashboard reports every backlog, rejection, eviction, sensor failure and frame/topology timing instead of silently weakening completeness.
-
-          Loading and unloading are transactional, malformed timestamps/configuration/store/classifier data are normalized, native hook work is deferred, and corrupted or interrupted stores are preserved or recovered safely. Deterministic topology, raw replay/structure, corruption/fuzz, confidence/causality, geometry, storage safety, migration and non-finite classifier tests run in normal CI and again before release. CI also enforces the zero-knowledge boundary: no authored BossModule mechanics, state machines, layouts, presets or safe spots are imported.
+          CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@
           gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
 
