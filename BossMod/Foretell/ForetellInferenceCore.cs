@@ -77,13 +77,12 @@ public static class ForetellInferenceCore
         };
     }
 
-    // Converts an X/Z world offset to a player-up radar offset. Screen Y points down, so forward is negative Y.
-    public static Vector2 PlayerRelativeRadarOffset(Vector2 worldOffset, float playerRotation)
+    // Converts an X/Z world offset to a camera-up radar offset. Camera azimuth 0 looks north (-Z), while screen
+    // Y points down; this deliberately matches MiniArena's rotating-radar convention.
+    public static Vector2 CameraRelativeRadarOffset(Vector2 worldOffset, float cameraAzimuth)
     {
-        var (sin, cos) = MathF.SinCos(float.IsFinite(playerRotation) ? playerRotation : 0);
-        var side = worldOffset.X * cos - worldOffset.Y * sin;
-        var forward = worldOffset.X * sin + worldOffset.Y * cos;
-        return new(side, -forward);
+        var (sin, cos) = MathF.SinCos(float.IsFinite(cameraAzimuth) ? cameraAzimuth : 0);
+        return new(worldOffset.X * cos - worldOffset.Y * sin, worldOffset.Y * cos + worldOffset.X * sin);
     }
 
     public static float WilsonLowerBound(int successes, int attempts, double z = 1.96)

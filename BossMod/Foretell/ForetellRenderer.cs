@@ -357,7 +357,7 @@ public sealed partial class ForetellEngine
         if (!FiniteViewport(viewport)) return;
         var playerPos = V(player.Position);
         if (!FiniteVector(playerPos)) return;
-        var playerRotation = float.IsFinite(player.Rotation.Rad) ? player.Rotation.Rad : 0;
+        var cameraAzimuth = float.IsFinite(_ws.Client.CameraAzimuth.Rad) ? _ws.Client.CameraAzimuth.Rad : 0;
         var windowSize = new Vector2(size + 24, size + 62);
         var defaultPosition = viewportOrigin + new Vector2(Math.Max(8, viewport.X - windowSize.X - 22), 22);
         var savedPosition = _cfg.RadarPositionX >= 0 && _cfg.RadarPositionY >= 0
@@ -421,13 +421,13 @@ public sealed partial class ForetellEngine
             _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : $"Foretell radar · {shapeLabel} · {_cfg.RadarWorldRadius:F0}y");
         var scale = radius / MathF.Max(1, _cfg.RadarWorldRadius);
         if (arenaBoundary != null)
-            DrawArenaBoundaryRadarFrame(draw, center, radius, playerPos, playerRotation, scale, arenaBoundary);
+            DrawArenaBoundaryRadarFrame(draw, center, radius, playerPos, cameraAzimuth, scale, arenaBoundary);
         else if (topologyAvailable)
-            DrawTopologyRadarFrame(draw, center, radius, playerPos, playerRotation, scale);
+            DrawTopologyRadarFrame(draw, center, radius, playerPos, cameraAzimuth, scale);
         else
             DrawRadarFrame(draw, center, radius, shape);
         DrawRadarScale(draw, center, radius, scale);
-        DrawRadarActors(draw, player, playerPos, playerRotation, center, radius, scale);
+        DrawRadarActors(draw, player, playerPos, cameraAzimuth, center, radius, scale);
 
         var displayed = 0;
         foreach (var p in _predictions.Values.Where(ValidPrediction).OrderBy(p => p.Activation))
@@ -436,9 +436,9 @@ public sealed partial class ForetellEngine
                 continue;
             var col = ConfidenceColor(p.Confidence);
             var thickness = ConfidenceThickness(p.Confidence);
-            DrawRadarGeometry(draw, p, playerPos, playerRotation, center, scale, col, thickness);
-            DrawRadarGuidance(draw, p, playerPos, playerRotation, center, scale, col, thickness);
-            var c = RadarPoint(p.Origin, playerPos, playerRotation, center, scale);
+            DrawRadarGeometry(draw, p, playerPos, cameraAzimuth, center, scale, col, thickness);
+            DrawRadarGuidance(draw, p, playerPos, cameraAzimuth, center, scale, col, thickness);
+            var c = RadarPoint(p.Origin, playerPos, cameraAzimuth, center, scale);
             draw.AddText(c + new Vector2(5, -9), col, $"{p.Confidence:P0}");
         }
         DrawRadarPlayer(draw, center);
@@ -477,7 +477,7 @@ public sealed partial class ForetellEngine
     }
 
     private static void DrawArenaBoundaryRadarFrame(ImDrawListPtr draw, Vector2 center, float radius, Vector2 player,
-        float playerRotation, float scale, ArenaBoundaryAnalysis boundary)
+        float cameraAzimuth, float scale, ArenaBoundaryAnalysis boundary)
     {
         var min = center - new Vector2(radius);
         var max = center + new Vector2(radius);
@@ -485,13 +485,13 @@ public sealed partial class ForetellEngine
         draw.PushClipRect(min, max, true);
         try
         {
-            var origin = RadarPoint(boundary.Origin, player, playerRotation, center, scale);
+            var origin = RadarPoint(boundary.Origin, player, cameraAzimuth, center, scale);
             var color = boundary.ArenaLike ? Pack(80, 220, 175, 235) : Pack(90, 175, 235, 220);
             var fill = boundary.ArenaLike ? Pack(32, 85, 70, 72) : Pack(25, 55, 85, 62);
             for (var i = 0; i < boundary.Points.Count; ++i)
             {
-                var a = RadarPoint(boundary.Points[i], player, playerRotation, center, scale);
-                var b = RadarPoint(boundary.Points[(i + 1) % boundary.Points.Count], player, playerRotation, center, scale);
+                var a = RadarPoint(boundary.Points[i], player, cameraAzimuth, center, scale);
+                var b = RadarPoint(boundary.Points[(i + 1) % boundary.Points.Count], player, cameraAzimuth, center, scale);
                 draw.AddTriangleFilled(origin, a, b, fill);
                 draw.AddLine(a, b, color, 2f);
             }
@@ -510,10 +510,10 @@ public sealed partial class ForetellEngine
             draw.AddCircle(center, screenRadius, Pack(115, 135, 155, 65), 48, 1f);
             draw.AddText(center + new Vector2(3, -screenRadius + 2), Pack(165, 180, 195, 150), $"{distance:F0}y");
         }
-        draw.AddText(center + new Vector2(-26, -radius + 4), Pack(210, 220, 235, 190), "↑ forward");
+        draw.AddText(center + new Vector2(-26, -radius + 4), Pack(210, 220, 235, 190), "↑ camera");
     }
 
-    private void DrawRadarActors(ImDrawListPtr draw, Actor player, Vector2 playerPosition, float playerRotation,
+    private void DrawRadarActors(ImDrawListPtr draw, Actor player, Vector2 playerPosition, float cameraAzimuth,
         Vector2 center, float radarRadius, float scale)
     {
         var worldRadius = radarRadius / Math.Max(.01f, scale);
@@ -529,7 +529,7 @@ public sealed partial class ForetellEngine
             var world = V(actor.Position);
             if (!FiniteVector(world) || Vector2.DistanceSquared(world, playerPosition) > maxDistanceSq)
                 continue;
-            var position = RadarPoint(world, playerPosition, playerRotation, center, scale);
+            var position = RadarPoint(world, playerPosition, cameraAzimuth, center, scale);
             var boss = boundary != null && arenaSummary.HasBossCandidate && LiveArenaEnemy(actor, boundary)
                 && IsBossCandidate(actor, arenaSummary.MaximumHP, arenaSummary.PlayerMaximumHP);
             var color = boss ? Pack(255, 190, 55, 235) : actor.CastInfo != null ? Pack(255, 95, 80, 235) : Pack(225, 80, 90, 215);
@@ -549,7 +549,7 @@ public sealed partial class ForetellEngine
             var world = V(ally.Position);
             if (!FiniteVector(world) || Vector2.DistanceSquared(world, playerPosition) > maxDistanceSq)
                 continue;
-            draw.AddCircleFilled(RadarPoint(world, playerPosition, playerRotation, center, scale), 2.5f, Pack(75, 190, 245, 230), 16);
+            draw.AddCircleFilled(RadarPoint(world, playerPosition, cameraAzimuth, center, scale), 2.5f, Pack(75, 190, 245, 230), 16);
         }
 
         var companionID = _ws.Client.ActiveCompanion.InstanceID;
@@ -557,7 +557,7 @@ public sealed partial class ForetellEngine
         {
             var world = V(companion.Position);
             if (FiniteVector(world) && Vector2.DistanceSquared(world, playerPosition) <= maxDistanceSq)
-                draw.AddCircleFilled(RadarPoint(world, playerPosition, playerRotation, center, scale), 2.5f, Pack(95, 225, 135, 230), 16);
+                draw.AddCircleFilled(RadarPoint(world, playerPosition, cameraAzimuth, center, scale), 2.5f, Pack(95, 225, 135, 230), 16);
         }
     }
 
@@ -567,7 +567,7 @@ public sealed partial class ForetellEngine
         draw.AddTriangle(center + new Vector2(0, -8), center + new Vector2(-6, 6), center + new Vector2(6, 6), Pack(10, 12, 18, 245), 2f);
     }
 
-    private void DrawTopologyRadarFrame(ImDrawListPtr draw, Vector2 center, float radius, Vector2 player, float playerRotation, float scale)
+    private void DrawTopologyRadarFrame(ImDrawListPtr draw, Vector2 center, float radius, Vector2 player, float cameraAzimuth, float scale)
     {
         var min = center - new Vector2(radius);
         var max = center + new Vector2(radius);
@@ -582,8 +582,8 @@ public sealed partial class ForetellEngine
                     if (loop.Count < 2) continue;
                     for (var i = 0; i < loop.Count; ++i)
                     {
-                        var a = RadarPoint(loop[i], player, playerRotation, center, scale);
-                        var b = RadarPoint(loop[(i + 1) % loop.Count], player, playerRotation, center, scale);
+                        var a = RadarPoint(loop[i], player, cameraAzimuth, center, scale);
+                        var b = RadarPoint(loop[(i + 1) % loop.Count], player, cameraAzimuth, center, scale);
                         draw.AddLine(a, b, Pack(80, 220, 175, 230), 2f);
                     }
                 }
@@ -595,12 +595,12 @@ public sealed partial class ForetellEngine
         draw.AddLine(new(center.X, center.Y - radius), new(center.X, center.Y + radius), 0x354F5560u);
     }
 
-    private static Vector2 RadarPoint(Vector2 world, Vector2 player, float playerRotation, Vector2 center, float scale)
-        => center + ForetellInferenceCore.PlayerRelativeRadarOffset(world - player, playerRotation) * scale;
+    private static Vector2 RadarPoint(Vector2 world, Vector2 player, float cameraAzimuth, Vector2 center, float scale)
+        => center + ForetellInferenceCore.CameraRelativeRadarOffset(world - player, cameraAzimuth) * scale;
 
-    private static void DrawRadarGeometry(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float playerRotation, Vector2 center, float scale, uint color, float thickness)
+    private static void DrawRadarGeometry(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
     {
-        var o = RadarPoint(p.Origin, player, playerRotation, center, scale);
+        var o = RadarPoint(p.Origin, player, cameraAzimuth, center, scale);
         switch (p.Geometry)
         {
             case GeometryKind.Circle:
@@ -611,26 +611,26 @@ public sealed partial class ForetellEngine
                 draw.AddCircle(o, p.P2 * scale, color, 48, thickness);
                 break;
             case GeometryKind.Cone:
-                DrawRadarCone(draw, p, player, playerRotation, center, scale, color, thickness);
+                DrawRadarCone(draw, p, player, cameraAzimuth, center, scale, color, thickness);
                 break;
             case GeometryKind.Rectangle:
-                DrawRadarRect(draw, p.Origin, p.Rotation, p.P1, p.P2, player, playerRotation, center, scale, color, thickness);
+                DrawRadarRect(draw, p.Origin, p.Rotation, p.P1, p.P2, player, cameraAzimuth, center, scale, color, thickness);
                 break;
             case GeometryKind.Cross:
-                DrawRadarRect(draw, p.Origin, p.Rotation, p.P1, p.P2, player, playerRotation, center, scale, color, thickness);
-                DrawRadarRect(draw, p.Origin, p.Rotation + MathF.PI, p.P1, p.P2, player, playerRotation, center, scale, color, thickness);
-                DrawRadarRect(draw, p.Origin, p.Rotation + MathF.PI * .5f, p.P1, p.P2, player, playerRotation, center, scale, color, thickness);
-                DrawRadarRect(draw, p.Origin, p.Rotation - MathF.PI * .5f, p.P1, p.P2, player, playerRotation, center, scale, color, thickness);
+                DrawRadarRect(draw, p.Origin, p.Rotation, p.P1, p.P2, player, cameraAzimuth, center, scale, color, thickness);
+                DrawRadarRect(draw, p.Origin, p.Rotation + MathF.PI, p.P1, p.P2, player, cameraAzimuth, center, scale, color, thickness);
+                DrawRadarRect(draw, p.Origin, p.Rotation + MathF.PI * .5f, p.P1, p.P2, player, cameraAzimuth, center, scale, color, thickness);
+                DrawRadarRect(draw, p.Origin, p.Rotation - MathF.PI * .5f, p.P1, p.P2, player, cameraAzimuth, center, scale, color, thickness);
                 break;
         }
     }
 
-    private void DrawRadarGuidance(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float playerRotation, Vector2 center, float scale, uint color, float thickness)
+    private void DrawRadarGuidance(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
     {
         var targetActor = p.TargetID != 0 ? _ws.Actors.Find(p.TargetID) : null;
         var targetWorld = targetActor != null ? V(targetActor.Position) : p.Target;
-        var target = RadarPoint(targetWorld, player, playerRotation, center, scale);
-        var origin = RadarPoint(p.Origin, player, playerRotation, center, scale);
+        var target = RadarPoint(targetWorld, player, cameraAzimuth, center, scale);
+        var origin = RadarPoint(p.Origin, player, cameraAzimuth, center, scale);
         switch (p.Guidance)
         {
             case GuidanceKind.Stack:
@@ -670,16 +670,16 @@ public sealed partial class ForetellEngine
         }
     }
 
-    private static void DrawRadarCone(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float playerRotation, Vector2 center, float scale, uint color, float thickness)
+    private static void DrawRadarCone(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
     {
         const int n = 24;
-        var o = RadarPoint(p.Origin, player, playerRotation, center, scale);
+        var o = RadarPoint(p.Origin, player, cameraAzimuth, center, scale);
         Vector2 prev = default;
         for (var i = 0; i <= n; ++i)
         {
             var a = p.Rotation - p.P2 + 2 * p.P2 * i / n;
             var world = p.Origin + new Vector2(MathF.Sin(a), MathF.Cos(a)) * p.P1;
-            var q = RadarPoint(world, player, playerRotation, center, scale);
+            var q = RadarPoint(world, player, cameraAzimuth, center, scale);
             if (i == 0) draw.AddLine(o, q, color, thickness);
             else draw.AddLine(prev, q, color, thickness);
             if (i == n) draw.AddLine(q, o, color, thickness);
@@ -688,14 +688,14 @@ public sealed partial class ForetellEngine
     }
 
     private static void DrawRadarRect(ImDrawListPtr draw, Vector2 origin, float rot, float length, float halfWidth,
-        Vector2 player, float playerRotation, Vector2 center, float scale, uint color, float thickness)
+        Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
     {
         var f = new Vector2(MathF.Sin(rot), MathF.Cos(rot));
         var r = new Vector2(MathF.Cos(rot), -MathF.Sin(rot));
-        var a = RadarPoint(origin + r * halfWidth, player, playerRotation, center, scale);
-        var b = RadarPoint(origin - r * halfWidth, player, playerRotation, center, scale);
-        var c = RadarPoint(origin - r * halfWidth + f * length, player, playerRotation, center, scale);
-        var d = RadarPoint(origin + r * halfWidth + f * length, player, playerRotation, center, scale);
+        var a = RadarPoint(origin + r * halfWidth, player, cameraAzimuth, center, scale);
+        var b = RadarPoint(origin - r * halfWidth, player, cameraAzimuth, center, scale);
+        var c = RadarPoint(origin - r * halfWidth + f * length, player, cameraAzimuth, center, scale);
+        var d = RadarPoint(origin + r * halfWidth + f * length, player, cameraAzimuth, center, scale);
         draw.AddLine(a, b, color, thickness);
         draw.AddLine(b, c, color, thickness);
         draw.AddLine(c, d, color, thickness);

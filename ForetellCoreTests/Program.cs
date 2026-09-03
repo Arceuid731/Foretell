@@ -32,7 +32,7 @@ static class ForetellCoreTests
         CausalAndTimelineConfidence();
         GeometryValidationAndGuidance();
         MechanicSourcesExcludePartyActions();
-        RadarIsPlayerRelative();
+        RadarIsCameraRelative();
         OutOfCombatHazardContextIsScoped();
         StorageMaintenanceProtectsActiveFiles();
         Console.WriteLine("Foretell core tests passed.");
@@ -397,14 +397,14 @@ static class ForetellCoreTests
         Check.That(ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.DeathChanged, SourceKind.Player), "player death was lost as lethal evidence");
     }
 
-    private static void RadarIsPlayerRelative()
+    private static void RadarIsCameraRelative()
     {
-        var southFacing = ForetellInferenceCore.PlayerRelativeRadarOffset(new(0, 10), 0);
-        Check.That(Vector2.Distance(southFacing, new(0, -10)) < .001f, "south-facing forward was not radar-up");
-        var eastFacing = ForetellInferenceCore.PlayerRelativeRadarOffset(new(10, 0), MathF.PI * .5f);
-        Check.That(Vector2.Distance(eastFacing, new(0, -10)) < .001f, "east-facing forward was not radar-up");
-        var right = ForetellInferenceCore.PlayerRelativeRadarOffset(new(0, -10), MathF.PI * .5f);
-        Check.That(Vector2.Distance(right, new(10, 0)) < .001f, "player-relative right was not radar-right");
+        var northCamera = ForetellInferenceCore.CameraRelativeRadarOffset(new(0, -10), 0);
+        Check.That(Vector2.Distance(northCamera, new(0, -10)) < .001f, "north-facing camera was not radar-up");
+        var eastCamera = ForetellInferenceCore.CameraRelativeRadarOffset(new(10, 0), -MathF.PI * .5f);
+        Check.That(Vector2.Distance(eastCamera, new(0, -10)) < .001f, "east-facing camera was not radar-up");
+        var right = ForetellInferenceCore.CameraRelativeRadarOffset(new(10, 0), 0);
+        Check.That(Vector2.Distance(right, new(10, 0)) < .001f, "camera-relative right was not radar-right");
     }
 
     private static void StorageMaintenanceProtectsActiveFiles()

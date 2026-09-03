@@ -162,10 +162,10 @@ requirements = {
         "RadarWorldRadius",
         "MaxRenderedMechanics",
         "FiniteViewport(viewport)",
-        "PlayerRelativeRadarOffset",
+        "CameraRelativeRadarOffset",
         "DrawRadarActors",
         "DrawArenaBoundaryRadarFrame",
-        "↑ forward",
+        "↑ camera",
     ],
     "BossMod/Foretell/ForetellInspector.cs": [
         'DrawInspectorTab("Knowledge explorer", DrawKnowledgeExplorer)',
@@ -375,7 +375,7 @@ requirements = {
     ],
     "BossMod/Foretell/ForetellInferenceCore.cs": [
         "CanStartMechanicEpisode",
-        "PlayerRelativeRadarOffset",
+        "CameraRelativeRadarOffset",
         "WilsonLowerBound",
         "GuidanceConfidence",
         "CausalConfidence",
