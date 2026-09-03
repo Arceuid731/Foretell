@@ -95,13 +95,16 @@ public sealed partial class ForetellEngine
                         why = "CastType padded circle + EffectRange + actor hitbox";
                     }
                     break;
-                case 6: // meteor/proximity-like circle family; shape/range useful but semantic falloff may differ
+                case 6: // meteor/proximity/raidwide/line-of-sight family; EffectRange alone cannot prove guidance
                     if (effectRange > 0)
                     {
-                        geometry = GeometryKind.Circle;
+                        // Keep the observed family range as evidence, but do not turn it into an AVOID circle.
+                        // Ecliptic Meteor demonstrates why: its 100y range describes the affected arena, while
+                        // survival depends on line-of-sight rather than leaving that radius.
+                        geometry = GeometryKind.Unknown;
                         p1 = effectRange;
-                        confidence = .82f;
-                        why = "CastType meteor circle + EffectRange (falloff semantics unverified)";
+                        confidence = .72f;
+                        why = "CastType meteor/proximity/raidwide/line-of-sight family + EffectRange; spatial guidance requires outcome evidence";
                     }
                     break;
                 case 7: // ground-targeted circle / puddle family

@@ -99,8 +99,10 @@ jobs:
           - Retains an angle-less client cone as a learnable family and range, but withholds spatial drawing until outcome evidence determines its angle.
           - Extends outcome fitting through 330-degree cones, including the 270-degree family implicated by Biting Halberd in Containment Bay Z1T9.
           - Reserves semantic processing capacity for enemy casts and resolutions so 24-player position/action fan-out cannot hide sparse boss telegraphs such as Phlegethon's Ancient Flare.
+          - Protects sparse enemy status, target-VFX and model-state signals used by non-cast mechanics such as Thanatos's alliance-buff cycle.
           - Keeps per-frame shedding local to the overloaded frame; only the sustained-frame watchdog now suspends optional VFX/topology ingestion.
           - Surfaces long observed casts as text-only WATCH entries when client metadata cannot prove a spatial shape, without inventing world or radar geometry.
+          - Treats CastType 6 meteor/proximity/raidwide/line-of-sight actions as semantically ambiguous; Ecliptic Meteor is announced without an invented 100y AVOID circle.
           - Treats a fully avoided spatial prediction as unverified rather than false, and resets pre-20 validation counters whose reliability was contaminated by that rule or dropped signals.
           - Advances learned-memory schema to 20 and adds deterministic regressions for partial wall fans, movement sampling, wide cones, priority signals and unshaped casts.
 

@@ -354,6 +354,10 @@ static class ForetellCoreTests
         Check.That(ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.ActionResolved, SourceKind.Enemy), "enemy instant actions have no reserved semantic budget");
         Check.That(!ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.CastStart, SourceKind.Player), "player casts can consume the boss reserve");
         Check.That(!ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.ActionResolved, SourceKind.Pet), "pet actions can consume the boss reserve");
+        Check.That(ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.StatusGain, SourceKind.Enemy), "enemy status mechanics have no reserved semantic budget");
+        Check.That(ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.StatusGain, SourceKind.Unknown), "actorless encounter statuses have no reserved semantic budget");
+        Check.That(!ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.StatusGain, SourceKind.Player), "player buffs can consume the boss reserve");
+        Check.That(ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.VFX, SourceKind.Enemy), "sparse target VFX have no reserved semantic budget");
         Check.That(!ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.PositionSample, SourceKind.Player), "position samples can consume the priority reserve");
         Check.That(ForetellInferenceCore.ShouldSurfaceUnshapedCast(2.5f) && !ForetellInferenceCore.ShouldSurfaceUnshapedCast(2.49f), "unshaped cast visibility threshold is incorrect");
     }

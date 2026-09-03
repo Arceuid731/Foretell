@@ -213,12 +213,16 @@ public static class ForetellInferenceCore
         // available through the ordinary budget, but must not consume the reserve intended for sparse boss casts.
         if (kind is ObservationKind.CastStart or ObservationKind.ActionResolved)
             return sourceKind is SourceKind.Enemy or SourceKind.EventObject or SourceKind.Environment;
+        // Some encounter statuses intentionally have no source actor (for example alliance eligibility/state
+        // effects), so Unknown must remain eligible here. Self/party buffs still stay on the ordinary budget.
+        if (kind is ObservationKind.StatusGain or ObservationKind.StatusLose)
+            return sourceKind is not SourceKind.Player and not SourceKind.Pet;
         return kind is ObservationKind.DutyStarted or ObservationKind.DutyWiped or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted
-            or ObservationKind.Icon or ObservationKind.TetherStart or ObservationKind.TetherEnd
+            or ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart or ObservationKind.TetherEnd
             or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
             or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ObjectEffect
             or ObservationKind.ActionTimelineEvent or ObservationKind.ActionTimelineSync or ObservationKind.NpcYell
-            or ObservationKind.TargetableChanged or ObservationKind.DeathChanged;
+            or ObservationKind.TargetableChanged or ObservationKind.DeathChanged or ObservationKind.ModelStateChanged;
     }
 
     public static bool ShouldSurfaceUnshapedCast(float remainingSeconds)
