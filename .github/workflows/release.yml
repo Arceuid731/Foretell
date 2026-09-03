@@ -90,17 +90,13 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Out-of-combat hazard learning, user-managed signal filters and open-world performance update.
+          Simplified Foretell presentation modes.
 
-          - Learns recurring casts, map effects, VFX, tethers and other hazards that occur while FFXIV reports the player as out of combat.
-          - Keeps those hazards in a dedicated Out-of-combat hazards timeline instead of mixing them with boss phases or inventing combat pulls.
-          - Ends duty pull state as soon as the game's InCombat condition clears, preventing unrelated packs and corridor mechanics from being linked together.
-          - Adds an Ignore action to readable timeline signals. Ignored signals stop triggering predictive learning and overlays for that territory while raw capture and diagnostics remain intact.
-          - Makes exclusions persistent, restorable and portable through foretell-signal-filters.json, with bounded and validated import/merge support.
-          - Keeps player and alliance position sampling at 4 Hz and adds the active combat chocobo to the same lightweight positional model.
-          - Removes stale former-party position tracks so they cannot contaminate later mechanic participant sets.
-          - Limits expensive native actor snapshots to 120 yalms unless the actor is casting, engaged, targeting the party or was prioritized by an exact event. Exact semantic and raw events remain distance-independent.
-          - Separates combat and out-of-combat forecast resolution so identical signals cannot validate predictions from the wrong context.
+          - Removes the redundant Compare mode from the cockpit, settings, commands and documentation.
+          - Redefines Hybrid as the single combined validation mode: complete BossMod Reborn presentation and complete Foretell guidance are displayed together.
+          - Keeps Observe for silent Foretell learning with BMR guidance, Foretell for the adaptive presentation alone, and Legacy for BMR alone.
+          - Migrates both the former Compare setting and the short-lived former Hybrid setting to the new combined Hybrid mode without resetting other configuration.
+          - Adds a CI contract assertion preventing the redundant mode or reduced BMR presentation from returning accidentally.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@
