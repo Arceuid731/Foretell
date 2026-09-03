@@ -90,12 +90,14 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Camera-relative radar hotfix.
+          Complete post-duty analysis bundle.
 
-          - Rotates the complete Foretell radar with the live camera azimuth instead of the character facing direction.
-          - Uses the same north/east/south/west convention as BMR MiniArena, so camera-forward is always radar-up without a 180-degree inversion.
-          - Applies the camera transform consistently to learned arena boundaries, floor topology, enemies, allies, predictions and guidance geometry.
-          - Renames the radar orientation marker to camera and adds deterministic north/east/right transform coverage.
+          - Adds a one-click Analysis ZIP per learned duty/content in Knowledge explorer.
+          - Packages matching sealed raw journals, the complete learned encounter snapshot, settings and runtime/capture health in the background.
+          - Persists a bounded semantic audit for Detected, Proposed, Classified, Verified and Expired decisions, including geometry, confidence, labels and display eligibility.
+          - Includes the optional readable replay when enabled and safely closed, while keeping the exact compressed raw journal authoritative.
+          - Detects the raw file actually held by the background writer so an active gzip is never silently presented as a complete archive.
+          - Advances learned-memory schema to 18 with safe migration and bounded audit retention.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@

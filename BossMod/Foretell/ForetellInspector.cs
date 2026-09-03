@@ -464,7 +464,7 @@ public sealed partial class ForetellEngine
             : name;
         var open = ImGui.TreeNodeEx($"{label}##knowledge-territory-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth);
         ImGui.SameLine();
-        if (ImGui.Button($"Export##export-territory-{encounter.TerritoryID}"))
+        if (ImGui.Button($"Export JSON##export-territory-{encounter.TerritoryID}"))
         {
             try
             {
@@ -474,6 +474,17 @@ public sealed partial class ForetellEngine
             catch (Exception e) { Service.ChatGui.PrintError($"Foretell content export failed: {e.Message}"); }
         }
         ImGui.SameLine();
+        var bundleRunning = _analysisBundleTask is { IsCompleted: false };
+        ImGui.BeginDisabled(bundleRunning);
+        if (ImGui.Button($"Analysis ZIP##analysis-territory-{encounter.TerritoryID}"))
+        {
+            try { StartAnalysisBundleExport(encounter); }
+            catch (Exception e) { Service.ChatGui.PrintError($"Foretell analysis bundle failed: {e.Message}"); }
+        }
+        ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("After leaving the duty, packages the sealed raw journal, learned content and the complete semantic decision audit into one shareable ZIP.");
+        ImGui.SameLine();
         if (ImGui.Button($"Delete##delete-territory-{encounter.TerritoryID}"))
             RequestPurge(name, $"Delete this territory/content, its sources, mechanics, timelines and session history?", () => PurgeEncounter(encounter.TerritoryID));
         if (!open)
@@ -482,6 +493,10 @@ public sealed partial class ForetellEngine
         ImGui.TextDisabled($"Territory {encounter.TerritoryID} | duty {encounter.ContentFinderConditionID} | {encounter.Sessions} sessions | {encounter.Pulls} pulls | {encounter.Mechanics.Count} mechanics");
         if (!string.IsNullOrWhiteSpace(_knowledgeExportPath))
             ImGui.TextDisabled($"Latest focused export: {_knowledgeExportPath}");
+        if (!string.IsNullOrWhiteSpace(_analysisBundleStatus))
+            ImGui.TextDisabled($"Analysis bundle: {_analysisBundleStatus}");
+        if (!string.IsNullOrWhiteSpace(_analysisBundlePath))
+            ImGui.TextDisabled($"Latest analysis ZIP: {_analysisBundlePath}");
 
         if (encounter.ArenaBoundaries.Count > 0 && ImGui.TreeNodeEx($"Observed room / arena boundaries  ({encounter.ArenaBoundaries.Count} states)##boundaries-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
         {
@@ -1104,8 +1119,10 @@ public sealed partial class ForetellEngine
         _lastStorageRefresh = DateTime.UtcNow;
         try
         {
+            var writerPath = _raw.ActivePath;
             _storageFiles = Directory.EnumerateFiles(_rawDir, "*.ftraw.gz").Take(5000)
-                .Select(path => StorageEntry(path, "Raw", string.Equals(path, _rawPath, StringComparison.OrdinalIgnoreCase)))
+                .Select(path => StorageEntry(path, "Raw", string.Equals(path, _rawPath, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(path, writerPath, StringComparison.OrdinalIgnoreCase)))
                 .Concat(Directory.EnumerateFiles(_replayDir, "*.jsonl").Take(5000).Select(path => StorageEntry(path, "Replay", string.Equals(path, _replayPath, StringComparison.OrdinalIgnoreCase))))
                 .OrderByDescending(file => file.Updated).Take(5000).ToList();
         }

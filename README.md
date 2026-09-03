@@ -20,6 +20,8 @@ For cast actions, Foretell also consumes useful local FFXIV client metadata as a
 
 The dedicated in-game cockpit provides Dashboard, Knowledge explorer, Timeline, Live feed, Replay & storage, Settings and Help tabs. The Knowledge explorer is organized as content category → territory/duty → arena/environment/source → mechanic, with confirmed deletion at every useful level. It also exposes learned causal links, raw protocol families, phase transitions and simultaneous patterns individually.
 
+After leaving a duty, expand that content in **Knowledge explorer** and click **Analysis ZIP**. Foretell creates one shareable archive containing the matching sealed raw journal(s), the full learned encounter snapshot, configuration and health counters, plus a bounded decision audit from accepted trigger through proposed prediction, classification and verification/expiry. The optional readable JSONL replay is included when it was enabled and is safely closed; it is not required for the bundle to contain the authoritative raw input and semantic decisions.
+
 ## Confidence visualization
 
 Foretell separates evidence confidence from verified guidance reliability. A candidate can therefore remain inspectable without being allowed into warning or safe-position gates. After forecasts resolve, a conservative lower confidence bound and prediction error update the guidance score. The actual inferred circle, donut, cone, rectangle or cross is drawn with a color that represents **verified reliability**, not damage severity:
@@ -66,6 +68,8 @@ Foretell can record a compact normalized event stream locally. Independently of 
 The storage page can delete individual inactive recordings or apply a retention/quota cleanup. Automatic cleanup is opt-in, runs outside combat on a background worker, and never deletes the active journal or learned memory.
 
 This makes recorded pulls reusable as a regression corpus while the inference engine evolves.
+
+The standalone `.ftraw.gz` is intentionally only the exact transport/ActorControl layer. It is excellent for protocol reconstruction and traffic/load analysis, but it does not by itself say what Foretell classified or chose to present. Use **Analysis ZIP** for future post-run reports instead of manually gathering raw, knowledge and diagnostics files.
 
 ## Safety and privacy
 

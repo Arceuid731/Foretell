@@ -150,6 +150,7 @@ public sealed partial class ForetellEngine
             _timelineForecasts.Remove(forecast.ID);
             _predictions.Remove(forecast.ID);
         }
+        _store.DecisionAudit.RemoveAll(entry => entry.TerritoryID == territoryID && entry.SignalKey == key);
 
         RemoveOrphanGlobalKnowledge(mechanic.TriggerID);
     }
@@ -161,6 +162,7 @@ public sealed partial class ForetellEngine
         foreach (var key in encounter.Mechanics.Where(kv => kv.Value.SourceOID == sourceOID).Select(kv => kv.Key).ToArray())
             PurgeMechanic(territoryID, key);
         encounter.Sources.Remove(sourceOID);
+        _store.DecisionAudit.RemoveAll(entry => entry.TerritoryID == territoryID && entry.SourceOID == sourceOID);
 
         var prefix = $"{sourceOID:X}:";
         foreach (var edgeKey in encounter.Timeline.Where(kv => kv.Value.From.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || kv.Value.To.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)).Select(kv => kv.Key).ToArray())
@@ -187,6 +189,7 @@ public sealed partial class ForetellEngine
             return;
         var actionIDs = encounter.Mechanics.Values.Select(mechanic => mechanic.TriggerID).Where(id => id != 0).Distinct().ToArray();
         _store.Sessions.RemoveAll(session => session.TerritoryID == territoryID);
+        _store.DecisionAudit.RemoveAll(entry => entry.TerritoryID == territoryID);
 
         if (territoryID == _territory)
         {
@@ -314,6 +317,7 @@ public sealed partial class ForetellEngine
             _timelineForecasts.Remove(forecast.ID);
             _predictions.Remove(forecast.ID);
         }
+        _store.DecisionAudit.RemoveAll(entry => entry.TerritoryID == territoryID && entry.SignalKey == signal);
         if (_previousSignal == signal)
         {
             _previousSignal = "";
@@ -375,7 +379,10 @@ public sealed partial class ForetellEngine
     }
 
     private void PurgeSession(string sessionID)
-        => _store.Sessions.RemoveAll(session => string.Equals(session.SessionID, sessionID, StringComparison.Ordinal));
+    {
+        _store.Sessions.RemoveAll(session => string.Equals(session.SessionID, sessionID, StringComparison.Ordinal));
+        _store.DecisionAudit.RemoveAll(entry => string.Equals(entry.SessionID, sessionID, StringComparison.Ordinal));
+    }
 
     private void PurgeArenaBoundary(uint territoryID, string fingerprint)
     {
@@ -393,6 +400,7 @@ public sealed partial class ForetellEngine
         if (!fullPath.StartsWith(rawRoot, StringComparison.OrdinalIgnoreCase) && !fullPath.StartsWith(replayRoot, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("path is outside Foretell storage");
         if (string.Equals(fullPath, Path.GetFullPath(_rawPath), StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrEmpty(_raw.ActivePath) && string.Equals(fullPath, Path.GetFullPath(_raw.ActivePath), StringComparison.OrdinalIgnoreCase))
             || string.Equals(fullPath, Path.GetFullPath(_replayPath), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("active recording cannot be deleted");
         File.Delete(fullPath);

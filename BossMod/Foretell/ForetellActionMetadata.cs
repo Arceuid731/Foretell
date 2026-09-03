@@ -250,9 +250,10 @@ public sealed partial class ForetellEngine
             }
         }
 
-        _predictions[trigger.Sequence] = new(trigger.ActorID, trigger.PrimaryID, geometry, MechanicKind.GroundAOE,
+        var prediction = new ActivePrediction(trigger.ActorID, trigger.PrimaryID, geometry, MechanicKind.GroundAOE,
             origin, target, trigger.Rotation, p1, p2, trigger.At.AddSeconds(float.IsFinite(trigger.Value1) ? Math.Clamp(trigger.Value1, 0, 120) : 0), confidence, p.Evidence,
             SignalKey(trigger), trigger.TargetID, GuidanceKind.Avoid, false, LookupActionName(trigger.PrimaryID) ?? $"Action 0x{trigger.PrimaryID:X}");
+        StorePrediction(trigger.Sequence, prediction, trigger);
         if (_episodes.GetValueOrDefault(trigger.Sequence) is { } episode)
         {
             episode.ForecastIssued = true;

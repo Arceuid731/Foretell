@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Numerics;
+using System.Text.Json;
 using BossMod.Foretell;
 
 static class Check
@@ -35,6 +36,7 @@ static class ForetellCoreTests
         RadarIsCameraRelative();
         OutOfCombatHazardContextIsScoped();
         StorageMaintenanceProtectsActiveFiles();
+        DecisionAuditRoundTrip();
         Console.WriteLine("Foretell core tests passed.");
     }
 
@@ -439,5 +441,36 @@ static class ForetellCoreTests
             Check.That(File.Exists(active), "quota cleanup deleted the protected active recording");
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    private static void DecisionAuditRoundTrip()
+    {
+        var store = new ForetellStore();
+        store.DecisionAudit.Add(new()
+        {
+            At = DateTime.UtcNow,
+            Activation = DateTime.UtcNow.AddSeconds(2),
+            SessionID = "test-session",
+            TerritoryID = 192,
+            PredictionID = 42,
+            Stage = DecisionAuditStage.Proposed,
+            SignalKey = "CastStart:123",
+            TriggerKind = ObservationKind.CastStart,
+            SourceKind = SourceKind.Enemy,
+            SourceOID = 0xBEEF,
+            Mechanic = MechanicKind.GroundAOE,
+            Geometry = GeometryKind.Cone,
+            Guidance = GuidanceKind.Avoid,
+            P1 = 20,
+            P2 = .5f,
+            Confidence = .91f,
+            DisplayEligible = true,
+            Label = "Test cone"
+        });
+        var copy = JsonSerializer.Deserialize<ForetellStore>(JsonSerializer.Serialize(store));
+        Check.That(copy?.Schema == 18 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
+        var entry = copy!.DecisionAudit[0];
+        Check.That(entry.Stage == DecisionAuditStage.Proposed && entry.Geometry == GeometryKind.Cone
+            && entry.DisplayEligible && entry.SessionID == "test-session", "decision audit fields did not round-trip");
     }
 }

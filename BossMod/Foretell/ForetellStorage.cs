@@ -7,7 +7,7 @@ public sealed partial class ForetellEngine
         _lastStorageMaintenance = DateTime.UtcNow;
         var rawDirectory = _rawDir;
         var replayDirectory = _replayDir;
-        var protectedPaths = new[] { _rawPath, _replayPath };
+        var protectedPaths = new[] { _rawPath, _raw.ActivePath, _replayPath };
         var retentionDays = _cfg.RecordingRetentionDays;
         var maximumBytes = Math.Clamp((long)_cfg.MaximumRecordingStorageGiB, 1, 1000) * 1024 * 1024 * 1024;
         _storageMaintenanceTask = Task.Run(() => ForetellStorageMaintenance.Run(rawDirectory, replayDirectory, protectedPaths,

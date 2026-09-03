@@ -29,6 +29,8 @@ public enum ObservationKind
 
 public enum SourceKind { Unknown, Player, Pet, Enemy, EventObject, Environment }
 
+public enum DecisionAuditStage { Detected, Proposed, Classified, Verified, Expired }
+
 public sealed class DataCapability
 {
     public string Key { get; set; } = "";
@@ -323,6 +325,40 @@ public sealed class SessionSummary
     public string ReplayFile { get; set; } = "";
 }
 
+// Compact, bounded audit trail for the semantic path that cannot be reconstructed from raw transport alone.
+// This records decisions, not every observation: exact incoming bytes remain in the compressed raw journal.
+public sealed class DecisionAuditEntry
+{
+    public DateTime At { get; set; }
+    public DateTime Activation { get; set; }
+    public string SessionID { get; set; } = "";
+    public uint TerritoryID { get; set; }
+    public long PredictionID { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public DecisionAuditStage Stage { get; set; }
+    public string SignalKey { get; set; } = "";
+    [JsonConverter(typeof(JsonStringEnumConverter))] public ObservationKind TriggerKind { get; set; }
+    public uint TriggerID { get; set; }
+    public string TriggerDetail { get; set; } = "";
+    [JsonConverter(typeof(JsonStringEnumConverter))] public SourceKind SourceKind { get; set; }
+    public uint SourceOID { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public MechanicKind Mechanic { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public GeometryKind Geometry { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public GuidanceKind Guidance { get; set; }
+    public float P1 { get; set; }
+    public float P2 { get; set; }
+    public float OriginX { get; set; }
+    public float OriginZ { get; set; }
+    public float TargetX { get; set; }
+    public float TargetZ { get; set; }
+    public float Rotation { get; set; }
+    public float Confidence { get; set; }
+    public bool Anticipated { get; set; }
+    public bool DisplayEligible { get; set; }
+    public bool? Verified { get; set; }
+    public string Label { get; set; } = "";
+    public string Evidence { get; set; } = "";
+}
+
 public sealed class EncounterMemory
 {
     public uint TerritoryID { get; set; }
@@ -409,11 +445,12 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 17;
+    public int Schema { get; set; } = 18;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
     public List<SessionSummary> Sessions { get; set; } = [];
+    public List<DecisionAuditEntry> DecisionAudit { get; set; } = [];
     public MLState ML { get; set; } = new();
     public DataCoverage Coverage { get; set; } = new();
 }

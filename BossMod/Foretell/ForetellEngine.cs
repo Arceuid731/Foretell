@@ -304,6 +304,7 @@ public sealed partial class ForetellEngine : IDisposable
             DrainNativeCaptures();
         }
         PollStorageMaintenance();
+        PollAnalysisBundleExport();
         if (!PerformanceThrottled)
             SampleNativeTopology();
         RefreshLearnedArenaSourceContext();
@@ -630,11 +631,12 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 17);
+        _store.Schema = Math.Max(_store.Schema, 18);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
         _store.Sessions ??= [];
+        _store.DecisionAudit ??= [];
         _store.ML ??= new();
         _store.Coverage ??= new();
         _store.Coverage.Items ??= [];
@@ -652,6 +654,25 @@ public sealed partial class ForetellEngine : IDisposable
             foreach (var key in _store.Coverage.Items.OrderByDescending(item => item.Value.Seen).Skip(65536).Select(item => item.Key).ToArray()) _store.Coverage.Items.Remove(key);
         _store.Sessions.RemoveAll(session => session == null);
         if (_store.Sessions.Count > 100) _store.Sessions = _store.Sessions.OrderByDescending(session => session.Started).Take(100).OrderBy(session => session.Started).ToList();
+        _store.DecisionAudit.RemoveAll(entry => entry == null);
+        foreach (var entry in _store.DecisionAudit)
+        {
+            entry.SessionID ??= "";
+            entry.SignalKey ??= "";
+            entry.TriggerDetail ??= "";
+            entry.Label ??= "";
+            entry.Evidence ??= "";
+            entry.P1 = Finite(entry.P1, 0, 0, 10000);
+            entry.P2 = Finite(entry.P2, 0, 0, 10000);
+            entry.OriginX = Finite(entry.OriginX, 0, -100000, 100000);
+            entry.OriginZ = Finite(entry.OriginZ, 0, -100000, 100000);
+            entry.TargetX = Finite(entry.TargetX, 0, -100000, 100000);
+            entry.TargetZ = Finite(entry.TargetZ, 0, -100000, 100000);
+            entry.Rotation = Finite(entry.Rotation, 0, -1000, 1000);
+            entry.Confidence = Finite(entry.Confidence, 0, 0, 1);
+        }
+        if (_store.DecisionAudit.Count > 8192)
+            _store.DecisionAudit = _store.DecisionAudit.OrderByDescending(entry => entry.At).Take(8192).OrderBy(entry => entry.At).ToList();
 
         var migratedInvalidActions = new HashSet<uint>();
         var migratedInvalidMechanics = 0;

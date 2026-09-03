@@ -30,6 +30,7 @@ internal sealed class ForetellRawWriter : IDisposable
     private int _disposed;
     private int _failed;
     private string _failure = "";
+    private string _activePath = "";
 
     public long PendingItems => Interlocked.Read(ref _pendingItems);
     public long PendingBytes => Interlocked.Read(ref _pendingBytes);
@@ -40,6 +41,7 @@ internal sealed class ForetellRawWriter : IDisposable
     public long RejectedFeatureWindows => Interlocked.Read(ref _rejectedFeatureWindows);
     public bool Failed => Volatile.Read(ref _failed) != 0;
     public string Failure => _failure;
+    public string ActivePath => Volatile.Read(ref _activePath);
 
     public ForetellRawWriter()
     {
@@ -144,6 +146,7 @@ internal sealed class ForetellRawWriter : IDisposable
                     gzip = new(file, CompressionLevel.Fastest, leaveOpen: true);
                     writer = new(gzip, System.Text.Encoding.UTF8, leaveOpen: true);
                     ForetellRawFormat.WriteHeader(writer);
+                    Volatile.Write(ref _activePath, path);
                 }
 
                 ForetellRawFormat.Write(writer, item.Record);
@@ -179,6 +182,7 @@ internal sealed class ForetellRawWriter : IDisposable
             writer?.Dispose();
             gzip?.Dispose();
             file?.Dispose();
+            Volatile.Write(ref _activePath, "");
         }
     }
 
