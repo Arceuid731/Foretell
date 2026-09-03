@@ -345,15 +345,29 @@ public sealed partial class ForetellEngine
 
     private void SamplePartyPositions()
     {
+        _activePositionTrackIDs.Clear();
         for (var slot = 0; slot < PartyState.MaxAllies; ++slot)
         {
             var player = _ws.Party[slot];
-            if (player == null || player.IsDead)
+            if (player == null)
+                continue;
+            _activePositionTrackIDs.Add(player.InstanceID);
+            if (player.IsDead)
                 continue;
             var category = player.ClassCategory;
             var obs = Observation(ObservationKind.PositionSample, player, secondary: (uint)category, detail: category.ToString());
             ProcessObservation(obs, enriched: true);
         }
+
+        var companionID = _ws.Client.ActiveCompanion.InstanceID;
+        if (companionID != 0 && _ws.Actors.Find(companionID) is { IsDead: false } companion)
+        {
+            _activePositionTrackIDs.Add(companionID);
+            ProcessObservation(Observation(ObservationKind.PositionSample, companion, detail: "Combat chocobo"), enriched: true);
+        }
+
+        foreach (var staleID in _tracks.Keys.Where(id => !_activePositionTrackIDs.Contains(id)).ToArray())
+            _tracks.Remove(staleID);
     }
 
     private static void StoreActorControlFields(ForetellObservation obs, NetworkState.RawActorControl control)

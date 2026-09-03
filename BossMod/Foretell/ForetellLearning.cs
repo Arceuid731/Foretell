@@ -45,13 +45,17 @@ public sealed partial class ForetellEngine
             return;
         }
 
-        if (IsCombatSignal(observation))
+        var excludedSignal = encounter != null && IsSignalExcluded(encounter, observation);
+        if (!excludedSignal && IsCombatSignal(observation))
             TouchPull(encounter, observation);
 
-        LearnPhaseBoundary(observation);
+        if (!excludedSignal)
+            LearnPhaseBoundary(observation);
 
         var lifecycleSignal = observation.Kind is ObservationKind.DutyStarted or ObservationKind.DutyWiped or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted;
-        if (IsPredictiveTimelineSignal(observation) && (_inPull || lifecycleSignal))
+        var timelineContext = !excludedSignal && IsPredictiveTimelineSignal(observation)
+            && (_inPull || lifecycleSignal || TouchOutOfCombatHazardContext(observation));
+        if (timelineContext)
         {
             if (encounter != null)
                 ResolveTimelineForecasts(encounter, observation);
@@ -66,11 +70,11 @@ public sealed partial class ForetellEngine
             }
         }
 
-        var correlated = CorrelateObservation(observation);
-        var mayStartEpisode = IsEpisodeTrigger(observation) && (observation.Kind != ObservationKind.SystemLog || _inPull);
-        if (observation.Kind == ObservationKind.CastStart || (mayStartEpisode && correlated == null))
+        var correlated = excludedSignal ? null : CorrelateObservation(observation);
+        var mayStartEpisode = !excludedSignal && IsEpisodeTrigger(observation) && (observation.Kind != ObservationKind.SystemLog || _inPull);
+        if (!excludedSignal && (observation.Kind == ObservationKind.CastStart || (mayStartEpisode && correlated == null)))
             StartEpisode(observation, encounter);
-        if (observation.Kind == ObservationKind.CastStart)
+        if (!excludedSignal && observation.Kind == ObservationKind.CastStart)
             ApplyActionMetadataPrior(observation);
         AccumulateDataFeatures(observation, correlated);
 
@@ -185,6 +189,7 @@ public sealed partial class ForetellEngine
         if (!_inPull || (!inDuty && (observation.At - _lastCombatSignal).TotalSeconds > 30))
         {
             _inPull = true;
+            ResetHazardContext(cancelForecasts: true);
             _pullStartedAt = observation.At;
             ++_session.Pulls;
             if (_cfg.EnableLearning && encounter != null)
@@ -198,6 +203,76 @@ public sealed partial class ForetellEngine
         }
         _lastCombatSignal = observation.At;
     }
+
+    private int CurrentTimelinePhase => ForetellInferenceCore.TimelinePhase(_inPull, _session.Phase);
+
+    private int TimelinePhaseFor(ForetellObservation observation)
+        => observation.Kind is ObservationKind.DutyStarted or ObservationKind.DutyWiped or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted
+            ? 0
+            : CurrentTimelinePhase;
+
+    private void EndCombatPull()
+    {
+        if (!_inPull) return;
+        _inPull = false;
+        _pullStartedAt = default;
+        _lastCombatSignal = default;
+        _session.Phase = 0;
+        _previousSignal = "";
+        _previousSignalTime = default;
+        _lastPhaseBoundary = default;
+        _lastPhaseBoundarySignal = "";
+        _untargetableSince.Clear();
+        _phaseBoundariesThisPull.Clear();
+        _phaseTopologyFingerprint = "";
+        foreach (var phase in _timelineForecasts.Values.Where(item => item.Phase >= 0).Select(item => item.Phase).Distinct().ToArray())
+            CancelTimelineForecasts(phase);
+    }
+
+    private bool TouchOutOfCombatHazardContext(ForetellObservation observation)
+    {
+        if (_inPull || !ForetellInferenceCore.OpensOutOfCombatHazardContext(observation.Kind, observation.SourceKind, observation.ActorID, observation.TargetID))
+            return false;
+        if (_hazardContextUntil == default || observation.At > _hazardContextUntil)
+        {
+            _previousSignal = "";
+            _previousSignalTime = default;
+            CancelTimelineForecasts(ForetellInferenceCore.OutOfCombatHazardPhase);
+        }
+        _hazardContextUntil = observation.At.AddSeconds(30);
+        return true;
+    }
+
+    private void ExpireHazardContext(DateTime now)
+    {
+        if (_inPull || _hazardContextUntil == default || now <= _hazardContextUntil)
+            return;
+        ResetHazardContext(cancelForecasts: true);
+    }
+
+    private void ResetHazardContext(bool cancelForecasts)
+    {
+        _hazardContextUntil = default;
+        if (!_inPull)
+        {
+            _previousSignal = "";
+            _previousSignalTime = default;
+        }
+        if (cancelForecasts)
+            CancelTimelineForecasts(ForetellInferenceCore.OutOfCombatHazardPhase);
+    }
+
+    private void CancelTimelineForecasts(int phase)
+    {
+        foreach (var forecast in _timelineForecasts.Values.Where(item => item.Phase == phase).ToArray())
+        {
+            _timelineForecasts.Remove(forecast.ID);
+            _predictions.Remove(forecast.ID);
+        }
+    }
+
+    private static bool IsSignalExcluded(EncounterMemory encounter, ForetellObservation observation)
+        => encounter.ExcludedSignals.ContainsKey(SignalKey(observation));
 
     private static bool IsCombatSignal(ForetellObservation observation)
         => (observation.Kind != ObservationKind.NativeVFXSpawn || observation.ActorID != 0 || observation.TargetID != 0)
@@ -225,15 +300,8 @@ public sealed partial class ForetellEngine
     {
         if (observation.Kind is ObservationKind.DutyStarted or ObservationKind.DutyWiped or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted)
         {
-            _inPull = false;
-            _pullStartedAt = default;
-            _session.Phase = 0;
-            _previousSignal = "";
-            _lastPhaseBoundary = default;
-            _lastPhaseBoundarySignal = "";
-            _untargetableSince.Clear();
-            _phaseBoundariesThisPull.Clear();
-            _phaseTopologyFingerprint = "";
+            EndCombatPull();
+            ResetHazardContext(cancelForecasts: true);
             return;
         }
         if (observation.Kind == ObservationKind.TargetableChanged && observation.ActorID != 0)
@@ -340,8 +408,9 @@ public sealed partial class ForetellEngine
     private void LearnSignalTimeline(EncounterMemory encounter, ForetellObservation observation)
     {
         var signal = SignalKey(observation);
-        if (!encounter.Phases.TryGetValue(_session.Phase, out var phase))
-            encounter.Phases[_session.Phase] = phase = new() { Phase = _session.Phase };
+        var timelinePhase = TimelinePhaseFor(observation);
+        if (!encounter.Phases.TryGetValue(timelinePhase, out var phase))
+            encounter.Phases[timelinePhase] = phase = new() { Phase = timelinePhase };
         ++phase.Seen;
         if (!phase.Signals.ContainsKey(signal) && phase.Signals.Count >= 2048)
         {
@@ -353,7 +422,7 @@ public sealed partial class ForetellEngine
 
         if (!string.IsNullOrEmpty(_previousSignal) && _previousSignal != signal)
         {
-            var key = $"{_session.Phase}:{_previousSignal}>{signal}";
+            var key = $"{timelinePhase}:{_previousSignal}>{signal}";
             var dt = Math.Max(0, (observation.At - _previousSignalTime).TotalSeconds);
             if (!encounter.Timeline.TryGetValue(key, out var edge))
             {
@@ -363,7 +432,7 @@ public sealed partial class ForetellEngine
                     encounter.Timeline.Remove(weakestEdge.Key);
                     ++_learningEvictions;
                 }
-                encounter.Timeline[key] = edge = new() { From = _previousSignal, To = signal, Phase = _session.Phase };
+                encounter.Timeline[key] = edge = new() { From = _previousSignal, To = signal, Phase = timelinePhase };
             }
             ++edge.Count;
             var delta = dt - edge.MeanDelay;
@@ -380,7 +449,8 @@ public sealed partial class ForetellEngine
     private void ScheduleTimelineForecast(EncounterMemory encounter, ForetellObservation observation)
     {
         var current = SignalKey(observation);
-        var outgoing = encounter.Timeline.Values.Where(edge => edge.Phase == _session.Phase && edge.From == current && edge.Count >= 3
+        var timelinePhase = TimelinePhaseFor(observation);
+        var outgoing = encounter.Timeline.Values.Where(edge => edge.Phase == timelinePhase && edge.From == current && edge.Count >= 3
             && edge.MeanDelay is >= .15 and <= 120 && edge.Stability >= .45f).ToArray();
         if (outgoing.Length == 0) return;
         var edge = outgoing.OrderByDescending(candidate => ForetellInferenceCore.TimelineProbability(candidate, outgoing) * candidate.Stability)
@@ -389,7 +459,7 @@ public sealed partial class ForetellEngine
         if (probability < .55f) return; // branch is genuinely ambiguous: abstain instead of guessing
         if (!encounter.Mechanics.TryGetValue(edge.To, out var mechanic)) return;
         var due = observation.At.AddSeconds(edge.MeanDelay);
-        if (_timelineForecasts.Values.Any(forecast => forecast.ExpectedSignal == edge.To && Math.Abs((forecast.Due - due).TotalSeconds) < .5))
+        if (_timelineForecasts.Values.Any(forecast => forecast.Phase == timelinePhase && forecast.ExpectedSignal == edge.To && Math.Abs((forecast.Due - due).TotalSeconds) < .5))
             return;
 
         var actor = mechanic.SourceOID == 0 ? null : _ws.Actors.FirstOrDefault(candidate => candidate.OID == mechanic.SourceOID);
@@ -425,6 +495,7 @@ public sealed partial class ForetellEngine
         {
             ID = id,
             TerritoryID = encounter.TerritoryID,
+            Phase = timelinePhase,
             EdgeKey = edgeKey,
             ExpectedSignal = edge.To,
             MechanicKey = mechanic.Key,
@@ -437,8 +508,9 @@ public sealed partial class ForetellEngine
     private void ResolveTimelineForecasts(EncounterMemory encounter, ForetellObservation observation)
     {
         var signal = SignalKey(observation);
+        var timelinePhase = TimelinePhaseFor(observation);
         foreach (var forecast in _timelineForecasts.Values.Where(candidate => candidate.TerritoryID == encounter.TerritoryID
-            && candidate.ExpectedSignal == signal && observation.At <= candidate.Expires).ToArray())
+            && candidate.Phase == timelinePhase && candidate.ExpectedSignal == signal && observation.At <= candidate.Expires).ToArray())
         {
             if (!string.IsNullOrEmpty(forecast.EdgeKey) && encounter.Timeline.TryGetValue(forecast.EdgeKey, out var edge)) ++edge.Hits;
             if (!string.IsNullOrEmpty(forecast.CompositeKey) && encounter.Composites.TryGetValue(forecast.CompositeKey, out var composite)) ++composite.Hits;
@@ -464,7 +536,8 @@ public sealed partial class ForetellEngine
     private void ScheduleCompositeForecasts(EncounterMemory encounter, ForetellObservation observation)
     {
         var current = SignalKey(observation);
-        foreach (var composite in encounter.Composites.Values.Where(candidate => candidate.Phase == _session.Phase
+        var timelinePhase = TimelinePhaseFor(observation);
+        foreach (var composite in encounter.Composites.Values.Where(candidate => candidate.Phase == timelinePhase
             && candidate.Count >= 3 && candidate.Stability >= .45f && candidate.Signals.Contains(current)).Take(8))
         {
             var baseReliability = composite.Forecasts >= 3
@@ -473,7 +546,7 @@ public sealed partial class ForetellEngine
             if (baseReliability < .35f) continue;
             foreach (var expected in composite.Signals.Where(signal => signal != current).Take(8))
             {
-                if (_timelineForecasts.Values.Any(pending => pending.ExpectedSignal == expected && observation.At <= pending.Expires)) continue;
+                if (_timelineForecasts.Values.Any(pending => pending.Phase == timelinePhase && pending.ExpectedSignal == expected && observation.At <= pending.Expires)) continue;
                 if (!encounter.Mechanics.TryGetValue(expected, out var mechanic)) continue;
                 var actor = mechanic.SourceOID == 0 ? null : _ws.Actors.FirstOrDefault(candidate => candidate.OID == mechanic.SourceOID);
                 var trigger = new ForetellObservation
@@ -503,6 +576,7 @@ public sealed partial class ForetellEngine
                 {
                     ID = id,
                     TerritoryID = encounter.TerritoryID,
+                    Phase = timelinePhase,
                     CompositeKey = composite.Key,
                     ExpectedSignal = expected,
                     MechanicKey = mechanic.Key,
@@ -582,6 +656,8 @@ public sealed partial class ForetellEngine
         };
         foreach (var (id, track) in _tracks)
         {
+            if (Math.Abs((track.At - trigger.At).TotalSeconds) > 2)
+                continue;
             var pose = track.Nearest(episode.Activation);
             episode.ParticipantPositions[id] = pose.Position;
             episode.ParticipantRotations[id] = pose.Rotation;
@@ -677,7 +753,8 @@ public sealed partial class ForetellEngine
         if (nearby.Length < 2) return;
         var signals = nearby.Select(other => other.SignalKey).ToList();
         var skew = nearby.Max(other => other.Trigger.At).Subtract(nearby.Min(other => other.Trigger.At)).TotalSeconds;
-        var key = $"{_session.Phase}:{string.Join('+', signals)}";
+        var timelinePhase = TimelinePhaseFor(episode.Trigger);
+        var key = $"{timelinePhase}:{string.Join('+', signals)}";
         if (!encounter.Composites.TryGetValue(key, out var composite))
         {
             if (encounter.Composites.Count >= 2048)
@@ -685,7 +762,7 @@ public sealed partial class ForetellEngine
                 encounter.Composites.Remove(encounter.Composites.MinBy(item => item.Value.Count).Key);
                 ++_learningEvictions;
             }
-            encounter.Composites[key] = composite = new() { Key = key, Phase = _session.Phase, Signals = signals };
+            encounter.Composites[key] = composite = new() { Key = key, Phase = timelinePhase, Signals = signals };
         }
         ++composite.Count;
         var delta = skew - composite.MeanSkewSeconds;
@@ -858,7 +935,7 @@ public sealed partial class ForetellEngine
                     At = observation.At,
                     TerritoryID = observation.TerritoryID,
                     Kind = ObservationKind.Displacement,
-                    SourceKind = SourceKind.Player,
+                    SourceKind = observation.SourceKind,
                     ActorID = observation.ActorID,
                     PrimaryID = observation.PrimaryID,
                     SecondaryID = observation.SecondaryID,

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.Json;
 
 namespace BossMod.Foretell;
 
@@ -255,6 +256,100 @@ public sealed partial class ForetellEngine
             encounter.Composites.Remove(key);
         foreach (var key in encounter.CausalEdges.Where(item => item.Value.Cause == signal).Select(item => item.Key).ToArray())
             encounter.CausalEdges.Remove(key);
+    }
+
+    private void IgnoreSignal(uint territoryID, string signal, string label)
+    {
+        if (string.IsNullOrWhiteSpace(signal) || signal.Length > 256)
+            throw new InvalidDataException("invalid signal key");
+        var encounter = Encounter(territoryID);
+        if (!encounter.ExcludedSignals.ContainsKey(signal) && encounter.ExcludedSignals.Count >= 4096)
+            throw new InvalidDataException("signal exclusion limit reached for this territory");
+        encounter.ExcludedSignals[signal] = new()
+        {
+            Signal = signal,
+            Label = string.IsNullOrWhiteSpace(label) ? signal : label[..Math.Min(label.Length, 160)],
+            CreatedAt = DateTime.UtcNow
+        };
+        PurgeSignalKnowledge(territoryID, signal);
+    }
+
+    private void RestoreSignal(uint territoryID, string signal)
+    {
+        if (_store.Encounters.TryGetValue(territoryID, out var encounter))
+            encounter.ExcludedSignals.Remove(signal);
+    }
+
+    private void PurgeSignalKnowledge(uint territoryID, string signal)
+    {
+        if (!_store.Encounters.TryGetValue(territoryID, out var encounter)) return;
+        if (encounter.Mechanics.ContainsKey(signal))
+            PurgeMechanic(territoryID, signal);
+        foreach (var phase in encounter.Phases.Values)
+            phase.Signals.Remove(signal);
+        foreach (var key in encounter.Timeline.Where(item => item.Value.From == signal || item.Value.To == signal).Select(item => item.Key).ToArray())
+            PurgeTimelineEdge(territoryID, key);
+        foreach (var key in encounter.Composites.Where(item => item.Value.Signals.Contains(signal)).Select(item => item.Key).ToArray())
+            PurgeComposite(territoryID, key);
+        foreach (var key in encounter.CausalEdges.Where(item => item.Value.Cause == signal).Select(item => item.Key).ToArray())
+            encounter.CausalEdges.Remove(key);
+        foreach (var episodeID in _episodes.Where(item => item.Value.SignalKey == signal).Select(item => item.Key).ToArray())
+            RemoveEpisode(episodeID);
+        foreach (var forecast in _timelineForecasts.Values.Where(item => item.ExpectedSignal == signal || item.MechanicKey == signal).ToArray())
+        {
+            _timelineForecasts.Remove(forecast.ID);
+            _predictions.Remove(forecast.ID);
+        }
+        if (_previousSignal == signal)
+        {
+            _previousSignal = "";
+            _previousSignalTime = default;
+        }
+    }
+
+    private string ExportSignalFilters()
+    {
+        var export = new SignalFilterExport();
+        foreach (var encounter in _store.Encounters.Values.Where(item => item.ExcludedSignals.Count > 0))
+            export.Territories[encounter.TerritoryID] = encounter.ExcludedSignals.Values.OrderBy(item => item.Label).ToList();
+        var temporary = _signalFilterPath + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(export, _diagnosticJson));
+        File.Move(temporary, _signalFilterPath, true);
+        return _signalFilterPath;
+    }
+
+    private int ImportSignalFilters()
+    {
+        if (!File.Exists(_signalFilterPath))
+            throw new FileNotFoundException("export a filter file first, then edit or replace it", _signalFilterPath);
+        if (new FileInfo(_signalFilterPath).Length > 4 * 1024 * 1024)
+            throw new InvalidDataException("signal filter file exceeds 4 MiB");
+        var import = JsonSerializer.Deserialize<SignalFilterExport>(File.ReadAllText(_signalFilterPath), _diagnosticJson)
+            ?? throw new InvalidDataException("empty signal filter file");
+        if (import.Schema != 1 || import.Territories == null || import.Territories.Count > 2048)
+            throw new InvalidDataException("unsupported or invalid signal filter schema");
+        var imported = 0;
+        foreach (var (territoryID, exclusions) in import.Territories)
+        {
+            if (territoryID == 0 || exclusions == null) continue;
+            foreach (var exclusion in exclusions.Take(4096))
+            {
+                if (exclusion == null || !IsValidSignalKey(exclusion.Signal)) continue;
+                IgnoreSignal(territoryID, exclusion.Signal, exclusion.Label);
+                ++imported;
+            }
+        }
+        return imported;
+    }
+
+    private static bool IsValidSignalKey(string signal)
+    {
+        if (string.IsNullOrWhiteSpace(signal) || signal.Length > 256) return false;
+        var parts = signal.Split(':', 3);
+        return parts.Length == 3
+            && uint.TryParse(parts[0], System.Globalization.NumberStyles.HexNumber, null, out _)
+            && Enum.TryParse<ObservationKind>(parts[1], out _)
+            && uint.TryParse(parts[2], System.Globalization.NumberStyles.HexNumber, null, out _);
     }
 
     private void PurgePhaseBoundary(uint territoryID, string signature)

@@ -11,6 +11,8 @@ public sealed partial class ForetellEngine
     private Action? _pendingPurge;
     private string _pendingPurgeTitle = "";
     private string _pendingPurgeDescription = "";
+    private string _pendingConfirmationButton = "Delete local data";
+    private string _pendingConfirmationNote = "This removes local data permanently. Learned items can be rediscovered while learning is enabled.";
     private bool _openPurgeConfirmation;
     private string _purgeResult = "";
     private string _knowledgeFilter = "";
@@ -629,10 +631,15 @@ public sealed partial class ForetellEngine
         => value?.Contains(_knowledgeFilter.Trim(), StringComparison.OrdinalIgnoreCase) == true;
 
     private void RequestPurge(string title, string description, Action purge)
+        => RequestConfirmation(title, description, "Delete local data", "This removes local data permanently. Learned items can be rediscovered while learning is enabled.", purge);
+
+    private void RequestConfirmation(string title, string description, string button, string note, Action action)
     {
         _pendingPurgeTitle = title;
         _pendingPurgeDescription = description;
-        _pendingPurge = purge;
+        _pendingConfirmationButton = button;
+        _pendingConfirmationNote = note;
+        _pendingPurge = action;
         _openPurgeConfirmation = true;
     }
 
@@ -640,23 +647,23 @@ public sealed partial class ForetellEngine
     {
         if (_openPurgeConfirmation)
         {
-            ImGui.OpenPopup("Confirm learned-data deletion###ForetellPurgeConfirmation");
+            ImGui.OpenPopup("Confirm Foretell change###ForetellPurgeConfirmation");
             _openPurgeConfirmation = false;
         }
-        if (!ImGui.BeginPopup("Confirm learned-data deletion###ForetellPurgeConfirmation"))
+        if (!ImGui.BeginPopup("Confirm Foretell change###ForetellPurgeConfirmation"))
             return;
 
         ImGui.TextUnformatted(_pendingPurgeTitle);
         ImGui.Separator();
         ImGui.TextWrapped(_pendingPurgeDescription);
-        ImGui.TextDisabled("This removes local data permanently. Learned items can be rediscovered while learning is enabled.");
-        if (ImGui.Button("Delete local data"))
+        ImGui.TextDisabled(_pendingConfirmationNote);
+        if (ImGui.Button(_pendingConfirmationButton))
         {
             try
             {
                 _pendingPurge?.Invoke();
                 SaveStore();
-                _purgeResult = $"Deleted: {_pendingPurgeTitle}";
+                _purgeResult = $"Done: {_pendingPurgeTitle}";
             }
             catch (Exception e) { _purgeResult = $"Delete failed safely: {e.Message}"; }
             _pendingPurge = null;
@@ -712,8 +719,35 @@ public sealed partial class ForetellEngine
             return;
         }
 
-        ImGui.TextUnformatted($"{encounter.Phases.Count} learned phases  |  {encounter.Timeline.Count} transitions  |  {encounter.Composites.Count} simultaneous patterns");
+        ImGui.TextUnformatted($"{encounter.Phases.Count} learned contexts  |  {encounter.Timeline.Count} transitions  |  {encounter.Composites.Count} simultaneous patterns");
         ImGui.TextDisabled("Names come from the game's own data sheets; IDs remain visible only when no name exists.");
+        ImGui.TextDisabled("Ignore suppresses a recurring signal for this territory while keeping raw capture and diagnostics intact.");
+        if (ImGui.Button("Export signal filters"))
+        {
+            try { _purgeResult = $"Exported: {ExportSignalFilters()}"; }
+            catch (Exception e) { _purgeResult = $"Filter export failed safely: {e.Message}"; }
+        }
+        ImGui.SameLine();
+        if (ImGui.Button("Import / merge signal filters"))
+        {
+            try { _purgeResult = $"Imported {ImportSignalFilters():N0} signal exclusions from {_signalFilterPath}"; SaveStore(); }
+            catch (Exception e) { _purgeResult = $"Filter import failed safely: {e.Message}"; }
+        }
+        if (!string.IsNullOrWhiteSpace(_purgeResult)) ImGui.TextDisabled(_purgeResult);
+        if (encounter.ExcludedSignals.Count > 0 && ImGui.TreeNode($"Ignored signals ({encounter.ExcludedSignals.Count})"))
+        {
+            foreach (var exclusion in encounter.ExcludedSignals.Values.OrderBy(item => item.Label).Take(4096).ToArray())
+            {
+                ImGui.BulletText($"{exclusion.Label} · {exclusion.Signal}");
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Restore##restore-signal-{encounter.TerritoryID}-{exclusion.Signal}"))
+                {
+                    RestoreSignal(encounter.TerritoryID, exclusion.Signal);
+                    SaveStore();
+                }
+            }
+            ImGui.TreePop();
+        }
         if (encounter.PhaseBoundaries.Count > 0 && ImGui.TreeNode($"Phase-boundary evidence ({encounter.PhaseBoundaries.Count})"))
         {
             foreach (var pair in encounter.PhaseBoundaries.OrderByDescending(item => item.Value.Accepted).ThenByDescending(item => item.Value.PullsSeen))
@@ -728,10 +762,11 @@ public sealed partial class ForetellEngine
         }
         foreach (var phase in encounter.Phases.Values.OrderBy(item => item.Phase))
         {
-            var open = ImGui.TreeNodeEx($"Phase {phase.Phase + 1} · {phase.Signals.Count} signals · {phase.Seen:N0} observations##phase-{encounter.TerritoryID}-{phase.Phase}", ImGuiTreeNodeFlags.SpanAvailWidth);
+            var phaseLabel = TimelinePhaseLabel(phase.Phase);
+            var open = ImGui.TreeNodeEx($"{phaseLabel} · {phase.Signals.Count} signals · {phase.Seen:N0} observations##phase-{encounter.TerritoryID}-{phase.Phase}", ImGuiTreeNodeFlags.SpanAvailWidth);
             ImGui.SameLine();
             if (ImGui.SmallButton($"Delete phase##delete-phase-{encounter.TerritoryID}-{phase.Phase}"))
-                RequestPurge($"Phase {phase.Phase + 1}", "Delete this learned phase, its signal sequence, transitions and simultaneous patterns?", () => PurgePhase(encounter.TerritoryID, phase.Phase));
+                RequestPurge(phaseLabel, "Delete this learned context, its signal sequence, transitions and simultaneous patterns?", () => PurgePhase(encounter.TerritoryID, phase.Phase));
             if (!open) continue;
             foreach (var signal in phase.Signals.OrderByDescending(item => item.Value).Take(80))
             {
@@ -739,6 +774,13 @@ public sealed partial class ForetellEngine
                 ImGui.SameLine();
                 if (ImGui.SmallButton($"Delete##delete-phase-signal-{phase.Phase}-{signal.Key}"))
                     RequestPurge("Phase signal", "Delete this signal from the phase and remove dependent transitions/composites?", () => PurgePhaseSignal(encounter.TerritoryID, phase.Phase, signal.Key));
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Ignore##ignore-phase-signal-{phase.Phase}-{signal.Key}"))
+                {
+                    var label = SignalDisplayName(encounter, signal.Key);
+                    RequestConfirmation("Ignore signal", $"Suppress {label} from predictive learning and overlays in this territory?", "Ignore signal",
+                        "The exclusion persists across sessions, remains visible above, and can be exported or restored.", () => IgnoreSignal(encounter.TerritoryID, signal.Key, label));
+                }
             }
             ImGui.TreePop();
         }
@@ -763,7 +805,7 @@ public sealed partial class ForetellEngine
             {
                 var edge = pair.Value;
                 ImGui.TableNextRow();
-                ImGui.TableNextColumn(); ImGui.TextUnformatted((edge.Phase + 1).ToString());
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(TimelinePhaseLabel(edge.Phase));
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(SignalDisplayName(encounter, edge.From));
                 ImGui.TableNextColumn(); ImGui.TextUnformatted(SignalDisplayName(encounter, edge.To));
                 ImGui.TableNextColumn(); ImGui.TextUnformatted($"{edge.MeanDelay:F2}s");
@@ -784,7 +826,7 @@ public sealed partial class ForetellEngine
             foreach (var pair in encounter.Composites.OrderByDescending(c => c.Value.Count).Take(80))
             {
                 var composite = pair.Value;
-                ImGui.BulletText($"Phase {composite.Phase + 1}: {string.Join(" + ", composite.Signals.Select(signal => SignalDisplayName(encounter, signal)))} · {composite.Count}× · skew {composite.MeanSkewSeconds:F2}s ± {composite.StdDev:F2}s · forecasts {composite.Hits}/{composite.Forecasts} ({composite.ForecastReliability:P0} lower)");
+                ImGui.BulletText($"{TimelinePhaseLabel(composite.Phase)}: {string.Join(" + ", composite.Signals.Select(signal => SignalDisplayName(encounter, signal)))} · {composite.Count}× · skew {composite.MeanSkewSeconds:F2}s ± {composite.StdDev:F2}s · forecasts {composite.Hits}/{composite.Forecasts} ({composite.ForecastReliability:P0} lower)");
                 ImGui.SameLine();
                 if (ImGui.SmallButton($"Delete##delete-composite-{pair.Key}"))
                     RequestPurge("Simultaneous pattern", "Delete this learned composite pattern? Individual mechanics are kept.", () => PurgeComposite(encounter.TerritoryID, pair.Key));
@@ -836,6 +878,9 @@ public sealed partial class ForetellEngine
         else if (id != 0) eventName = $"{ObservationLabel(kind)} 0x{id:X}";
         return $"{source} — {eventName}";
     }
+
+    private static string TimelinePhaseLabel(int phase)
+        => phase == ForetellInferenceCore.OutOfCombatHazardPhase ? "Out-of-combat hazards" : $"Phase {phase + 1}";
 
     private static string ObservationLabel(ObservationKind kind) => kind switch
     {
@@ -1112,6 +1157,7 @@ public sealed partial class ForetellEngine
             ImGui.BulletText("foretell-memory.json: persistent learned memory.");
             ImGui.BulletText("foretell-raw/*.ftraw.gz: always-on compressed lossless IPC and ActorControl journal.");
             ImGui.BulletText("foretell-replays/*.jsonl: optional human-readable Replay Lab stream.");
+            ImGui.BulletText("foretell-signal-filters.json: portable per-territory signal exclusions.");
             ImGui.BulletText("No remote API, private player chat or process pointer addresses.");
         }
     }

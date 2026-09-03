@@ -3,6 +3,7 @@ using Dalamud.Game.Chat;
 using Dalamud.Game.Gui.FlyText;
 using Dalamud.Game.Gui.Toast;
 using Dalamud.Game.Text.SeStringHandling;
+using Dalamud.Game.ClientState.Conditions;
 
 namespace BossMod.Foretell;
 
@@ -20,6 +21,8 @@ public sealed partial class ForetellEngine
         _subscriptions.Add(new(() => Service.DutyState.DutyCompleted -= OnDutyCompleted));
         Service.FlyTextGui.FlyTextCreated += OnFlyText;
         _subscriptions.Add(new(() => Service.FlyTextGui.FlyTextCreated -= OnFlyText));
+        Service.Condition.ConditionChange += OnConditionChange;
+        _subscriptions.Add(new(() => Service.Condition.ConditionChange -= OnConditionChange));
         ClassifyNonGameplayDalamudSignals();
     }
 
@@ -37,6 +40,12 @@ public sealed partial class ForetellEngine
     private void OnDutyWiped(IDutyStateEventArgs args) => OnDutySignal(ObservationKind.DutyWiped, args);
     private void OnDutyRecommenced(IDutyStateEventArgs args) => OnDutySignal(ObservationKind.DutyRecommenced, args);
     private void OnDutyCompleted(IDutyStateEventArgs args) => OnDutySignal(ObservationKind.DutyCompleted, args);
+
+    private void OnConditionChange(ConditionFlag flag, bool value)
+    {
+        if (flag == ConditionFlag.InCombat && !value && _ws.CurrentCFCID != 0)
+            EndCombatPull();
+    }
 
     private void OnDutySignal(ObservationKind kind, IDutyStateEventArgs args)
     {

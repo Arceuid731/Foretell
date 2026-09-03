@@ -213,6 +213,20 @@ public sealed class SignalTimelineEdge
     [JsonIgnore] public float ForecastReliability => ForetellInferenceCore.WilsonLowerBound(Hits, Hits + Misses);
 }
 
+public sealed class SignalExclusion
+{
+    public string Signal { get; set; } = "";
+    public string Label { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+}
+
+public sealed class SignalFilterExport
+{
+    public int Schema { get; set; } = 1;
+    public DateTime GeneratedAt { get; set; } = DateTime.UtcNow;
+    public Dictionary<uint, List<SignalExclusion>> Territories { get; set; } = [];
+}
+
 public sealed class CausalEdgeMemory
 {
     public string Cause { get; set; } = "";
@@ -324,6 +338,7 @@ public sealed class EncounterMemory
     public Dictionary<string, CausalEdgeMemory> CausalEdges { get; set; } = [];
     public Dictionary<uint, RawOpcodeMemory> RawOpcodes { get; set; } = [];
     public Dictionary<string, ArenaTopologyMemory> Topologies { get; set; } = [];
+    public Dictionary<string, SignalExclusion> ExcludedSignals { get; set; } = [];
 }
 
 public sealed class TopologyPoint
@@ -369,7 +384,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 14;
+    public int Schema { get; set; } = 15;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];

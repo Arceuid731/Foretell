@@ -337,7 +337,7 @@ public sealed partial class ForetellEngine
     private SignalTimelineEdge? PredictNextContextual()
     {
         if (string.IsNullOrEmpty(_previousSignal) || !_store.Encounters.TryGetValue(_territory, out var encounter)) return null;
-        var outgoing = encounter.Timeline.Values.Where(e => e.Phase == _session.Phase && e.From == _previousSignal && e.Count >= 3
+        var outgoing = encounter.Timeline.Values.Where(e => e.Phase == CurrentTimelinePhase && e.From == _previousSignal && e.Count >= 3
             && e.MeanDelay is >= .15 and <= 120 && e.Stability >= .45f && encounter.Mechanics.TryGetValue(e.To, out var mechanic)
             && (mechanic.Geometry != GeometryKind.Unknown || ForetellInferenceCore.GuidanceFor(mechanic.Kind) != GuidanceKind.None)).ToArray();
         return outgoing.Where(e => ForetellInferenceCore.TimelineProbability(e, outgoing) >= .55f)

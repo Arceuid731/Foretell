@@ -17,6 +17,7 @@ public sealed partial class ForetellEngine : IDisposable
     private readonly string _storePath;
     private readonly string _replayDir;
     private readonly string _rawDir;
+    private readonly string _signalFilterPath;
     private readonly EventSubscriptions _subscriptions;
     private readonly JsonSerializerOptions _json = new() { WriteIndented = false, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() } };
     private readonly JsonSerializerOptions _diagnosticJson = new() { WriteIndented = true, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() } };
@@ -42,6 +43,7 @@ public sealed partial class ForetellEngine : IDisposable
     private PriorityQueue<long, long> _episodeFinalization = new();
     private PriorityQueue<long, long> _episodeCleanup = new();
     private Dictionary<ulong, ParticipantTrack> _tracks = [];
+    private readonly HashSet<ulong> _activePositionTrackIDs = [];
     private Dictionary<long, ActivePrediction> _predictions = [];
     private Dictionary<long, PendingTimelineForecast> _timelineForecasts = [];
     private long _nextForecastID = -1;
@@ -59,6 +61,7 @@ public sealed partial class ForetellEngine : IDisposable
     private bool _inPull;
     private DateTime _lastCombatSignal;
     private DateTime _pullStartedAt;
+    private DateTime _hazardContextUntil;
     private DateTime _lastPhaseBoundary;
     private string _lastPhaseBoundarySignal = "";
     private readonly Dictionary<ulong, DateTime> _untargetableSince = [];
@@ -100,6 +103,7 @@ public sealed partial class ForetellEngine : IDisposable
         _storePath = Path.Combine(configDirectory, "foretell-memory.json");
         _replayDir = Path.Combine(configDirectory, "foretell-replays");
         _rawDir = Path.Combine(configDirectory, "foretell-raw");
+        _signalFilterPath = Path.Combine(configDirectory, "foretell-signal-filters.json");
         Directory.CreateDirectory(_replayDir);
         Directory.CreateDirectory(_rawDir);
         _store = LoadStore();
@@ -255,14 +259,16 @@ public sealed partial class ForetellEngine : IDisposable
         }
 
         FinalizeDue(now);
+        ExpireHazardContext(now);
         ExpireTimelineForecasts(now);
         foreach (var key in _predictions.Where(p => p.Value.Activation.AddSeconds(1.5) < now).Select(p => p.Key).ToArray())
             _predictions.Remove(key);
 
         // Open-world combat has no duty lifecycle, so retain the inactivity fallback there. In duties the actual
         // combat condition owns pull lifetime; quiet transition phases must not split one pull into several.
-        if (_inPull && _ws.CurrentCFCID == 0 && (now - _lastCombatSignal).TotalSeconds > 30)
-            _inPull = false;
+        if (_inPull && ((_ws.CurrentCFCID == 0 && (now - _lastCombatSignal).TotalSeconds > 30)
+            || (_ws.CurrentCFCID != 0 && !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat])))
+            EndCombatPull();
 
         // Persistence is deliberately kept off the active-combat path. Store serialization can grow with learned
         // history; saving after combat preserves it without creating a periodic gameplay hitch.
@@ -302,6 +308,7 @@ public sealed partial class ForetellEngine : IDisposable
         _episodeFinalization.Clear();
         _episodeCleanup.Clear();
         _tracks.Clear();
+        _activePositionTrackIDs.Clear();
         ResetDataFabric();
         ResetTopology();
         _predictions.Clear();
@@ -315,6 +322,7 @@ public sealed partial class ForetellEngine : IDisposable
         _previousSignal = "";
         _inPull = false;
         _pullStartedAt = default;
+        _hazardContextUntil = default;
         _lastPhaseBoundary = default;
         _lastPhaseBoundarySignal = "";
         _untargetableSince.Clear();
@@ -560,7 +568,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 14);
+        _store.Schema = Math.Max(_store.Schema, 15);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -600,6 +608,7 @@ public sealed partial class ForetellEngine : IDisposable
                 encounter.CausalEdges ??= [];
                 encounter.RawOpcodes ??= [];
                 encounter.Topologies ??= [];
+                encounter.ExcludedSignals ??= [];
                 RemoveNullValues(encounter.Sources);
                 RemoveNullValues(encounter.Mechanics);
                 RemoveNullValues(encounter.Timeline);
@@ -609,6 +618,7 @@ public sealed partial class ForetellEngine : IDisposable
                 RemoveNullValues(encounter.CausalEdges);
                 RemoveNullValues(encounter.RawOpcodes);
                 RemoveNullValues(encounter.Topologies);
+                RemoveNullValues(encounter.ExcludedSignals);
                 if (loadedSchema < 14)
                     MigrateUnreliableV08DerivedMemory(encounter);
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
@@ -641,6 +651,21 @@ public sealed partial class ForetellEngine : IDisposable
                     source.Signals = Math.Max(0, source.Signals);
                     source.Deaths = Math.Max(0, source.Deaths);
                 }
+                foreach (var key in encounter.ExcludedSignals.Keys.ToArray())
+                {
+                    var exclusion = encounter.ExcludedSignals[key];
+                    exclusion.Signal = string.IsNullOrWhiteSpace(exclusion.Signal) ? key : exclusion.Signal;
+                    exclusion.Label ??= "";
+                    if (exclusion.CreatedAt == default) exclusion.CreatedAt = DateTime.UtcNow;
+                    if (string.IsNullOrWhiteSpace(key) || !string.Equals(key, exclusion.Signal, StringComparison.Ordinal))
+                    {
+                        encounter.ExcludedSignals.Remove(key);
+                        if (!string.IsNullOrWhiteSpace(exclusion.Signal)) encounter.ExcludedSignals[exclusion.Signal] = exclusion;
+                    }
+                }
+                if (encounter.ExcludedSignals.Count > 4096)
+                    foreach (var key in encounter.ExcludedSignals.Values.OrderByDescending(item => item.CreatedAt).Skip(4096).Select(item => item.Signal).ToArray())
+                        encounter.ExcludedSignals.Remove(key);
                 foreach (var phase in encounter.Phases.Values)
                 {
                     phase.Signals ??= [];

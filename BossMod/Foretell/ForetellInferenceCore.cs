@@ -4,6 +4,27 @@ namespace BossMod.Foretell;
 // Confidence here means verified forecast reliability, not merely accumulated evidence.
 public static class ForetellInferenceCore
 {
+    public const int OutOfCombatHazardPhase = -1;
+
+    public static int TimelinePhase(bool inPull, int combatPhase)
+        => inPull ? Math.Max(0, combatPhase) : OutOfCombatHazardPhase;
+
+    public static bool OpensOutOfCombatHazardContext(ObservationKind kind, SourceKind sourceKind, ulong actorID, ulong targetID)
+    {
+        if (sourceKind is SourceKind.Player or SourceKind.Pet)
+            return false;
+        if (kind == ObservationKind.NativeVFXSpawn && actorID == 0 && targetID == 0)
+            return false;
+        if (kind is (ObservationKind.StatusGain or ObservationKind.ActorControlRaw) && actorID == 0 && targetID == 0)
+            return false;
+        return kind is ObservationKind.CastStart or ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
+            or ObservationKind.StatusGain or ObservationKind.ActorControlRaw
+            or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation
+            or ObservationKind.ActionTimelineEvent or ObservationKind.ActionTimelineSync or ObservationKind.NpcYell
+            or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
+            or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn;
+    }
+
     public static float WilsonLowerBound(int successes, int attempts, double z = 1.96)
     {
         attempts = Math.Max(0, attempts);

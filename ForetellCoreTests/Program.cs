@@ -30,6 +30,7 @@ static class ForetellCoreTests
         InferenceReliabilityAndAbstention();
         CausalAndTimelineConfidence();
         GeometryValidationAndGuidance();
+        OutOfCombatHazardContextIsScoped();
         StorageMaintenanceProtectsActiveFiles();
         Console.WriteLine("Foretell core tests passed.");
     }
@@ -338,6 +339,17 @@ static class ForetellCoreTests
         var stable = new ContextualMechanic { AnchorSamples = 3, AnchorForwardM2 = 1, AnchorSideM2 = 1 };
         var unstable = new ContextualMechanic { AnchorSamples = 3, AnchorForwardM2 = 30, AnchorSideM2 = 30 };
         Check.That(stable.AnchorStdDev < 3 && unstable.AnchorStdDev > 3, "anchor stability gate is incorrect");
+    }
+
+    private static void OutOfCombatHazardContextIsScoped()
+    {
+        Check.That(ForetellInferenceCore.TimelinePhase(false, 4) == ForetellInferenceCore.OutOfCombatHazardPhase, "out-of-combat signals leaked into a boss phase");
+        Check.That(ForetellInferenceCore.TimelinePhase(true, 4) == 4, "combat phase was not retained");
+        Check.That(ForetellInferenceCore.OpensOutOfCombatHazardContext(ObservationKind.CastStart, SourceKind.Enemy, 10, 0), "enemy cast did not open hazard context");
+        Check.That(ForetellInferenceCore.OpensOutOfCombatHazardContext(ObservationKind.MapEffect, SourceKind.Environment, 0, 0), "environmental hazard did not open hazard context");
+        Check.That(!ForetellInferenceCore.OpensOutOfCombatHazardContext(ObservationKind.CastStart, SourceKind.Player, 10, 0), "player cast opened hazard context");
+        Check.That(!ForetellInferenceCore.OpensOutOfCombatHazardContext(ObservationKind.NativeVFXSpawn, SourceKind.Environment, 0, 0), "unbound native VFX opened hazard context");
+        Check.That(!ForetellInferenceCore.OpensOutOfCombatHazardContext(ObservationKind.ActorControlRaw, SourceKind.Unknown, 0, 0), "unbound actor control opened hazard context");
     }
 
     private static void StorageMaintenanceProtectsActiveFiles()

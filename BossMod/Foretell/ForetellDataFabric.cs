@@ -23,6 +23,7 @@ public sealed partial class ForetellEngine
     private const int RuntimeRootCount = 21;
     private const int MaxNativeActorsPerSlice = 3;
     private const double MaxNativeActorTraversalMilliseconds = 0.75;
+    private const float NativeActorInterestRadius = 120;
     private DateTime _lastFabricSample;
     private DateTime _lastNativeActorSample;
     private DateTime _lastNativeFabricSample;
@@ -206,18 +207,18 @@ public sealed partial class ForetellEngine
         var started = Stopwatch.GetTimestamp();
         var sampled = 0;
         Span<ulong> sampledIDs = stackalloc ulong[MaxNativeActorsPerSlice];
-        var playerID = _ws.Party[PartyState.PlayerSlot]?.InstanceID ?? 0;
+        var player = _ws.Party[PartyState.PlayerSlot];
 
         // Event handlers enqueue volatile actors, avoiding a full-population priority scan four times per second.
-        // The player remains explicit and the rotating half still guarantees eventual coverage of every actor.
-        if (playerID != 0 && _ws.Actors.Find(playerID) is { } player && TrySampleNativeActor(player, now))
-            sampledIDs[sampled++] = playerID;
+        // Priority actors come from exact gameplay events and bypass the distance gate. The rotating scan only
+        // inspects nearby or actively relevant enemies, so a populated zone cannot spend its native budget on
+        // dormant objects hundreds of yalms away.
         while (_nativeActorPriorities.TryDequeue(out var priorityID) && sampled < MaxNativeActorsPerSlice / 2
             && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxNativeActorTraversalMilliseconds)
         {
             _nativeActorPrioritySet.Remove(priorityID);
             var actor = _ws.Actors.Find(priorityID);
-            if (actor == null || sampledIDs[..sampled].Contains(priorityID) || !TrySampleNativeActor(actor, now))
+            if (actor == null || sampledIDs[..sampled].Contains(priorityID) || !TrySampleNativeActor(actor, player, now, forceRelevant: true))
                 continue;
             sampledIDs[sampled++] = priorityID;
         }
@@ -229,7 +230,7 @@ public sealed partial class ForetellEngine
             if (_nativeActorCursor >= actors.Length)
                 _nativeActorCursor = 0;
             ++examined;
-            if (sampledIDs[..sampled].Contains(actor.InstanceID) || !TrySampleNativeActor(actor, now))
+            if (sampledIDs[..sampled].Contains(actor.InstanceID) || !TrySampleNativeActor(actor, player, now, forceRelevant: false))
                 continue;
             sampledIDs[sampled++] = actor.InstanceID;
         }
@@ -248,12 +249,16 @@ public sealed partial class ForetellEngine
         _nativeActorPriorities.Enqueue(instanceID);
     }
 
-    private bool TrySampleNativeActor(Actor actor, DateTime now)
+    private bool TrySampleNativeActor(Actor actor, Actor? player, DateTime now, bool forceRelevant)
     {
         // Player outcomes already arrive through actions, statuses and 4 Hz position tracks. Sampling the player's
         // full native Character graph generated large allocations without helping enemy-mechanic inference.
         if (actor.Type is ActorType.Player or ActorType.Pet or ActorType.Chocobo or ActorType.Buddy or ActorType.Companion or ActorType.MountType
             || !HasNativeCharacterLayout(actor.Type))
+            return false;
+        var targetsParty = actor.TargetID != 0 && _ws.Party.FindSlot(actor.TargetID) >= 0;
+        var nearby = player == null || Vector2.Distance(new(actor.Position.X, actor.Position.Z), new(player.Position.X, player.Position.Z)) <= NativeActorInterestRadius;
+        if (!forceRelevant && !nearby && !actor.InCombat && !actor.AggroPlayer && actor.CastInfo == null && !targetsParty)
             return false;
         var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:native");
         try

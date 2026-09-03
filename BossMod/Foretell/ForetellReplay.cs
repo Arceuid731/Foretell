@@ -182,6 +182,7 @@ public sealed partial class ForetellEngine
         var liveInPull = _inPull;
         var liveLastCombat = _lastCombatSignal;
         var livePullStartedAt = _pullStartedAt;
+        var liveHazardContextUntil = _hazardContextUntil;
         var liveLastPhaseBoundary = _lastPhaseBoundary;
         var liveLastPhaseBoundarySignal = _lastPhaseBoundarySignal;
         var liveUntargetableSince = _untargetableSince.ToArray();
@@ -215,6 +216,7 @@ public sealed partial class ForetellEngine
             _inPull = false;
             _lastCombatSignal = default;
             _pullStartedAt = default;
+            _hazardContextUntil = default;
             _lastPhaseBoundary = default;
             _lastPhaseBoundarySignal = "";
             _untargetableSince.Clear();
@@ -245,6 +247,7 @@ public sealed partial class ForetellEngine
                     _previousSignal = "";
                     _inPull = false;
                     _pullStartedAt = default;
+                    _hazardContextUntil = default;
                     _lastCombatSignal = default;
                     _lastPhaseBoundary = default;
                     _lastPhaseBoundarySignal = "";
@@ -290,6 +293,7 @@ public sealed partial class ForetellEngine
             _inPull = liveInPull;
             _lastCombatSignal = liveLastCombat;
             _pullStartedAt = livePullStartedAt;
+            _hazardContextUntil = liveHazardContextUntil;
             _lastPhaseBoundary = liveLastPhaseBoundary;
             _lastPhaseBoundarySignal = liveLastPhaseBoundarySignal;
             _untargetableSince.Clear();

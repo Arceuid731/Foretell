@@ -146,6 +146,7 @@ internal sealed class PendingTimelineForecast
 {
     public long ID { get; init; }
     public uint TerritoryID { get; init; }
+    public int Phase { get; init; }
     public string EdgeKey { get; init; } = "";
     public string CompositeKey { get; init; } = "";
     public string ExpectedSignal { get; init; } = "";
