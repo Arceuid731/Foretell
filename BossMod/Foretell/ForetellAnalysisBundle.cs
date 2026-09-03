@@ -7,7 +7,8 @@ namespace BossMod.Foretell;
 public sealed partial class ForetellEngine
 {
     private sealed record AnalysisBundleWork(string OutputPath, byte[] Analysis, string[] RawPaths,
-        string? ReplayPath, string[] Warnings, uint TerritoryID, string Content, string SessionID);
+        string? ReplayPath, string[] Warnings, uint TerritoryID, string Content, string SessionID,
+        string SessionPluginVersion, string ExporterPluginVersion);
     private sealed record AnalysisBundleResult(string Path, int RawFiles, bool ReadableReplay, int Decisions,
         string[] Warnings, string Error = "");
 
@@ -28,6 +29,7 @@ public sealed partial class ForetellEngine
             ? new SessionSummary
             {
                 SessionID = _session.ID,
+                PluginVersion = _session.PluginVersion,
                 TerritoryID = _session.TerritoryID,
                 Started = _session.Started,
                 Ended = now,
@@ -42,6 +44,8 @@ public sealed partial class ForetellEngine
         var warnings = new List<string>();
         if (selected == null)
             warnings.Add("No completed or active learning session was found for this content; learned encounter memory is included without a run-scoped decision trail.");
+        else if (string.IsNullOrWhiteSpace(selected.PluginVersion))
+            warnings.Add("This session predates per-session version provenance; its capture version is unknown and must not be inferred from the exporter version.");
         if (liveSelected)
             warnings.Add("This session is still active. The current raw/replay segments are intentionally excluded until the territory changes and their writers seal them.");
 
@@ -78,12 +82,16 @@ public sealed partial class ForetellEngine
                 pair.Value.Evidence
             }).Cast<object>().ToArray()
             : [];
+        var exporterPluginVersion = CurrentPluginVersion;
+        var sessionPluginVersion = string.IsNullOrWhiteSpace(selected?.PluginVersion) ? "unknown" : selected.PluginVersion;
         var analysis = new
         {
             formatSchema = 1,
             storeSchema = _store.Schema,
             generatedAt = now,
-            pluginVersion = typeof(ForetellEngine).Assembly.GetName().Version?.ToString() ?? "unknown",
+            pluginVersion = sessionPluginVersion,
+            sessionPluginVersion,
+            exporterPluginVersion,
             content = EncounterDisplayName(encounter),
             encounter,
             selectedSession = selected,
@@ -142,7 +150,7 @@ public sealed partial class ForetellEngine
         var analysisBytes = JsonSerializer.SerializeToUtf8Bytes(analysis, _diagnosticJson);
         var outputPath = Path.Combine(_replayDir, $"foretell-analysis-T{encounter.TerritoryID}-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
         var work = new AnalysisBundleWork(outputPath, analysisBytes, rawPaths, replayPath, warnings.ToArray(),
-            encounter.TerritoryID, EncounterDisplayName(encounter), sessionID);
+            encounter.TerritoryID, EncounterDisplayName(encounter), sessionID, sessionPluginVersion, exporterPluginVersion);
         _analysisBundleStatus = $"Packaging {rawPaths.Length} sealed raw journal(s) in the background...";
         _analysisBundleTask = Task.Run(() => CreateAnalysisBundle(work, decisions.Length));
     }
@@ -213,6 +221,8 @@ public sealed partial class ForetellEngine
                     work.TerritoryID,
                     work.Content,
                     work.SessionID,
+                    work.SessionPluginVersion,
+                    work.ExporterPluginVersion,
                     contents = new
                     {
                         analysis = "foretell-analysis.json",

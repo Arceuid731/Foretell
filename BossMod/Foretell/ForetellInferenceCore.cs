@@ -228,6 +228,19 @@ public static class ForetellInferenceCore
     public static bool ShouldSurfaceUnshapedCast(float remainingSeconds)
         => float.IsFinite(remainingSeconds) && remainingSeconds >= 2.5f;
 
+    // Action.VFX 25 is the client-data gaze marker used by the game's generic cast presentation. A gaze is a
+    // semantic instruction, not a ground circle: retaining the EffectRange as an AVOID radius would invert the
+    // mechanic for attacks such as Catastrophe's Demon Eye.
+    public static bool IsGazeActionVFX(uint vfxID) => vfxID == 25;
+
+    // Large non-targeted CastType 2/5 rows are shared by raidwides, proximity attacks and other arena-scale
+    // mechanics. EffectRange describes reach, not necessarily an escapable danger circle.
+    public static bool IsAmbiguousLargeCircleAction(int castType, int effectRange, bool targetArea, uint omenID)
+        => castType is 2 or 5 && effectRange >= 30 && !targetArea && omenID == 0;
+
+    public static bool IsReliableSpatialActionPrior(MechanicKind kind, GeometryKind geometry, float confidence, float p1, float p2)
+        => kind == MechanicKind.GroundAOE && confidence >= .9f && GeometryParametersComplete(geometry, p1, p2);
+
     public static GuidanceKind GuidanceFor(MechanicKind kind) => kind switch
     {
         MechanicKind.GroundAOE or MechanicKind.TargetedAOE => GuidanceKind.Avoid,

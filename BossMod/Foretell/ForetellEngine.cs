@@ -426,7 +426,9 @@ public sealed partial class ForetellEngine : IDisposable
         _lastEvidence = $"Entered territory {territory}";
     }
 
-    private LiveSessionStats NewSession(uint territory) => new() { TerritoryID = territory };
+    private static string CurrentPluginVersion => typeof(ForetellEngine).Assembly.GetName().Version?.ToString() ?? "unknown";
+
+    private LiveSessionStats NewSession(uint territory) => new() { TerritoryID = territory, PluginVersion = CurrentPluginVersion };
 
     private void StartEncounterSession(uint territory)
     {
@@ -443,6 +445,7 @@ public sealed partial class ForetellEngine : IDisposable
         _store.Sessions.Add(new()
         {
             SessionID = _session.ID,
+            PluginVersion = _session.PluginVersion,
             TerritoryID = _session.TerritoryID,
             Started = _session.Started,
             Ended = DateTime.UtcNow,
@@ -661,7 +664,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 20);
+        _store.Schema = Math.Max(_store.Schema, 21);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -683,6 +686,12 @@ public sealed partial class ForetellEngine : IDisposable
         if (_store.Coverage.Items.Count > 65536)
             foreach (var key in _store.Coverage.Items.OrderByDescending(item => item.Value.Seen).Skip(65536).Select(item => item.Key).ToArray()) _store.Coverage.Items.Remove(key);
         _store.Sessions.RemoveAll(session => session == null);
+        foreach (var session in _store.Sessions)
+        {
+            session.SessionID ??= "";
+            session.PluginVersion ??= "";
+            session.ReplayFile ??= "";
+        }
         if (_store.Sessions.Count > 100) _store.Sessions = _store.Sessions.OrderByDescending(session => session.Started).Take(100).OrderBy(session => session.Started).ToList();
         _store.DecisionAudit.RemoveAll(entry => entry == null);
         foreach (var entry in _store.DecisionAudit)
@@ -706,6 +715,7 @@ public sealed partial class ForetellEngine : IDisposable
 
         var migratedInvalidActions = new HashSet<uint>();
         var migratedInvalidMechanics = 0;
+        var migratedUnsafeMetadata = 0;
         foreach (var encounterKey in _store.Encounters.Keys.ToArray())
         {
             try
@@ -744,6 +754,8 @@ public sealed partial class ForetellEngine : IDisposable
                     migratedInvalidMechanics += MigrateInvalidMechanicSources(encounter, migratedInvalidActions);
                 if (loadedSchema < 20)
                     ResetPre20ForecastOutcomes(encounter);
+                if (loadedSchema < 21)
+                    migratedUnsafeMetadata += MigratePre21ActionMetadata(encounter);
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
                 foreach (var trigger in encounter.TriggerContexts.Values) NormalizeSignalTriggerMemory(trigger);
@@ -848,6 +860,13 @@ public sealed partial class ForetellEngine : IDisposable
                 Service.Log($"[Foretell] Removed {migratedInvalidMechanics} invalid player/pet/non-mechanic signal episodes and reset contaminated derived ML state.");
             }
         }
+        if (loadedSchema < 21 && migratedUnsafeMetadata > 0)
+        {
+            // The online classifier has no per-session provenance. Rows whose metadata was misread as a spatial
+            // circle or whose ambient outcomes became CLEANSE/MOVE labels can therefore contaminate future duties.
+            _store.ML = new();
+            Service.Log($"[Foretell] Repaired {migratedUnsafeMetadata} unsafe pre-21 Action metadata models and reset contaminated derived ML state.");
+        }
     }
 
     private static void MigrateUnreliableV08DerivedMemory(EncounterMemory encounter)
@@ -909,6 +928,89 @@ public sealed partial class ForetellEngine : IDisposable
             composite.Hits = 0;
             composite.Misses = 0;
         }
+    }
+
+    private static int MigratePre21ActionMetadata(EncounterMemory encounter)
+    {
+        var repaired = 0;
+        foreach (var mechanic in encounter.Mechanics.Values.Where(item => item.TriggerKind == ObservationKind.CastStart))
+        {
+            mechanic.PriorEvidence ??= "";
+            if (mechanic.PriorVFXID == 0)
+                mechanic.PriorVFXID = PriorEvidenceNumber(mechanic.PriorEvidence, "VFX=");
+
+            if (ForetellInferenceCore.IsGazeActionVFX(mechanic.PriorVFXID))
+            {
+                mechanic.PriorKind = MechanicKind.Gaze;
+                mechanic.PriorGeometry = GeometryKind.Unknown;
+                mechanic.PriorP1 = mechanic.PriorP2 = 0;
+                mechanic.PriorConfidence = Math.Max(mechanic.PriorConfidence, .94f);
+                ReassertReliableActionPrior(mechanic);
+                ResetMechanicValidation(mechanic);
+                ++repaired;
+                continue;
+            }
+
+            if (ForetellInferenceCore.IsAmbiguousLargeCircleAction(mechanic.PriorCastType, mechanic.PriorEffectRange,
+                mechanic.PriorTargetArea, mechanic.PriorOmenID))
+            {
+                mechanic.PriorKind = MechanicKind.Unknown;
+                mechanic.PriorGeometry = GeometryKind.Unknown;
+                mechanic.PriorP1 = mechanic.PriorEffectRange;
+                mechanic.PriorP2 = 0;
+                mechanic.PriorConfidence = .72f;
+                ResetUnsafeMechanicClassification(mechanic);
+                ++repaired;
+                continue;
+            }
+
+            if (ForetellInferenceCore.IsReliableSpatialActionPrior(MechanicKind.GroundAOE, mechanic.PriorGeometry,
+                mechanic.PriorConfidence, mechanic.PriorP1, mechanic.PriorP2))
+            {
+                mechanic.PriorKind = MechanicKind.GroundAOE;
+                ReassertReliableActionPrior(mechanic);
+                ResetMechanicValidation(mechanic);
+                ++repaired;
+                continue;
+            }
+
+            if (mechanic.PriorCastType == 1 && mechanic.PriorGeometry == GeometryKind.Unknown && mechanic.PriorKind == MechanicKind.Unknown
+                && (mechanic.Kind != MechanicKind.Unknown || mechanic.Geometry != GeometryKind.Unknown))
+            {
+                ResetUnsafeMechanicClassification(mechanic);
+                ++repaired;
+            }
+        }
+        return repaired;
+    }
+
+    private static uint PriorEvidenceNumber(string evidence, string marker)
+    {
+        var start = evidence.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0) return 0;
+        start += marker.Length;
+        var end = start;
+        while (end < evidence.Length && char.IsAsciiDigit(evidence[end])) ++end;
+        return uint.TryParse(evidence.AsSpan(start, end - start), out var value) ? value : 0;
+    }
+
+    private static void ResetUnsafeMechanicClassification(ContextualMechanic mechanic)
+    {
+        mechanic.Kind = MechanicKind.Unknown;
+        mechanic.Geometry = GeometryKind.Unknown;
+        mechanic.P1 = mechanic.P2 = 0;
+        mechanic.Score = 0;
+        mechanic.Confirmations = 0;
+        mechanic.AmbiguousSamples = 0;
+        ResetMechanicValidation(mechanic);
+    }
+
+    private static void ResetMechanicValidation(ContextualMechanic mechanic)
+    {
+        mechanic.Forecasts = 0;
+        mechanic.ForecastHits = 0;
+        mechanic.ForecastMisses = 0;
+        mechanic.BrierScoreSum = 0;
     }
 
     private static int MigrateInvalidMechanicSources(EncounterMemory encounter, HashSet<uint> invalidActions)
@@ -1017,6 +1119,7 @@ public sealed partial class ForetellEngine : IDisposable
         mechanic.PriorP1 = Finite(mechanic.PriorP1, 0, 0, 200);
         mechanic.PriorP2 = Finite(mechanic.PriorP2, 0, 0, 200);
         mechanic.PriorConfidence = Finite(mechanic.PriorConfidence, 0, 0, .98f);
+        if (!Enum.IsDefined(mechanic.PriorKind)) mechanic.PriorKind = MechanicKind.Unknown;
         if (!Enum.IsDefined(mechanic.OriginKind)) mechanic.OriginKind = PredictionOriginKind.Source;
         if (mechanic.AnchorSamples == 0 && mechanic.Geometry is GeometryKind.Circle or GeometryKind.Donut)
             mechanic.OriginKind = PredictionOriginKind.Target;

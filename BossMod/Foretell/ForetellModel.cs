@@ -120,9 +120,10 @@ public sealed class ContextualMechanic
     public Dictionary<ObservationKind, int> Evidence { get; set; } = [];
     public List<MechanicSamplePoint> Samples { get; set; } = [];
 
-    // Static client-data prior. This is deliberately kept separate from empirical score so outcome evidence can
-    // confirm, refine or contradict it instead of silently treating the game sheet as ground truth.
+    // Static client-data prior. It is kept separate from empirical score so ambiguous families remain learnable,
+    // while complete typed telegraphs can be protected from unrelated outcome correlations.
     [JsonConverter(typeof(JsonStringEnumConverter))] public GeometryKind PriorGeometry { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))] public MechanicKind PriorKind { get; set; }
     public float PriorP1 { get; set; }
     public float PriorP2 { get; set; }
     public float PriorConfidence { get; set; }
@@ -132,6 +133,7 @@ public sealed class ContextualMechanic
     public bool PriorTargetArea { get; set; }
     public uint PriorOmenID { get; set; }
     public string PriorOmen { get; set; } = "";
+    public uint PriorVFXID { get; set; }
     public string PriorEvidence { get; set; } = "";
 
     [JsonIgnore] public float EmpiricalConfidence
@@ -151,6 +153,8 @@ public sealed class ContextualMechanic
         {
             var empirical = EmpiricalConfidence;
             if (PriorConfidence <= 0) return empirical;
+            if (HasReliableActionPrior)
+                return Math.Clamp(Math.Max(empirical, Math.Min(PriorConfidence, .98f)), 0, .98f);
             if (Observations == 0) return Math.Min(PriorConfidence, .98f);
 
             var effectivePrior = PriorConfidence;
@@ -182,7 +186,11 @@ public sealed class ContextualMechanic
         }
     }
 
-    [JsonIgnore] public float GuidanceConfidence => ForetellInferenceCore.GuidanceConfidence(Confidence, ForecastHits, ForecastMisses);
+    [JsonIgnore] public bool HasReliableActionPrior => PriorKind == MechanicKind.Gaze && PriorConfidence >= .90f
+        || ForetellInferenceCore.IsReliableSpatialActionPrior(PriorKind, PriorGeometry, PriorConfidence, PriorP1, PriorP2);
+    [JsonIgnore] public float GuidanceConfidence => HasReliableActionPrior
+        ? Confidence
+        : ForetellInferenceCore.GuidanceConfidence(Confidence, ForecastHits, ForecastMisses);
     [JsonIgnore] public float ForecastAccuracy => Forecasts == 0 ? 0 : ForecastHits / (float)Math.Max(1, Forecasts);
     [JsonIgnore] public double AnchorStdDev => AnchorSamples > 1
         ? Math.Sqrt(Math.Max(0, AnchorForwardM2 + AnchorSideM2) / (AnchorSamples - 1))
@@ -349,6 +357,7 @@ public sealed class PhaseBoundaryMemory
 public sealed class SessionSummary
 {
     public string SessionID { get; set; } = "";
+    public string PluginVersion { get; set; } = "";
     public uint TerritoryID { get; set; }
     public DateTime Started { get; set; }
     public DateTime Ended { get; set; }
@@ -481,7 +490,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 20;
+    public int Schema { get; set; } = 21;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
@@ -544,8 +553,8 @@ public readonly record struct ActivePrediction(
     bool Anticipated = false, string Label = "");
 
 internal readonly record struct ActionGeometryPrior(
-    uint ActionID, GeometryKind Geometry, float P1, float P2, float Confidence,
+    uint ActionID, GeometryKind Geometry, MechanicKind Kind, float P1, float P2, float Confidence,
     int CastType, int EffectRange, int XAxisModifier, bool TargetArea,
-    uint OmenID, string Omen, string Evidence);
+    uint OmenID, string Omen, uint VFXID, string Evidence);
 
 internal readonly record struct FitResult(GeometryKind Geometry, Vector2 Origin, float Rotation, float P1, float P2, float Score);

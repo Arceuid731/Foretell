@@ -90,21 +90,16 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Arena, rendering and alliance-raid telemetry stabilization from T364, T394, T638 and T174 Analysis ZIPs.
+          Action-metadata hierarchy and analysis provenance fixes from the T293 and T692 Foretell 0.8.9 captures.
 
-          - Rejects partial player-centered wall fans as arena boundaries, preventing the expanding blue radar polygon observed in Thornmarch and Urth's Fount.
-          - Lets complete floor-topology scans handle open platforms and removes previously stored false arena boundaries during the schema-20 migration.
-          - Expires rendered mechanics when their caster dies, the pull ends, their forecast context ends, or their normal display lifetime elapses.
-          - Separates ordinary running from abrupt forced movement so delayed position samples cannot turn movement into a knockback hypothesis.
-          - Retains an angle-less client cone as a learnable family and range, but withholds spatial drawing until outcome evidence determines its angle.
-          - Extends outcome fitting through 330-degree cones, including the 270-degree family implicated by Biting Halberd in Containment Bay Z1T9.
-          - Reserves semantic processing capacity for enemy casts and resolutions so 24-player position/action fan-out cannot hide sparse boss telegraphs such as Phlegethon's Ancient Flare.
-          - Protects sparse enemy status, target-VFX and model-state signals used by non-cast mechanics such as Thanatos's alliance-buff cycle.
-          - Keeps per-frame shedding local to the overloaded frame; only the sustained-frame watchdog now suspends optional VFX/topology ingestion.
-          - Surfaces long observed casts as text-only WATCH entries when client metadata cannot prove a spatial shape, without inventing world or radar geometry.
-          - Treats CastType 6 meteor/proximity/raidwide/line-of-sight actions as semantically ambiguous; Ecliptic Meteor is announced without an invented 100y AVOID circle.
-          - Treats a fully avoided spatial prediction as unverified rather than false, and resets pre-20 validation counters whose reliability was contaminated by that rule or dropped signals.
-          - Advances learned-memory schema to 20 and adds deterministic regressions for partial wall fans, movement sampling, wide cones, priority signals and unshaped casts.
+          - Keeps complete client-metadata telegraph shapes authoritative for their Action row, preventing ambient status and movement evidence from rewriting Landslide, Weight of the Land or Burst as CLEANSE, MOVE or KNOCKBACK.
+          - Recognizes the client gaze VFX as LOOK AWAY without drawing Demon Eye as a fake 50y danger circle.
+          - Treats large non-targeted CastType 2/5 circles without Omen evidence as ambiguous arena-scale actions, so Gravitational Wave and similar mechanics remain text-only until outcomes prove their semantics.
+          - Replaces low-confidence learned labels with text-only WATCH for unshaped long casts while retaining strongly corroborated non-spatial mechanics.
+          - Reasserts reliable Action semantics after every outcome classification and prevents contaminated forecast counters from suppressing those telegraphs.
+          - Migrates learned memory to schema 21, repairs unsafe pre-21 Action classifications and resets the derived online classifier when affected rows are found.
+          - Records the selected run's plugin version separately from the exporter version in future Analysis ZIPs, avoiding the misleading 0.8.10 label on captures actually recorded under 0.8.9.
+          - Adds deterministic regressions for gaze, arena-scale circle ambiguity, protected Action priors and session-version persistence.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@

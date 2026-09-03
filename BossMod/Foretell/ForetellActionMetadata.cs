@@ -7,8 +7,9 @@ public sealed partial class ForetellEngine
 {
     private Lumina.Excel.ExcelSheet<Lumina.Excel.Sheets.Action>? _foretellActionSheet;
 
-    // Client data is a PRIOR, not an oracle. CastType/EffectRange/XAxisModifier/Omen can explain many normal
-    // telegraphs immediately, while empirical observations remain responsible for confirming or correcting it.
+    // Client data is a typed prior. Complete ordinary telegraph geometry is authoritative for that Action row;
+    // empirical outcomes validate it but cannot rewrite it from unrelated ambient movement/status evidence.
+    // Ambiguous metadata families remain explicitly unshaped and are left to outcome learning.
     private ActionGeometryPrior? ReadActionGeometryPrior(ForetellObservation trigger)
     {
         if (trigger.PrimaryID == 0) return null;
@@ -35,6 +36,7 @@ public sealed partial class ForetellEngine
             var fanHalfAngle = ParseFanHalfAngle(omen);
 
             var geometry = GeometryKind.Unknown;
+            var kind = MechanicKind.Unknown;
             var p1 = 0f;
             var p2 = 0f;
             var confidence = 0f;
@@ -43,7 +45,13 @@ public sealed partial class ForetellEngine
             // CastType semantics are stable game-data hints used by several FFXIV tooling projects. Where a field
             // does not fully determine geometry (notably cone angle/dynamic lines), keep confidence below the normal
             // visualization gate or leave geometry unknown rather than inventing a lethal answer.
-            switch (castType)
+            if (ForetellInferenceCore.IsGazeActionVFX(vfxID))
+            {
+                kind = MechanicKind.Gaze;
+                confidence = .94f;
+                why = "VFX identifies gaze; direction is semantic, not a danger circle";
+            }
+            else switch (castType)
             {
                 case 1: // generic / sometimes fan; only trust it when Omen independently exposes a fan angle
                     if (effectRange > 0 && fanHalfAngle > 0)
@@ -58,10 +66,18 @@ public sealed partial class ForetellEngine
                 case 2: // circle, no padding
                     if (effectRange > 0)
                     {
-                        geometry = GeometryKind.Circle;
                         p1 = effectRange;
-                        confidence = .96f;
-                        why = "CastType circle + EffectRange";
+                        if (ForetellInferenceCore.IsAmbiguousLargeCircleAction(castType, effectRange, targetArea, omenID))
+                        {
+                            confidence = .72f;
+                            why = "Arena-scale circle family without target-area/Omen evidence; spatial guidance is ambiguous";
+                        }
+                        else
+                        {
+                            geometry = GeometryKind.Circle;
+                            confidence = .96f;
+                            why = "CastType circle + EffectRange";
+                        }
                     }
                     break;
                 case 3: // cone/fan with actor padding
@@ -89,10 +105,18 @@ public sealed partial class ForetellEngine
                 case 5: // circle with actor padding
                     if (effectRange > 0)
                     {
-                        geometry = GeometryKind.Circle;
                         p1 = effectRange + hitbox;
-                        confidence = .91f;
-                        why = "CastType padded circle + EffectRange + actor hitbox";
+                        if (ForetellInferenceCore.IsAmbiguousLargeCircleAction(castType, effectRange, targetArea, omenID))
+                        {
+                            confidence = .72f;
+                            why = "Arena-scale padded-circle family without target-area/Omen evidence; spatial guidance is ambiguous";
+                        }
+                        else
+                        {
+                            geometry = GeometryKind.Circle;
+                            confidence = .91f;
+                            why = "CastType padded circle + EffectRange + actor hitbox";
+                        }
                     }
                     break;
                 case 6: // meteor/proximity/raidwide/line-of-sight family; EffectRange alone cannot prove guidance
@@ -164,9 +188,12 @@ public sealed partial class ForetellEngine
                     break;
             }
 
+            if (kind == MechanicKind.Unknown && ForetellInferenceCore.IsReliableSpatialActionPrior(MechanicKind.GroundAOE, geometry, confidence, p1, p2))
+                kind = MechanicKind.GroundAOE;
+
             var evidence = $"Action sheet: CastType={castType}, EffectRange={effectRange}, XAxisModifier={xAxis}, Range={range}, " +
                 $"TargetArea={targetArea}, AffectsPosition={affectsPosition}, Omen={omenID}:{omen}, VFX={vfxID}; {why}";
-            return new(trigger.PrimaryID, geometry, p1, p2, confidence, castType, effectRange, xAxis, targetArea, omenID, omen, evidence);
+            return new(trigger.PrimaryID, geometry, kind, p1, p2, confidence, castType, effectRange, xAxis, targetArea, omenID, omen, vfxID, evidence);
         }
         catch (Exception e)
         {
@@ -203,6 +230,7 @@ public sealed partial class ForetellEngine
             }
 
             mechanic.PriorGeometry = p.Geometry;
+            mechanic.PriorKind = p.Kind;
             mechanic.PriorP1 = p.P1;
             mechanic.PriorP2 = p.P2;
             mechanic.PriorConfidence = p.Confidence;
@@ -212,18 +240,12 @@ public sealed partial class ForetellEngine
             mechanic.PriorTargetArea = p.TargetArea;
             mechanic.PriorOmenID = p.OmenID;
             mechanic.PriorOmen = p.Omen;
+            mechanic.PriorVFXID = p.VFXID;
             mechanic.PriorEvidence = p.Evidence;
             mechanic.Evidence[ObservationKind.ClientMetadata] = 1;
             mechanic.LastSeen = DateTime.UtcNow;
 
-            if (ForetellInferenceCore.GeometryParametersComplete(p.Geometry, p.P1, p.P2)
-                && (mechanic.Geometry == GeometryKind.Unknown || mechanic.Observations == 0))
-            {
-                mechanic.Geometry = p.Geometry;
-                mechanic.Kind = mechanic.Kind == MechanicKind.Unknown ? MechanicKind.GroundAOE : mechanic.Kind;
-                mechanic.P1 = p.P1;
-                mechanic.P2 = p.P2;
-            }
+            ReassertReliableActionPrior(mechanic);
         }
 
         if (p.Geometry == GeometryKind.Unknown || p.Confidence <= 0
@@ -232,14 +254,33 @@ public sealed partial class ForetellEngine
             // The cast itself is certain even when its danger shape is not. Surface longer encounter casts as a
             // text-only WATCH item, while deliberately leaving geometry and guidance empty so no fake world/radar
             // telegraph or safe position can be produced. This also keeps angle-less cone families honest.
-            if (ForetellInferenceCore.ShouldSurfaceUnshapedCast(trigger.Value1) && !_predictions.ContainsKey(trigger.Sequence))
+            var hasSemanticPrior = p.Kind != MechanicKind.Unknown;
+            var shouldWatch = ForetellInferenceCore.ShouldSurfaceUnshapedCast(trigger.Value1);
+            var replaceExisting = !_predictions.TryGetValue(trigger.Sequence, out var existingUnshaped)
+                || !HasTrustworthyLearnedUnshapedMechanic(mechanic, existingUnshaped);
+            if ((hasSemanticPrior || shouldWatch) && replaceExisting)
             {
                 var watchSource = new Vector2(trigger.X, trigger.Z);
                 var watchTarget = new Vector2(trigger.TargetX, trigger.TargetZ);
-                var evidence = $"Observed {trigger.Value1:F1}s cast; spatial geometry incomplete; {p.Evidence}";
-                StorePrediction(trigger.Sequence, new(trigger.ActorID, trigger.PrimaryID, GeometryKind.Unknown, MechanicKind.Unknown,
-                    watchSource, watchTarget, trigger.Rotation, 0, 0, trigger.At.AddSeconds(Math.Clamp(trigger.Value1, 0, 120)), .76f, evidence,
-                    SignalKey(trigger), trigger.TargetID, GuidanceKind.None, false, LookupActionName(trigger.PrimaryID) ?? $"Action 0x{trigger.PrimaryID:X}"), trigger);
+                var semanticKind = hasSemanticPrior ? p.Kind : MechanicKind.Unknown;
+                var guidance = semanticKind == MechanicKind.Gaze ? GuidanceKind.LookAway : GuidanceKind.None;
+                var watchConfidence = hasSemanticPrior ? p.Confidence : .76f;
+                var remainingSeconds = float.IsFinite(trigger.Value1) ? Math.Clamp(trigger.Value1, 0, 120) : 0;
+                var evidence = hasSemanticPrior
+                    ? $"Client metadata identifies {semanticKind}; spatial geometry intentionally omitted; {p.Evidence}"
+                    : $"Observed {trigger.Value1:F1}s cast; spatial geometry incomplete; {p.Evidence}";
+                StorePrediction(trigger.Sequence, new(trigger.ActorID, trigger.PrimaryID, GeometryKind.Unknown, semanticKind,
+                    watchSource, watchTarget, trigger.Rotation, 0, 0, trigger.At.AddSeconds(remainingSeconds), watchConfidence, evidence,
+                    SignalKey(trigger), trigger.TargetID, guidance, false, LookupActionName(trigger.PrimaryID) ?? $"Action 0x{trigger.PrimaryID:X}"), trigger);
+                if (_episodes.GetValueOrDefault(trigger.Sequence) is { } watchEpisode)
+                {
+                    watchEpisode.ForecastIssued = true;
+                    watchEpisode.ForecastGeometry = GeometryKind.Unknown;
+                    watchEpisode.ForecastKind = semanticKind;
+                    watchEpisode.ForecastP1 = 0;
+                    watchEpisode.ForecastP2 = 0;
+                    watchEpisode.ForecastConfidence = watchConfidence;
+                }
             }
             _lastEvidence = p.Evidence;
             return;
@@ -248,27 +289,17 @@ public sealed partial class ForetellEngine
         var source = new Vector2(trigger.X, trigger.Z);
         var target = new Vector2(trigger.TargetX, trigger.TargetZ);
         var origin = p.Geometry is GeometryKind.Circle or GeometryKind.Donut ? target : source;
-        var preferLearned = mechanic is { Geometry: not GeometryKind.Unknown } && (mechanic.Observations > 0 || mechanic.Confidence >= p.Confidence);
-        var confidence = preferLearned ? mechanic!.Confidence : p.Confidence;
-        var geometry = preferLearned ? mechanic!.Geometry : p.Geometry;
-        var p1 = preferLearned && mechanic!.P1 > 0 ? mechanic.P1 : p.P1;
-        var p2 = preferLearned && mechanic!.P2 > 0 ? mechanic.P2 : p.P2;
-        confidence = ForetellInferenceCore.GuidanceConfidence(confidence, mechanic?.ForecastHits ?? 0, mechanic?.ForecastMisses ?? 0);
+        var confidence = p.Confidence;
+        var geometry = p.Geometry;
+        var p1 = p.P1;
+        var p2 = p.P2;
 
         // StartEpisode may already have emitted a learned prediction. Never downgrade it; when metadata agrees,
         // replace it with the fused confidence/evidence so first-cast priors and learned evidence reinforce each other.
         if (_predictions.TryGetValue(trigger.Sequence, out var existing))
         {
-            if (existing.Geometry != geometry)
-            {
-                // StartEpisode's prediction comes from persisted learned memory. A disagreeing static prior may not
-                // replace it once real outcomes exist for the signal.
-                if (mechanic?.Observations > 0 || existing.Confidence >= confidence) return;
-            }
-            else
-            {
+            if (existing.Geometry == geometry && existing.Kind == MechanicKind.GroundAOE && existing.Guidance == GuidanceKind.Avoid)
                 confidence = Math.Max(confidence, existing.Confidence);
-            }
         }
 
         var prediction = new ActivePrediction(trigger.ActorID, trigger.PrimaryID, geometry, MechanicKind.GroundAOE,
@@ -279,12 +310,52 @@ public sealed partial class ForetellEngine
         {
             episode.ForecastIssued = true;
             episode.ForecastGeometry = geometry;
-            episode.ForecastKind = mechanic?.Kind ?? MechanicKind.GroundAOE;
+            episode.ForecastKind = MechanicKind.GroundAOE;
             episode.ForecastP1 = p1;
             episode.ForecastP2 = p2;
             episode.ForecastConfidence = confidence;
         }
         _lastEvidence = $"Metadata prior AID {trigger.PrimaryID}: {geometry} {confidence:P0} | {p.Evidence}";
+    }
+
+    private static void ReassertReliableActionPrior(ContextualMechanic mechanic)
+    {
+        if (mechanic.PriorKind == MechanicKind.Gaze && mechanic.PriorConfidence >= .90f)
+        {
+            mechanic.Kind = MechanicKind.Gaze;
+            mechanic.Geometry = GeometryKind.Unknown;
+            mechanic.P1 = 0;
+            mechanic.P2 = 0;
+            return;
+        }
+
+        if (!ForetellInferenceCore.IsReliableSpatialActionPrior(mechanic.PriorKind, mechanic.PriorGeometry,
+            mechanic.PriorConfidence, mechanic.PriorP1, mechanic.PriorP2))
+            return;
+        mechanic.Kind = MechanicKind.GroundAOE;
+        mechanic.Geometry = mechanic.PriorGeometry;
+        mechanic.P1 = mechanic.PriorP1;
+        mechanic.P2 = mechanic.PriorP2;
+    }
+
+    private static bool HasTrustworthyLearnedUnshapedMechanic(ContextualMechanic? mechanic, ActivePrediction prediction)
+    {
+        if (mechanic == null || mechanic.Observations < 3 || mechanic.Confirmations < 2 || prediction.Confidence < .75f)
+            return false;
+        var directAffectedEvidence = mechanic.AffectedSamples > 0;
+        return mechanic.Kind switch
+        {
+            MechanicKind.Raidwide => mechanic.AffectedSamples >= 3,
+            MechanicKind.Tankbuster or MechanicKind.TargetedAOE => directAffectedEvidence,
+            MechanicKind.Stack or MechanicKind.Spread or MechanicKind.LineStack => mechanic.AffectedSamples >= 2 && mechanic.Evidence.GetValueOrDefault(ObservationKind.Icon) > 0,
+            MechanicKind.Tether => mechanic.Evidence.GetValueOrDefault(ObservationKind.TetherStart) > 0,
+            MechanicKind.Knockback or MechanicKind.ForcedMovement => mechanic.MovementSamples >= 2,
+            MechanicKind.Environment or MechanicKind.Transition => mechanic.Evidence.GetValueOrDefault(ObservationKind.MapEffect) > 0
+                || mechanic.Evidence.GetValueOrDefault(ObservationKind.EventObjectState) > 0
+                || mechanic.Evidence.GetValueOrDefault(ObservationKind.DirectorUpdate) > 0
+                || mechanic.Evidence.GetValueOrDefault(ObservationKind.TopologySnapshot) > 0,
+            _ => false
+        };
     }
 
     private static int ReadInt(object? value)

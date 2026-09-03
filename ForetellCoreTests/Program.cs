@@ -33,6 +33,7 @@ static class ForetellCoreTests
         CausalAndTimelineConfidence();
         PhaseClockAndHealthTriggerSelection();
         GeometryValidationAndGuidance();
+        ActionMetadataSafetyFamilies();
         MechanicSourcesExcludePartyActions();
         RadarIsCameraRelative();
         OutOfCombatHazardContextIsScoped();
@@ -377,6 +378,38 @@ static class ForetellCoreTests
         Check.That(ForetellInferenceCore.GeometryParametersComplete(GeometryKind.Cone, 50, 135f * MathF.PI / 180), "wide cone was rejected");
     }
 
+    private static void ActionMetadataSafetyFamilies()
+    {
+        Check.That(ForetellInferenceCore.IsGazeActionVFX(25), "client gaze VFX was not recognized");
+        Check.That(!ForetellInferenceCore.IsGazeActionVFX(24), "non-gaze VFX became LOOK AWAY");
+        Check.That(ForetellInferenceCore.IsAmbiguousLargeCircleAction(2, 50, false, 0), "arena-scale CastType 2 became a lethal circle");
+        Check.That(ForetellInferenceCore.IsAmbiguousLargeCircleAction(5, 30, false, 0), "arena-scale CastType 5 became a lethal circle");
+        Check.That(!ForetellInferenceCore.IsAmbiguousLargeCircleAction(2, 6, false, 0), "ordinary small circle was suppressed");
+        Check.That(!ForetellInferenceCore.IsAmbiguousLargeCircleAction(2, 50, true, 0), "explicit target-area circle was suppressed");
+        Check.That(!ForetellInferenceCore.IsAmbiguousLargeCircleAction(2, 50, false, 123), "Omen-backed circle was suppressed");
+        Check.That(ForetellInferenceCore.IsReliableSpatialActionPrior(MechanicKind.GroundAOE, GeometryKind.Rectangle, .91f, 35, 1.5f),
+            "complete Action rectangle was not protected");
+        Check.That(!ForetellInferenceCore.IsReliableSpatialActionPrior(MechanicKind.GroundAOE, GeometryKind.Cone, .64f, 50, 0),
+            "incomplete Action cone was treated as authoritative");
+
+        var protectedPrior = new ContextualMechanic
+        {
+            Kind = MechanicKind.Debuff,
+            Geometry = GeometryKind.Unknown,
+            Observations = 10,
+            AmbiguousSamples = 10,
+            PriorKind = MechanicKind.GroundAOE,
+            PriorGeometry = GeometryKind.Rectangle,
+            PriorP1 = 35,
+            PriorP2 = 1.5f,
+            PriorConfidence = .91f,
+            Forecasts = 10,
+            ForecastMisses = 10
+        };
+        Check.That(protectedPrior.Confidence >= .91f, "ambient outcomes suppressed a reliable Action prior");
+        Check.That(protectedPrior.GuidanceConfidence >= .91f, "contaminated forecast counters suppressed a reliable Action telegraph");
+    }
+
     private static void ArenaBoundaryInference()
     {
         const int rays = 64;
@@ -486,6 +519,7 @@ static class ForetellCoreTests
     private static void DecisionAuditRoundTrip()
     {
         var store = new ForetellStore();
+        store.Sessions.Add(new() { SessionID = "test-session", PluginVersion = "0.8.9.0", TerritoryID = 192 });
         store.DecisionAudit.Add(new()
         {
             At = DateTime.UtcNow,
@@ -522,7 +556,8 @@ static class ForetellCoreTests
             MeanBossHPRatio = .7
         };
         var copy = JsonSerializer.Deserialize<ForetellStore>(JsonSerializer.Serialize(store));
-        Check.That(copy?.Schema == 20 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
+        Check.That(copy?.Schema == 21 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
+        Check.That(copy!.Sessions.Single().PluginVersion == "0.8.9.0", "session plugin-version provenance did not round-trip");
         var entry = copy!.DecisionAudit[0];
         Check.That(entry.Stage == DecisionAuditStage.Proposed && entry.Geometry == GeometryKind.Cone
             && entry.DisplayEligible && entry.SessionID == "test-session", "decision audit fields did not round-trip");

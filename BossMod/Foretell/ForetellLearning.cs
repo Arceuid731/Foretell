@@ -1596,15 +1596,27 @@ public sealed partial class ForetellEngine
         }
         mechanic.Score = mechanic.Observations == 1 ? score : mechanic.Score * .72f + score * .28f;
 
-        if (_cfg.EnableLearning && _cfg.EnableML && kind != MechanicKind.Unknown)
-            _classifier.Train(features, kind);
+        // Reliable Action-sheet semantics describe the action itself. Ambient statuses, movement and a player's
+        // successful dodge are contextual outcomes and must not rewrite a known rectangle/circle into CLEANSE,
+        // MOVE or KNOCKBACK. Reassert before training, validation and audit so all downstream consumers agree.
+        ReassertReliableActionPrior(mechanic);
+        var resolvedKind = mechanic.Kind;
 
-        if (_cfg.EnableLearning && episode.Trigger.Kind == ObservationKind.CastStart && fit is FitResult globalFit)
-            UpdateGlobalMechanic(episode, globalFit, kind);
+        if (_cfg.EnableLearning && _cfg.EnableML && resolvedKind != MechanicKind.Unknown)
+            _classifier.Train(features, resolvedKind);
+
+        if (_cfg.EnableLearning && episode.Trigger.Kind == ObservationKind.CastStart && fit is FitResult globalFit
+            && mechanic.PriorKind != MechanicKind.Gaze)
+        {
+            var canonicalFit = mechanic.HasReliableActionPrior
+                ? new FitResult(mechanic.PriorGeometry, globalFit.Origin, globalFit.Rotation, mechanic.PriorP1, mechanic.PriorP2, mechanic.PriorConfidence)
+                : globalFit;
+            UpdateGlobalMechanic(episode, canonicalFit, resolvedKind);
+        }
 
         bool? forecastVerified = null;
         if (episode.ForecastIssued)
-            forecastVerified = ValidateMechanicForecast(mechanic, episode, kind, fit);
+            forecastVerified = ValidateMechanicForecast(mechanic, episode, resolvedKind, fit);
 
         AddDecisionAudit(new()
         {

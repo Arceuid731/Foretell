@@ -195,6 +195,7 @@ internal sealed class LiveSessionStats
 {
     public string ID { get; } = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
     public DateTime Started { get; } = DateTime.UtcNow;
+    public string PluginVersion { get; set; } = "";
     public uint TerritoryID { get; set; }
     public int Pulls { get; set; }
     public int Phase { get; set; }

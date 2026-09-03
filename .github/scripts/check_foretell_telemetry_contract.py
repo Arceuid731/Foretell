@@ -98,7 +98,8 @@ requirements = {
     "BossMod/Foretell/ForetellModel.cs": [
         "DecisionAuditStage",
         "DecisionAuditEntry",
-        "public int Schema { get; set; } = 20",
+        "public int Schema { get; set; } = 21",
+        "public string PluginVersion { get; set; }",
         "List<DecisionAuditEntry> DecisionAudit",
         "SignalTriggerMemory",
         "Dictionary<string, SignalTriggerMemory> TriggerContexts",
@@ -304,6 +305,8 @@ requirements = {
         '"manifest.json"',
         "CompressionLevel.NoCompression",
         "displayEligibleMeaning",
+        "sessionPluginVersion",
+        "exporterPluginVersion",
     ],
     "BossMod/Foretell/ForetellRawFeatures.cs": [
         "MaxRawFeatureWindowsPerFrame",
@@ -416,6 +419,9 @@ requirements = {
         "CausalConfidence",
         "TimelineProbability",
         "GeometryMatches",
+        "IsGazeActionVFX",
+        "IsAmbiguousLargeCircleAction",
+        "IsReliableSpatialActionPrior",
     ],
     "BossMod/Foretell/ForetellStorageCore.cs": [
         "protectedFullPaths",
