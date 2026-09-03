@@ -6,8 +6,8 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
-    private const float TopologyRadius = 48f;
-    private const float TopologyResolution = 2f;
+    private const float TopologyRadius = 36f;
+    private const float TopologyResolution = 4f;
     private const int MaxTopologyRaysPerFrame = 4;
     private const double MaxTopologyMillisecondsPerFrame = .12;
     private readonly ForetellTopologyGrid _topology = new();
@@ -44,6 +44,7 @@ public sealed partial class ForetellEngine
         _topologySweepRequested = true;
         _topologySweepInProgress = false;
         _topologyRescanAfter = default;
+        ResetArenaBoundary();
     }
 
     private void InvalidateTopology()
@@ -51,6 +52,7 @@ public sealed partial class ForetellEngine
         ++_topologyInvalidations;
         _topologySweepRequested = true;
         _topologyRescanAfter = DateTime.UtcNow.AddMilliseconds(500);
+        InvalidateArenaBoundary();
     }
 
     // Collision pointers never cross threads. A tiny bounded probe slice runs on the framework thread while out of
@@ -61,15 +63,10 @@ public sealed partial class ForetellEngine
         PollCompletedTopologyAnalysis();
         // Never probe during combat: one driver/game-scene call cannot be pre-empted by a managed stopwatch after
         // it has entered native code. A completed pre-pull or remembered topology remains active for rendering.
-        if (_cfg.RadarShape != ForetellRadarShape.Auto
-            || Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat] || now < _topologySuspendedUntil)
+        if (Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat] || now < _topologySuspendedUntil)
             return;
         var player = _ws.Party[PartyState.PlayerSlot];
         if (player == null || _ws.CurrentCFCID == 0)
-            return;
-        if (!_topologySweepInProgress && (!_topologySweepRequested || now < _topologyRescanAfter))
-            return;
-        if (_topologyAnalysisTask != null)
             return;
 
         var framework = FFXIVFramework.Instance();
@@ -86,6 +83,20 @@ public sealed partial class ForetellEngine
             RegisterCapability("native.topology.collision", typeof(BGCollisionModule), "RaycastMaterialFilter", false, false, "non-finite player position rejected before native call");
             return;
         }
+        if (SampleNativeArenaBoundary(module, player3, player, now))
+            return;
+        // The inexpensive radial observer is also encounter-classification evidence, so it is independent of the
+        // chosen radar presentation. The denser floor fallback is only useful when Auto needs a rendered frame.
+        if (_cfg.RadarShape != ForetellRadarShape.Auto)
+            return;
+        // A complete radial wall boundary is both faster and more precise for normal enclosed rooms. The floor
+        // grid remains the fallback for open platforms and arenas whose edge has no vertical collision wall.
+        if (CurrentArenaBoundary != null)
+            return;
+        if (!_topologySweepInProgress && (!_topologySweepRequested || now < _topologyRescanAfter))
+            return;
+        if (_topologyAnalysisTask != null)
+            return;
         if (_topology.CellCount == 0)
             TryRestoreKnownTopology(player3);
         var needsReset = _topology.CellCount == 0
@@ -295,7 +306,7 @@ public sealed partial class ForetellEngine
     }
 
     internal bool? IsTopologyPassable(Vector2 world)
-        => _topology.IsConnectedPassable(world, _topologyAnalysis?.ConnectedCells);
+        => IsArenaBoundaryPassable(world) ?? _topology.IsConnectedPassable(world, _topologyAnalysis?.ConnectedCells);
 
     private static float SignedArea(IReadOnlyList<Vector2> points)
     {

@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace BossMod.Foretell;
 
 // Pure deterministic decision helpers shared by the live engine and the standalone regression harness.
@@ -14,22 +16,30 @@ public static class ForetellInferenceCore
             return false;
 
         var actorBound = actorID != 0 && actorOID != 0;
-        if (sourceKind is SourceKind.Enemy or SourceKind.EventObject)
+        if (sourceKind == SourceKind.Enemy)
         {
             if (!actorBound)
                 return false;
             return kind is ObservationKind.CastStart or ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
-                or ObservationKind.StatusGain or ObservationKind.ActorControlRaw
-                or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation
-                or ObservationKind.ActionTimelineEvent or ObservationKind.ActionTimelineSync or ObservationKind.NpcYell
+                or ObservationKind.StatusGain or ObservationKind.NpcYell
                 or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn;
+        }
+
+        // Event-object state, animation and timeline changes are valuable causal/timeline signals, but a door,
+        // key or shortcut changing state is not itself a mechanic. Only explicit hazard-like surfaces may open an
+        // event-object episode; later outcomes still decide whether that episode becomes learned guidance.
+        if (sourceKind == SourceKind.EventObject)
+        {
+            if (!actorBound)
+                return false;
+            return kind is ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
+                or ObservationKind.NpcYell or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn;
         }
 
         // Actorless signals are admitted only for explicit encounter/environment channels. In particular, an
         // actorless CastStart must never turn a player action (player OIDs are zero) into an environment mechanic.
         return sourceKind == SourceKind.Environment && kind is (ObservationKind.MapEffect or ObservationKind.LegacyMapEffect
-            or ObservationKind.DirectorUpdate or ObservationKind.ObjectEffect
-            or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation);
+            or ObservationKind.ObjectEffect);
     }
 
     public static bool IsMechanicOutcomeEvidence(ObservationKind kind, SourceKind sourceKind)
@@ -53,14 +63,27 @@ public static class ForetellInferenceCore
             return false;
         if (kind == ObservationKind.NativeVFXSpawn && actorID == 0 && targetID == 0)
             return false;
-        if (kind is (ObservationKind.StatusGain or ObservationKind.ActorControlRaw) && actorID == 0 && targetID == 0)
+        if (kind == ObservationKind.StatusGain && actorID == 0 && targetID == 0)
             return false;
-        return kind is ObservationKind.CastStart or ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
-            or ObservationKind.StatusGain or ObservationKind.ActorControlRaw
-            or ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation
-            or ObservationKind.ActionTimelineEvent or ObservationKind.ActionTimelineSync or ObservationKind.NpcYell
-            or ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.DirectorUpdate
-            or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn;
+        return sourceKind switch
+        {
+            SourceKind.Enemy => kind is ObservationKind.CastStart or ObservationKind.Icon or ObservationKind.VFX
+                or ObservationKind.TetherStart or ObservationKind.StatusGain or ObservationKind.NpcYell
+                or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn,
+            SourceKind.EventObject => kind is ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
+                or ObservationKind.NpcYell or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn,
+            SourceKind.Environment => kind is ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.ObjectEffect,
+            _ => false
+        };
+    }
+
+    // Converts an X/Z world offset to a player-up radar offset. Screen Y points down, so forward is negative Y.
+    public static Vector2 PlayerRelativeRadarOffset(Vector2 worldOffset, float playerRotation)
+    {
+        var (sin, cos) = MathF.SinCos(float.IsFinite(playerRotation) ? playerRotation : 0);
+        var side = worldOffset.X * cos - worldOffset.Y * sin;
+        var forward = worldOffset.X * sin + worldOffset.Y * cos;
+        return new(side, -forward);
     }
 
     public static float WilsonLowerBound(int successes, int attempts, double z = 1.96)

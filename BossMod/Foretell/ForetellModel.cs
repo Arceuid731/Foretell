@@ -265,6 +265,12 @@ public sealed class SourceMemory
     public int Casts { get; set; }
     public int Signals { get; set; }
     public int Deaths { get; set; }
+    // Encounter context is inferred only from observed collision, combat and actor properties. It is kept
+    // independently from mechanic identity so boss-arena sources and ordinary trash can be presented separately.
+    public uint MaximumHP { get; set; }
+    public float MaximumHitboxRadius { get; set; }
+    public int ArenaContextObservations { get; set; }
+    public int BossCandidateObservations { get; set; }
     public DateTime FirstSeen { get; set; }
     public DateTime LastSeen { get; set; }
 }
@@ -338,6 +344,7 @@ public sealed class EncounterMemory
     public Dictionary<string, CausalEdgeMemory> CausalEdges { get; set; } = [];
     public Dictionary<uint, RawOpcodeMemory> RawOpcodes { get; set; } = [];
     public Dictionary<string, ArenaTopologyMemory> Topologies { get; set; } = [];
+    public Dictionary<string, ArenaBoundaryMemory> ArenaBoundaries { get; set; } = [];
     public Dictionary<string, SignalExclusion> ExcludedSignals { get; set; } = [];
 }
 
@@ -374,6 +381,24 @@ public sealed class ArenaTopologyMemory
     public int Observations { get; set; }
 }
 
+public sealed class ArenaBoundaryMemory
+{
+    public string Fingerprint { get; set; } = "";
+    public float OriginX { get; set; }
+    public float OriginZ { get; set; }
+    public float ReferenceY { get; set; }
+    public List<TopologyPoint> Points { get; set; } = [];
+    public int Rays { get; set; }
+    public int Hits { get; set; }
+    public float Area { get; set; }
+    public float Compactness { get; set; }
+    public float AspectRatio { get; set; }
+    public bool ArenaLike { get; set; }
+    public DateTime FirstSeen { get; set; }
+    public DateTime LastSeen { get; set; }
+    public int Observations { get; set; }
+}
+
 public sealed class MLState
 {
     public int FeatureCount { get; set; } = OnlineClassifier.FeatureCount;
@@ -384,7 +409,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 16;
+    public int Schema { get; set; } = 17;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];

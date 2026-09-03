@@ -306,6 +306,7 @@ public sealed partial class ForetellEngine : IDisposable
         PollStorageMaintenance();
         if (!PerformanceThrottled)
             SampleNativeTopology();
+        RefreshLearnedArenaSourceContext();
         if ((now - _lastPositionSample).TotalMilliseconds >= 250)
         {
             SamplePartyPositions();
@@ -629,7 +630,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 16);
+        _store.Schema = Math.Max(_store.Schema, 17);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -671,6 +672,7 @@ public sealed partial class ForetellEngine : IDisposable
                 encounter.CausalEdges ??= [];
                 encounter.RawOpcodes ??= [];
                 encounter.Topologies ??= [];
+                encounter.ArenaBoundaries ??= [];
                 encounter.ExcludedSignals ??= [];
                 RemoveNullValues(encounter.Sources);
                 RemoveNullValues(encounter.Mechanics);
@@ -681,10 +683,11 @@ public sealed partial class ForetellEngine : IDisposable
                 RemoveNullValues(encounter.CausalEdges);
                 RemoveNullValues(encounter.RawOpcodes);
                 RemoveNullValues(encounter.Topologies);
+                RemoveNullValues(encounter.ArenaBoundaries);
                 RemoveNullValues(encounter.ExcludedSignals);
                 if (loadedSchema < 14)
                     MigrateUnreliableV08DerivedMemory(encounter);
-                if (loadedSchema < 16)
+                if (loadedSchema < 17)
                     migratedInvalidMechanics += MigrateInvalidMechanicSources(encounter, migratedInvalidActions);
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
@@ -715,6 +718,9 @@ public sealed partial class ForetellEngine : IDisposable
                     source.Casts = Math.Max(0, source.Casts);
                     source.Signals = Math.Max(0, source.Signals);
                     source.Deaths = Math.Max(0, source.Deaths);
+                    source.MaximumHitboxRadius = Finite(source.MaximumHitboxRadius, 0, 0, 100);
+                    source.ArenaContextObservations = Math.Max(0, source.ArenaContextObservations);
+                    source.BossCandidateObservations = Math.Clamp(source.BossCandidateObservations, 0, source.ArenaContextObservations);
                 }
                 foreach (var key in encounter.ExcludedSignals.Keys.ToArray())
                 {
@@ -753,6 +759,8 @@ public sealed partial class ForetellEngine : IDisposable
                 }
                 foreach (var topologyKey in encounter.Topologies.Keys.ToArray())
                     if (!NormalizeTopology(encounter.Topologies[topologyKey])) encounter.Topologies.Remove(topologyKey);
+                foreach (var boundaryKey in encounter.ArenaBoundaries.Keys.ToArray())
+                    if (!NormalizeArenaBoundary(encounter.ArenaBoundaries[boundaryKey])) encounter.ArenaBoundaries.Remove(boundaryKey);
                 TrimEncounterCollections(encounter);
                 encounter.Sessions = Math.Max(0, encounter.Sessions);
                 encounter.Pulls = Math.Max(0, encounter.Pulls);
@@ -763,7 +771,7 @@ public sealed partial class ForetellEngine : IDisposable
                 Service.Log($"[Foretell] Rejected malformed learned encounter {encounterKey} safely: {e.Message}");
             }
         }
-        if (loadedSchema < 16)
+        if (loadedSchema < 17)
         {
             var validEnemyActions = _store.Encounters.Values.SelectMany(encounter => encounter.Mechanics.Values)
                 .Where(mechanic => mechanic.TriggerKind == ObservationKind.CastStart && mechanic.SourceKind is not SourceKind.Player and not SourceKind.Pet)
@@ -779,7 +787,7 @@ public sealed partial class ForetellEngine : IDisposable
                 // The classifier was trained from the same contaminated episodes and has no source attribution in
                 // its persisted weights, so retaining it would keep player rotations influencing future labels.
                 _store.ML = new();
-                Service.Log($"[Foretell] Removed {migratedInvalidMechanics} invalid player/pet/unbound mechanics and reset contaminated derived ML state.");
+                Service.Log($"[Foretell] Removed {migratedInvalidMechanics} invalid player/pet/non-mechanic signal episodes and reset contaminated derived ML state.");
             }
         }
     }
@@ -883,6 +891,8 @@ public sealed partial class ForetellEngine : IDisposable
             foreach (var key in encounter.RawOpcodes.OrderByDescending(item => item.Value.Packets).Skip(4096).Select(item => item.Key).ToArray()) encounter.RawOpcodes.Remove(key);
         if (encounter.Topologies.Count > 8)
             foreach (var key in encounter.Topologies.OrderByDescending(item => item.Value.LastSeen).Skip(8).Select(item => item.Key).ToArray()) encounter.Topologies.Remove(key);
+        if (encounter.ArenaBoundaries.Count > 16)
+            foreach (var key in encounter.ArenaBoundaries.OrderByDescending(item => item.Value.LastSeen).Skip(16).Select(item => item.Key).ToArray()) encounter.ArenaBoundaries.Remove(key);
     }
 
     private static void NormalizeLearnedMechanic(LearnedMechanic mechanic)
@@ -977,6 +987,25 @@ public sealed partial class ForetellEngine : IDisposable
         topology.UnknownCells = Math.Clamp(topology.UnknownCells, 0, topology.Cells.Length);
         topology.Components = Math.Max(0, topology.Components);
         topology.Observations = Math.Max(0, topology.Observations);
+        return true;
+    }
+
+    private static bool NormalizeArenaBoundary(ArenaBoundaryMemory boundary)
+    {
+        boundary.Fingerprint ??= "";
+        boundary.Points ??= [];
+        boundary.Points.RemoveAll(point => point == null || !float.IsFinite(point.X) || !float.IsFinite(point.Z));
+        if (boundary.Points.Count is < 16 or > 512 || string.IsNullOrWhiteSpace(boundary.Fingerprint))
+            return false;
+        boundary.OriginX = Finite(boundary.OriginX, 0, -100000, 100000);
+        boundary.OriginZ = Finite(boundary.OriginZ, 0, -100000, 100000);
+        boundary.ReferenceY = Finite(boundary.ReferenceY, 0, -10000, 10000);
+        boundary.Rays = Math.Clamp(boundary.Rays, boundary.Points.Count, 512);
+        boundary.Hits = Math.Clamp(boundary.Hits, 0, boundary.Rays);
+        boundary.Area = Finite(boundary.Area, 0, 0, 100000);
+        boundary.Compactness = Finite(boundary.Compactness, 0, 0, 1);
+        boundary.AspectRatio = Finite(boundary.AspectRatio, 100, 1, 100);
+        boundary.Observations = Math.Max(0, boundary.Observations);
         return true;
     }
 

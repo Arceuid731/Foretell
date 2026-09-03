@@ -152,6 +152,7 @@ public sealed partial class ForetellEngine
             ObservationKind.NormalToast or ObservationKind.QuestToast or ObservationKind.ErrorToast or ObservationKind.SystemLog)
             ++source.Signals;
         if (observation.Kind == ObservationKind.DeathChanged && observation.Flag) ++source.Deaths;
+        RecordLearnedArenaSourceContext(observation, source);
     }
 
     private void UpdateRawProtocolMemory(EncounterMemory encounter, ForetellObservation observation)

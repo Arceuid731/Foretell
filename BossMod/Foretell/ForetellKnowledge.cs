@@ -5,6 +5,20 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
+    private string ExportEncounterKnowledge(EncounterMemory encounter)
+    {
+        var path = Path.Combine(_replayDir, $"foretell-knowledge-T{encounter.TerritoryID}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+        var payload = new
+        {
+            schema = _store.Schema,
+            exportedAt = DateTime.UtcNow,
+            content = EncounterDisplayName(encounter),
+            encounter
+        };
+        File.WriteAllText(path, JsonSerializer.Serialize(payload, _diagnosticJson));
+        return path;
+    }
+
     private void RefreshEncounterIdentity(EncounterMemory encounter, uint cfcID)
     {
         string? territoryName = null;
@@ -362,6 +376,14 @@ public sealed partial class ForetellEngine
 
     private void PurgeSession(string sessionID)
         => _store.Sessions.RemoveAll(session => string.Equals(session.SessionID, sessionID, StringComparison.Ordinal));
+
+    private void PurgeArenaBoundary(uint territoryID, string fingerprint)
+    {
+        if (_store.Encounters.TryGetValue(territoryID, out var encounter))
+            encounter.ArenaBoundaries.Remove(fingerprint);
+        if (territoryID == _territory && _arenaBoundary?.Fingerprint == fingerprint)
+            _arenaBoundary = null;
+    }
 
     private void DeleteStorageFile(string path)
     {

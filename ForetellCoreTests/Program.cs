@@ -18,6 +18,7 @@ static class ForetellCoreTests
         TopologyConnectedComponentAndHole();
         TopologyLoadBudget();
         TopologyFuzzMaintainsInvariants();
+        ArenaBoundaryInference();
         RawRoundTrip();
         RawLiveReplayDeterminism();
         RawStructuralFeaturesAreDeterministic();
@@ -31,6 +32,7 @@ static class ForetellCoreTests
         CausalAndTimelineConfidence();
         GeometryValidationAndGuidance();
         MechanicSourcesExcludePartyActions();
+        RadarIsPlayerRelative();
         OutOfCombatHazardContextIsScoped();
         StorageMaintenanceProtectsActiveFiles();
         Console.WriteLine("Foretell core tests passed.");
@@ -342,6 +344,31 @@ static class ForetellCoreTests
         Check.That(stable.AnchorStdDev < 3 && unstable.AnchorStdDev > 3, "anchor stability gate is incorrect");
     }
 
+    private static void ArenaBoundaryInference()
+    {
+        const int rays = 64;
+        var circular = Enumerable.Repeat(20f, rays).ToArray();
+        var hits = Enumerable.Repeat(true, rays).ToArray();
+        var arena = ForetellArenaBoundaryCore.Analyze(new(100, 200), 5, circular, hits, 42);
+        Check.That(arena.ArenaLike && arena.Points.Count == rays, "enclosed compact arena was not recognized");
+        Check.That(ForetellArenaBoundaryCore.Contains(arena.Points, new(100, 200)), "arena center was outside learned boundary");
+        Check.That(!ForetellArenaBoundaryCore.Contains(arena.Points, new(150, 200)), "outside point entered learned boundary");
+
+        var corridor = new float[rays];
+        for (var i = 0; i < rays; ++i)
+        {
+            var angle = MathF.Tau * i / rays;
+            var x = Math.Abs(MathF.Sin(angle));
+            var z = Math.Abs(MathF.Cos(angle));
+            corridor[i] = Math.Min(x < .001f ? 42 : 4 / x, z < .001f ? 42 : 30 / z);
+        }
+        var hallway = ForetellArenaBoundaryCore.Analyze(Vector2.Zero, 0, corridor, hits, 42);
+        Check.That(!hallway.ArenaLike && hallway.AspectRatio > 2.6f, "long corridor was classified as a boss arena");
+        Check.That(!ForetellArenaBoundaryCore.IsBossCandidate(2_200, 2_200, 2_000, 1), "ordinary trash was classified as a boss");
+        Check.That(ForetellArenaBoundaryCore.IsBossCandidate(12_000, 12_000, 2_000, 2), "high-health boss was not recognized");
+        Check.That(!ForetellArenaBoundaryCore.IsBossCandidate(2_000, 12_000, 2_000, 2), "boss add was classified as the boss");
+    }
+
     private static void OutOfCombatHazardContextIsScoped()
     {
         Check.That(ForetellInferenceCore.TimelinePhase(false, 4) == ForetellInferenceCore.OutOfCombatHazardPhase, "out-of-combat signals leaked into a boss phase");
@@ -361,9 +388,23 @@ static class ForetellCoreTests
         Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.CastStart, SourceKind.Unknown, 30, 456), "unknown actor became a mechanic source");
         Check.That(ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.CastStart, SourceKind.Enemy, 30, 456), "enemy cast was rejected");
         Check.That(ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.MapEffect, SourceKind.Environment, 0, 0), "arena map effect was rejected");
+        Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.DirectorUpdate, SourceKind.Environment, 0, 0), "duty state became a mechanic");
+        Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.EventObjectState, SourceKind.EventObject, 40, 789), "door/key state became a mechanic");
+        Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.ActorControlRaw, SourceKind.Enemy, 30, 456), "raw actor control became a mechanic");
+        Check.That(ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.ObjectEffect, SourceKind.EventObject, 40, 789), "explicit event-object effect was rejected");
         Check.That(!ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.ActionResolved, SourceKind.Player), "player action became outcome evidence");
         Check.That(ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.Displacement, SourceKind.Player), "player displacement was lost as knockback evidence");
         Check.That(ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.DeathChanged, SourceKind.Player), "player death was lost as lethal evidence");
+    }
+
+    private static void RadarIsPlayerRelative()
+    {
+        var southFacing = ForetellInferenceCore.PlayerRelativeRadarOffset(new(0, 10), 0);
+        Check.That(Vector2.Distance(southFacing, new(0, -10)) < .001f, "south-facing forward was not radar-up");
+        var eastFacing = ForetellInferenceCore.PlayerRelativeRadarOffset(new(10, 0), MathF.PI * .5f);
+        Check.That(Vector2.Distance(eastFacing, new(0, -10)) < .001f, "east-facing forward was not radar-up");
+        var right = ForetellInferenceCore.PlayerRelativeRadarOffset(new(0, -10), MathF.PI * .5f);
+        Check.That(Vector2.Distance(right, new(10, 0)) < .001f, "player-relative right was not radar-right");
     }
 
     private static void StorageMaintenanceProtectsActiveFiles()

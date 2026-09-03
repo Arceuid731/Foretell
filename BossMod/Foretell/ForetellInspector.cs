@@ -8,6 +8,7 @@ public sealed partial class ForetellEngine
 {
     private uint _inspectorTerritory;
     private string _diagnosticsPath = "";
+    private string _knowledgeExportPath = "";
     private Action? _pendingPurge;
     private string _pendingPurgeTitle = "";
     private string _pendingPurgeDescription = "";
@@ -23,7 +24,7 @@ public sealed partial class ForetellEngine
     private List<ForetellObservation> _pausedLiveFeed = [];
     private DateTime _lastStorageRefresh;
     private List<StorageFileEntry> _storageFiles = [];
-    private static readonly string[] RadarShapeLabels = ["Auto (learned topology)", "Circle", "Square"];
+    private static readonly string[] RadarShapeLabels = ["Auto (observed arena boundary)", "Circle", "Square"];
     private static readonly string[] KnowledgeConfidenceLabels = ["All confidence levels", "Learned (75%+)", "High (95%+)", "Safe (99%+)"];
     private static readonly string[] ObservationKindLabels = ["All event types", .. Enum.GetNames<ObservationKind>()];
     private readonly record struct StorageFileEntry(string Path, string Kind, long Bytes, DateTime Updated, bool Active);
@@ -346,9 +347,11 @@ public sealed partial class ForetellEngine
             changed |= ImGui.SliderFloat("Zoom: distance to edge (yalms)", ref _cfg.RadarWorldRadius, 5, 120);
             ImGui.TextDisabled($"Current view: {_cfg.RadarWorldRadius:F0} yalms from the player to each edge; smaller means more zoom.");
             if (_cfg.RadarShape == ForetellRadarShape.Auto)
-                ImGui.TextDisabled(_topologyAnalysis is { UnknownCells: 0, PassableCells: > 0 }
-                    ? $"Auto uses native collision topology ({_topologyAnalysis.PassableCells:N0} reachable cells)."
-                    : "Auto is scanning native collision; a temporary circle is used until the sweep is complete.");
+                ImGui.TextDisabled(CurrentArenaBoundary is { } boundary
+                    ? $"Auto uses an observed collision boundary ({boundary.Hits}/{boundary.Rays} wall rays; {(boundary.ArenaLike ? "arena candidate" : "room/corridor")})."
+                    : _topologyAnalysis is { UnknownCells: 0, PassableCells: > 0 }
+                        ? $"Auto uses observed floor topology ({_topologyAnalysis.PassableCells:N0} reachable cells)."
+                        : "Auto is scanning collision while you are briefly still outside combat; a circle is used until ready.");
             if (ImGui.Button("Reset radar to top-right"))
             {
                 _cfg.RadarPositionX = -1;
@@ -371,7 +374,7 @@ public sealed partial class ForetellEngine
         var nativeBacklogged = _nativeHookPending > 2048;
         var replayDegraded = _replay is { } replayWriter && (replayWriter.Failed || replayWriter.Rejected != 0 || replayWriter.Pending > 4096);
         var topologyHealthy = !TopologySuspended;
-        var topologyWaitingForPrePull = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat] && _topologyAnalysis == null;
+        var topologyWaitingForPrePull = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat] && CurrentArenaBoundary == null && _topologyAnalysis == null;
         var runtimeHealthy = _updateFailures == 0 && _drawFailures == 0 && _episodeRejections == 0 && _learningEvictions == 0
             && _semanticObservationsRejected == 0 && !PerformanceThrottled;
         var healthy = !_raw.Failed && _raw.RejectedItems == 0 && !rawBacklogged && !nativeBacklogged && !replayDegraded && _nativeHookFailures == 0 && _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 && topologyHealthy && runtimeHealthy && coverage.Unaccounted == 0;
@@ -391,7 +394,7 @@ public sealed partial class ForetellEngine
             DrawTelemetryRow("Typed runtime snapshots", _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 ? "ACTIVE" : "DEGRADED", $"1 Hz typed {_lastTypedSnapshotMilliseconds:F2} ms (peak {_peakTypedSnapshotMilliseconds:F2}); native {_lastNativeActorMilliseconds:F2} ms (peak {_peakNativeActorMilliseconds:F2}); {_typedSnapshotFailures + _nativeSnapshotFailures:N0} rejects");
             DrawTelemetryRow("Generic live reflection", "REPLACED", "Typed roots + WorldState deltas; no unmanaged getters on frame thread");
             DrawTelemetryRow("Native ObjectEffect + VFX lifecycle", _nativeHookFailures == 0 ? nativeBacklogged ? "BACKLOG" : "ACTIVE" : "DEGRADED", $"Primitive queue: {_nativeHookPending:N0} queued / {_nativeHookProcessed:N0} processed / {_nativeHookFailures:N0} rejected; drain {_lastNativeHookDrainMilliseconds:F2} ms (peak {_peakNativeHookDrainMilliseconds:F2})");
-            DrawTelemetryRow("Native collision topology", !topologyHealthy ? "SAFE COOLDOWN" : _ws.CurrentCFCID == 0 ? "IDLE" : topologyWaitingForPrePull ? "WAITING FOR PRE-PULL" : _topologyAnalysis == null ? "SCANNING" : "ACTIVE", $"Automatic outside combat in duties; {_topologyRays:N0} probes / {_topologySweeps:N0} sweeps / {_topologyChanges:N0} changes / {_topologyInvalidations:N0} structural signals; {_lastTopologyMilliseconds:F2} ms (peak {_peakTopologyMilliseconds:F2}); {_topologyOverruns:N0} overruns / {_topologyFailures:N0} rejects");
+            DrawTelemetryRow("Native collision topology", !topologyHealthy ? "SAFE COOLDOWN" : _ws.CurrentCFCID == 0 ? "IDLE" : topologyWaitingForPrePull ? "WAITING FOR PRE-PULL" : CurrentArenaBoundary != null || _topologyAnalysis != null ? "ACTIVE" : "SCANNING", $"Observed only; {_arenaBoundaryRays:N0} wall rays / {_arenaBoundarySweeps:N0} boundary sweeps / {_arenaBoundaryChanges:N0} changes; {_topologyRays:N0} floor probes / {_topologySweeps:N0} fallback sweeps; {_topologyInvalidations:N0} structural signals; {_lastTopologyMilliseconds:F2} ms (peak {_peakTopologyMilliseconds:F2}); {_topologyOverruns:N0} overruns / {_topologyFailures:N0} rejects");
             DrawTelemetryRow("Foretell frame budget", runtimeHealthy ? "HEALTHY" : PerformanceThrottled ? "ADAPTIVE THROTTLE" : "DEGRADED", $"update {_lastUpdateMilliseconds:F2} ms last / {_meanUpdateMilliseconds:F2} ms mean / {_peakUpdateMilliseconds:F2} ms peak; semantic {_semanticMillisecondsThisFrame:F2} ms this frame / {_semanticPeakMilliseconds:F2} ms peak observation; {_semanticBudgetTrips:N0} burst trips / {_semanticObservationsRejected:N0} derived observations shed / {_updateOverruns:N0} update overruns / {_episodeRejections:N0} episode rejects");
             DrawTelemetryRow("Coverage ledger", coverage.Unaccounted == 0 ? "ACCOUNTED" : "INCOMPLETE", $"{coverage.Ingested} ingested / {coverage.Excluded} explicitly excluded / {coverage.Unaccounted} unaccounted");
             ImGui.EndTable();
@@ -461,12 +464,36 @@ public sealed partial class ForetellEngine
             : name;
         var open = ImGui.TreeNodeEx($"{label}##knowledge-territory-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth);
         ImGui.SameLine();
+        if (ImGui.Button($"Export##export-territory-{encounter.TerritoryID}"))
+        {
+            try
+            {
+                _knowledgeExportPath = ExportEncounterKnowledge(encounter);
+                Service.ChatGui.Print($"Foretell content export: {_knowledgeExportPath}");
+            }
+            catch (Exception e) { Service.ChatGui.PrintError($"Foretell content export failed: {e.Message}"); }
+        }
+        ImGui.SameLine();
         if (ImGui.Button($"Delete##delete-territory-{encounter.TerritoryID}"))
             RequestPurge(name, $"Delete this territory/content, its sources, mechanics, timelines and session history?", () => PurgeEncounter(encounter.TerritoryID));
         if (!open)
             return;
 
         ImGui.TextDisabled($"Territory {encounter.TerritoryID} | duty {encounter.ContentFinderConditionID} | {encounter.Sessions} sessions | {encounter.Pulls} pulls | {encounter.Mechanics.Count} mechanics");
+        if (!string.IsNullOrWhiteSpace(_knowledgeExportPath))
+            ImGui.TextDisabled($"Latest focused export: {_knowledgeExportPath}");
+
+        if (encounter.ArenaBoundaries.Count > 0 && ImGui.TreeNodeEx($"Observed room / arena boundaries  ({encounter.ArenaBoundaries.Count} states)##boundaries-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
+        {
+            foreach (var boundary in encounter.ArenaBoundaries.Values.OrderByDescending(item => item.LastSeen))
+            {
+                ImGui.BulletText($"{boundary.Fingerprint[..Math.Min(8, boundary.Fingerprint.Length)]} · {boundary.Hits}/{boundary.Rays} wall rays · area {boundary.Area:F0} · {(boundary.ArenaLike ? "arena candidate" : "room/corridor")} · seen {boundary.Observations}x");
+                ImGui.SameLine();
+                if (ImGui.SmallButton($"Delete##delete-boundary-{encounter.TerritoryID}-{boundary.Fingerprint}"))
+                    RequestPurge("Observed arena boundary", "Delete this learned collision boundary? It can be scanned again outside combat.", () => PurgeArenaBoundary(encounter.TerritoryID, boundary.Fingerprint));
+            }
+            ImGui.TreePop();
+        }
 
         if (encounter.Topologies.Count > 0 && ImGui.TreeNodeEx($"Arena topology  ({encounter.Topologies.Count} states)##topologies-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
         {
@@ -491,41 +518,30 @@ public sealed partial class ForetellEngine
         var visibleMechanicSourceIDs = mechanicsBySource.Keys.ToHashSet();
         bool DirectSourceMatch(SourceMemory source) => string.IsNullOrWhiteSpace(_knowledgeFilter)
             || ContainsFilter(SourceDisplayName(source)) || ContainsFilter($"{source.OID:X}") || visibleMechanicSourceIDs.Contains(source.OID);
-        var allMechanicSourceIDs = encounter.Mechanics.Values.Select(mechanic => mechanic.SourceOID).ToHashSet();
-        var mechanicSources = encounter.Sources.Values
-            .Where(source => source.OID != 0 && (parentMatchesSearch || DirectSourceMatch(source)) && mechanicsBySource.ContainsKey(source.OID))
-            .OrderByDescending(source => mechanicsBySource[source.OID].Length)
+        var visibleSources = encounter.Sources.Values
+            .Where(source => source.OID != 0 && (parentMatchesSearch || DirectSourceMatch(source))
+                && (_knowledgeConfidenceFilter == 0 || mechanicsBySource.ContainsKey(source.OID)))
             .ToArray();
-        if (mechanicSources.Length != 0 && ImGui.TreeNodeEx($"Enemies & mechanic sources  ({mechanicSources.Length})##mechanic-sources-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
-        {
-            foreach (var source in mechanicSources)
-                DrawSourceKnowledge(encounter, source, mechanicsBySource[source.OID]);
-            ImGui.TreePop();
-        }
-
-        var otherSources = encounter.Sources.Values
-            .Where(source => source.OID != 0 && source.Kind is not SourceKind.Player and not SourceKind.Pet && _knowledgeConfidenceFilter == 0
-                && (parentMatchesSearch || DirectSourceMatch(source)) && !allMechanicSourceIDs.Contains(source.OID))
-            .OrderByDescending(source => source.Observations)
-            .ToArray();
-        if (otherSources.Length != 0 && ImGui.TreeNodeEx($"Other observed mobs / objects  ({otherSources.Length})##other-sources-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
-        {
-            foreach (var source in otherSources)
-                DrawSourceKnowledge(encounter, source, []);
-            ImGui.TreePop();
-        }
-        var partySources = encounter.Sources.Values
-            .Where(source => source.Kind is SourceKind.Player or SourceKind.Pet && _knowledgeConfidenceFilter == 0
-                && (parentMatchesSearch || DirectSourceMatch(source)))
-            .OrderByDescending(source => source.Observations)
-            .ToArray();
-        if (partySources.Length != 0 && ImGui.TreeNodeEx($"Party, allies & pets  ({partySources.Length})##party-sources-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
-        {
-            foreach (var source in partySources)
-                DrawSourceKnowledge(encounter, source, []);
-            ImGui.TreePop();
-        }
+        DrawGroup("Boss arenas — bosses & adds", "arena-sources", visibleSources.Where(source => source.Kind == SourceKind.Enemy && source.ArenaContextObservations > 0));
+        DrawGroup("Trash & open-world mobs", "normal-enemies", visibleSources.Where(source => source.Kind == SourceKind.Enemy && source.ArenaContextObservations == 0));
+        DrawGroup("Dungeon / encounter objects", "encounter-objects", visibleSources.Where(source => source.Kind == SourceKind.EventObject));
+        DrawGroup("Other observed sources", "other-sources", visibleSources.Where(source => source.Kind is not SourceKind.Enemy and not SourceKind.EventObject and not SourceKind.Player and not SourceKind.Pet));
+        DrawGroup("Party, allies & pets", "party-sources", visibleSources.Where(source => source.Kind is SourceKind.Player or SourceKind.Pet));
         ImGui.TreePop();
+
+        void DrawGroup(string groupLabel, string id, IEnumerable<SourceMemory> candidates)
+        {
+            var sources = candidates
+                .OrderByDescending(source => source.BossCandidateObservations)
+                .ThenByDescending(source => mechanicsBySource.GetValueOrDefault(source.OID)?.Length ?? 0)
+                .ThenByDescending(source => source.Observations)
+                .ToArray();
+            if (sources.Length == 0 || !ImGui.TreeNodeEx($"{groupLabel}  ({sources.Length})##{id}-{encounter.TerritoryID}", ImGuiTreeNodeFlags.SpanAvailWidth))
+                return;
+            foreach (var source in sources)
+                DrawSourceKnowledge(encounter, source, mechanicsBySource.GetValueOrDefault(source.OID) ?? []);
+            ImGui.TreePop();
+        }
     }
 
     private void DrawEnvironmentKnowledge(EncounterMemory encounter, ContextualMechanic[] mechanics)
@@ -550,7 +566,9 @@ public sealed partial class ForetellEngine
             RequestPurge(name, "Delete this source, all mechanics attributed to it and their dependent timelines?", () => PurgeSource(encounter.TerritoryID, source.OID));
         if (!open)
             return;
-        ImGui.TextDisabled($"{source.Kind} | OID 0x{source.OID:X8} | {source.Observations:N0} observations | {source.Casts:N0} casts | {source.Signals:N0} signals");
+        var context = source.BossCandidateObservations > 0 ? "boss candidate (observed arena)"
+            : source.ArenaContextObservations > 0 ? "arena add/source" : source.Kind.ToString();
+        ImGui.TextDisabled($"{context} | OID 0x{source.OID:X8} | HP max {source.MaximumHP:N0} | {source.Observations:N0} observations | {source.Casts:N0} casts | {source.Signals:N0} signals");
         foreach (var mechanic in mechanics)
             DrawMechanicKnowledge(encounter, mechanic);
         ImGui.TreePop();

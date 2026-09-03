@@ -162,6 +162,10 @@ requirements = {
         "RadarWorldRadius",
         "MaxRenderedMechanics",
         "FiniteViewport(viewport)",
+        "PlayerRelativeRadarOffset",
+        "DrawRadarActors",
+        "DrawArenaBoundaryRadarFrame",
+        "↑ forward",
     ],
     "BossMod/Foretell/ForetellInspector.cs": [
         'DrawInspectorTab("Knowledge explorer", DrawKnowledgeExplorer)',
@@ -183,6 +187,7 @@ requirements = {
         "Raw protocol families",
     ],
     "BossMod/Foretell/ForetellKnowledge.cs": [
+        "ExportEncounterKnowledge",
         "RefreshEncounterIdentity",
         "EncounterDisplayName",
         "SourceDisplayName",
@@ -192,6 +197,7 @@ requirements = {
         "PurgeSource",
         "PurgeMechanic",
         "PurgeTopology",
+        "PurgeArenaBoundary",
         "PurgeTimelineEdge",
         "PurgeComposite",
         "PurgePhase",
@@ -309,6 +315,27 @@ requirements = {
         "SuspendTopology",
         "++_topologyInvalidations",
         "non-finite player position rejected before native call",
+        "SampleNativeArenaBoundary",
+        "CurrentArenaBoundary",
+    ],
+    "BossMod/Foretell/ForetellArenaBoundary.cs": [
+        "ArenaBoundaryRayCount = 64",
+        "MaxArenaBoundaryRaysPerFrame = 4",
+        "MaxArenaBoundaryMillisecondsPerFrame = .12",
+        "BGCollisionModule.RaycastMaterialFilter",
+        "ConditionFlag.InCombat",
+        "ArenaEnemySummary",
+        "HasBossCandidate",
+        "SuspendTopology",
+    ],
+    "BossMod/Foretell/ForetellArenaBoundaryCore.cs": [
+        "ForetellArenaBoundaryCore",
+        "public static ArenaBoundaryAnalysis Analyze",
+        "public static bool Contains",
+        "public static bool IsBossCandidate",
+        "playerMaximumHP * 2f",
+        "arenaLike",
+        "nothing about BMR modules or encounter identities",
     ],
     "BossMod/Foretell/ForetellTopologyGrid.cs": [
         "Flood(seed, connected, maxStepHeight)",
@@ -347,6 +374,8 @@ requirements = {
         "Math.Clamp(w[i] + learningRate * error * x[i], -20, 20)",
     ],
     "BossMod/Foretell/ForetellInferenceCore.cs": [
+        "CanStartMechanicEpisode",
+        "PlayerRelativeRadarOffset",
         "WilsonLowerBound",
         "GuidanceConfidence",
         "CausalConfidence",
@@ -526,6 +555,11 @@ for forbidden, reason in {
 }.items():
     if forbidden in foretell_sources:
         errors.append(f"Foretell sources contain {reason}: {forbidden!r}")
+
+arena_observer = read("BossMod/Foretell/ForetellArenaBoundary.cs") + read("BossMod/Foretell/ForetellArenaBoundaryCore.cs")
+for forbidden in ["BossModuleManager", "BossModuleRegistry", "ArenaBounds", "BossMod.Modules."]:
+    if forbidden in arena_observer:
+        errors.append(f"Foretell arena observation imports authored BMR arena knowledge: {forbidden!r}")
 
 authored_import = re.compile(r"^\s*using\s+BossMod\.(?:Modules|Components|BossModule)(?:\.|;)", re.MULTILINE)
 if authored_import.search(foretell_sources):
