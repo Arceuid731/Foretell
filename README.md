@@ -88,14 +88,14 @@ Foretell starts without authored encounter answers. It learns from:
 - typed WorldState deltas: actors, movement, casts, statuses, targets, enmity, party/alliance, cooldowns, gauges, waymarks, map/director events, tethers, icons, timelines and Deep Dungeon state;
 - bounded native `Character` snapshots: both tether slots and progress, animation timeline, model, transformation, target/mode and VFX container state;
 - native actor/static VFX paths and lifecycles plus object effects, copied into primitive queues before deferred processing;
-- native weather/time/transition state, camera matrices/viewport and a budgeted collision sweep used to learn reachable arena contours;
+- native weather/time/transition state, camera matrices/viewport and a budgeted local collision rasterizer used to reconstruct the walkable surface around the player;
 - explicitly classified Dalamud gameplay services, Lumina metadata and observed outcomes.
 
 Continuous state is sampled with change detection and rotating actor slices; unique events remain exact. Heavy compression and normalized replay serialization run off the game thread, while learned-memory autosave is deferred until combat is inactive. Every framework-frame drain has a count and time budget, with a small reserve for sparse enemy casts and resolutions during high-volume alliance-raid frames. Persistent learning collections have pressure limits, and the Dashboard exposes backlog, rejection, eviction, failure and timing counters. A degraded sensor is reported instead of silently presented as complete.
 
 It must not import BossModule mechanics, state machines, boss components, encounter layouts/presets or equivalent hand-authored safe spots and phase answers. CI checks this boundary and the in-game coverage audit reports any sensor that is truncated, unavailable or not explicitly classified.
 
-The radar can be unlocked and dragged, resized, zoomed in world yalms, or forced to a circle/square. In Auto mode it accepts a radial collision boundary only when the sweep is nearly enclosed; partial player-centered wall fans are never rendered or persisted as arenas. Open platforms use the denser learned floor topology once a complete sweep is available, with a temporary circle fallback while scanning.
+The radar can be unlocked and dragged, resized independently in pixels, zoomed in world yalms, or forced to a circle/square. In Auto mode Foretell continuously samples nearby collision floors and the traversability of each connection, keeps only the component reachable from the player, and redraws it progressively inside the selected visible radius. The grid is player-centred and resolution-adaptive, so moving through a duty or the open world never accumulates into a full-map reveal. Combat transitions and structural map/object signals invalidate the connections and rescan them; a collision barrier that closes at pull start therefore cuts the generic local surface without a boss or territory rule. A separate radial sweep remains a fast enclosed-arena fallback, and partial wall fans are never persisted as arena boundaries.
 
 ## Upstream
 

@@ -17,6 +17,8 @@ static class ForetellCoreTests
     public static void Main()
     {
         TopologyConnectedComponentAndHole();
+        TopologyBarrierClosesConnectedSurface();
+        TopologyRequiresObservedConnections();
         TopologyLoadBudget();
         TopologyFuzzMaintainsInvariants();
         ArenaBoundaryInference();
@@ -336,6 +338,46 @@ static class ForetellCoreTests
         Check.That(ForetellInferenceCore.WilsonLowerBound(10, 10) > ForetellInferenceCore.WilsonLowerBound(5, 10), "reliability ordering regressed");
     }
 
+    private static void TopologyBarrierClosesConnectedSurface()
+    {
+        var grid = new ForetellTopologyGrid();
+        grid.Reset(Vector3.Zero, 4, 1);
+        for (var z = 2; z <= 6; ++z)
+            for (var x = 2; x <= 6; ++x)
+                grid.Set(z * grid.Width + x, TopologyCell.Passable, 0);
+        for (var z = 2; z <= 6; ++z)
+            grid.SetEdge(z * grid.Width + 4, z * grid.Width + 5, blocked: true);
+
+        var result = grid.Analyze(new(-1, 0));
+        Check.That(result.PassableCells == 15, $"closed barrier leaked into {result.PassableCells} cells");
+        Check.That(grid.IsConnectedPassable(new(2, 0), result.ConnectedCells) == false, "floor behind a closed barrier stayed connected");
+        Check.That(result.KnownEdges.SequenceEqual(grid.KnownEdges) && result.BlockedEdges.SequenceEqual(grid.BlockedEdges), "barrier evidence was not snapshotted");
+    }
+
+    private static void TopologyRequiresObservedConnections()
+    {
+        var grid = new ForetellTopologyGrid();
+        grid.Reset(Vector3.Zero, 4, 1);
+        for (var z = 2; z <= 6; ++z)
+            for (var x = 2; x <= 6; ++x)
+                grid.Set(z * grid.Width + x, TopologyCell.Passable, 0);
+
+        var seed = 4 * grid.Width + 4;
+        var isolated = grid.Analyze(grid.CellCenter(seed), requireKnownEdges: true);
+        Check.That(isolated.PassableCells == 1, "unobserved edges were treated as traversable");
+        grid.SetEdge(seed, seed + 1, blocked: false);
+        grid.SetEdge(seed + 1, seed + 2, blocked: false);
+        var corridor = grid.Analyze(grid.CellCenter(seed), requireKnownEdges: true);
+        Check.That(corridor.PassableCells == 3, $"observed local corridor had {corridor.PassableCells} cells");
+        var restored = new ForetellTopologyGrid();
+        Check.That(restored.Restore(grid.OriginX, grid.OriginZ, grid.ReferenceY, grid.Resolution, grid.Width, grid.Height,
+            corridor.ConnectedCells, corridor.HeightCentimeters, corridor.KnownEdges, corridor.BlockedEdges), "valid observed edges did not restore");
+        var asymmetric = corridor.KnownEdges.ToArray();
+        asymmetric[seed] ^= (byte)TopologyEdge.West;
+        Check.That(!restored.Restore(grid.OriginX, grid.OriginZ, grid.ReferenceY, grid.Resolution, grid.Width, grid.Height,
+            corridor.ConnectedCells, corridor.HeightCentimeters, asymmetric, corridor.BlockedEdges), "asymmetric persisted edge evidence was accepted");
+    }
+
     private static void PhaseClockAndHealthTriggerSelection()
     {
         var exactClock = ForetellInferenceCore.PhaseClockStability(4, 30, .25);
@@ -556,7 +598,7 @@ static class ForetellCoreTests
             MeanBossHPRatio = .7
         };
         var copy = JsonSerializer.Deserialize<ForetellStore>(JsonSerializer.Serialize(store));
-        Check.That(copy?.Schema == 21 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
+        Check.That(copy?.Schema == 22 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
         Check.That(copy!.Sessions.Single().PluginVersion == "0.8.9.0", "session plugin-version provenance did not round-trip");
         var entry = copy!.DecisionAudit[0];
         Check.That(entry.Stage == DecisionAuditStage.Proposed && entry.Geometry == GeometryKind.Cone

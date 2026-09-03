@@ -452,6 +452,8 @@ public sealed class ArenaTopologyMemory
     public int Height { get; set; }
     public byte[] Cells { get; set; } = [];
     public short[] HeightCentimeters { get; set; } = [];
+    public byte[] KnownEdges { get; set; } = [];
+    public byte[] BlockedEdges { get; set; } = [];
     public List<TopologyContourMemory> Contours { get; set; } = [];
     public int PassableCells { get; set; }
     public int BlockedCells { get; set; }
@@ -490,7 +492,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 21;
+    public int Schema { get; set; } = 22;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];

@@ -90,16 +90,16 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Action-metadata hierarchy and analysis provenance fixes from the T293 and T692 Foretell 0.8.9 captures.
+          Player-centred live collision mesh for the Foretell radar.
 
-          - Keeps complete client-metadata telegraph shapes authoritative for their Action row, preventing ambient status and movement evidence from rewriting Landslide, Weight of the Land or Burst as CLEANSE, MOVE or KNOCKBACK.
-          - Recognizes the client gaze VFX as LOOK AWAY without drawing Demon Eye as a fake 50y danger circle.
-          - Treats large non-targeted CastType 2/5 circles without Omen evidence as ambiguous arena-scale actions, so Gravitational Wave and similar mechanics remain text-only until outcomes prove their semantics.
-          - Replaces low-confidence learned labels with text-only WATCH for unshaped long casts while retaining strongly corroborated non-spatial mechanics.
-          - Reasserts reliable Action semantics after every outcome classification and prevents contaminated forecast counters from suppressing those telegraphs.
-          - Migrates learned memory to schema 21, repairs unsafe pre-21 Action classifications and resets the derived online classifier when affected rows are found.
-          - Records the selected run's plugin version separately from the exporter version in future Analysis ZIPs, avoiding the misleading 0.8.10 label on captures actually recorded under 0.8.9.
-          - Adds deterministic regressions for gaze, arena-scale circle ambiguity, protected Action priors and session-version persistence.
+          - Replaces the coarse pre-pull-only floor outline with a continuously sampled local walkable surface in duties and the open world.
+          - Probes floor height and four-way clearance, then keeps only the component connected to the player; nearby floors, disconnected platforms and space behind collision walls are excluded generically.
+          - Invalidates and rebuilds connection evidence on combat transitions and structural map/object signals, so collision barriers that close at pull start are reflected without boss or territory hardcoding.
+          - Orders progressive sampling from the player outward and runs native probes in watchdog-limited framework-thread slices; managed flood and contour work remains off-thread.
+          - Adapts grid resolution to the selected radar radius, follows the player, and clips rendering strictly to the local visible window instead of accumulating an entire raid map.
+          - Keeps separate sliders for on-screen radar size and world-space visible radius.
+          - Migrates learned memory to schema 22 so old floor-only snapshots cannot bypass the new observed-edge safety requirement.
+          - Adds deterministic regressions for closed barriers and unknown-edge abstention.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@

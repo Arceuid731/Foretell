@@ -664,7 +664,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 21);
+        _store.Schema = Math.Max(_store.Schema, 22);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -1190,8 +1190,14 @@ public sealed partial class ForetellEngine : IDisposable
         topology.Fingerprint ??= "";
         topology.Cells ??= [];
         topology.HeightCentimeters ??= [];
+        topology.KnownEdges ??= [];
+        topology.BlockedEdges ??= [];
         topology.Contours ??= [];
-        if (topology.Width is <= 0 or > 257 || topology.Height is <= 0 or > 257 || topology.Width * topology.Height != topology.Cells.Length || topology.HeightCentimeters.Length != topology.Cells.Length)
+        if (topology.Width is <= 0 or > 257 || topology.Height is <= 0 or > 257
+            || topology.Width * topology.Height != topology.Cells.Length
+            || topology.HeightCentimeters.Length != topology.Cells.Length
+            || topology.KnownEdges.Length != topology.Cells.Length
+            || topology.BlockedEdges.Length != topology.Cells.Length)
             return false;
         topology.OriginX = Finite(topology.OriginX, 0, -100000, 100000);
         topology.OriginZ = Finite(topology.OriginZ, 0, -100000, 100000);

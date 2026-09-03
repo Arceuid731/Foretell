@@ -54,10 +54,10 @@ public sealed partial class ForetellEngine
         Array.Clear(_arenaBoundaryHits);
     }
 
-    private void InvalidateArenaBoundary()
+    private void InvalidateArenaBoundary(bool immediate = false)
     {
         _arenaBoundarySweepRequested = true;
-        _arenaBoundaryRescanAfter = DateTime.UtcNow.AddMilliseconds(350);
+        _arenaBoundaryRescanAfter = immediate ? default : DateTime.UtcNow.AddMilliseconds(150);
     }
 
     // Returns true when the fast wall scan consumed this frame's collision budget. The slower floor grid waits so
@@ -76,9 +76,10 @@ public sealed partial class ForetellEngine
         if (!_arenaBoundarySweepInProgress && (!_arenaBoundarySweepRequested || now < _arenaBoundaryRescanAfter))
             return false;
 
-        // Probe only during a short low-motion window. This keeps native collision completely off fast traversal
-        // frames while still finishing a 64-ray room outline in roughly a quarter second once the player pauses.
-        if (playerActor.LastFrameMovement.LengthSq() > .04f)
+        // Out of combat we wait for a short low-motion window. In combat the fixed-origin sweep is allowed to run
+        // immediately so a newly spawned pull barrier can replace the pre-pull outline within a few frames.
+        var inCombat = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];
+        if (!inCombat && playerActor.LastFrameMovement.LengthSq() > .04f)
         {
             if (_arenaBoundarySweepInProgress && Vector2.Distance(new(player.X, player.Z), new(_arenaBoundaryOrigin.X, _arenaBoundaryOrigin.Z)) > 2.5f)
             {
@@ -138,7 +139,7 @@ public sealed partial class ForetellEngine
         if (_arenaBoundaryCursor >= ArenaBoundaryRayCount)
         {
             _arenaBoundarySweepInProgress = false;
-            _arenaBoundaryRescanAfter = now.AddSeconds(4);
+            _arenaBoundaryRescanAfter = now.AddSeconds(inCombat ? 2 : 6);
             CompleteArenaBoundarySweep();
         }
         return sampled != 0;

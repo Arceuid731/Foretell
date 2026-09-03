@@ -4,10 +4,23 @@ namespace BossMod.Foretell;
 
 internal enum TopologyCell : byte { Unknown, Passable, Blocked, Void }
 
+[Flags]
+internal enum TopologyEdge : byte
+{
+    None = 0,
+    North = 1 << 0,
+    East = 1 << 1,
+    South = 1 << 2,
+    West = 1 << 3
+}
+
 internal sealed record TopologyAnalysis(
     string Fingerprint,
     byte[] ConnectedCells,
+    byte[] SampledCells,
     short[] HeightCentimeters,
+    byte[] KnownEdges,
+    byte[] BlockedEdges,
     List<List<Vector2>> Contours,
     int PassableCells,
     int BlockedCells,
@@ -28,6 +41,8 @@ internal sealed class ForetellTopologyGrid
     public int CellCount => Width * Height;
     public byte[] Cells { get; private set; } = [];
     public float[] Heights { get; private set; } = [];
+    public byte[] KnownEdges { get; private set; } = [];
+    public byte[] BlockedEdges { get; private set; } = [];
 
     public void Reset(Vector3 center, float radius, float resolution)
     {
@@ -39,6 +54,8 @@ internal sealed class ForetellTopologyGrid
         ReferenceY = center.Y;
         Cells = new byte[CellCount];
         Heights = new float[CellCount];
+        KnownEdges = new byte[CellCount];
+        BlockedEdges = new byte[CellCount];
         Array.Fill(Heights, float.NaN);
         Cursor = 0;
     }
@@ -49,6 +66,8 @@ internal sealed class ForetellTopologyGrid
         Width = Height = Cursor = 0;
         Cells = [];
         Heights = [];
+        KnownEdges = [];
+        BlockedEdges = [];
     }
 
     public ForetellTopologyGrid Snapshot()
@@ -62,17 +81,23 @@ internal sealed class ForetellTopologyGrid
             Height = Height,
             Cursor = Cursor,
             Cells = Cells.ToArray(),
-            Heights = Heights.ToArray()
+            Heights = Heights.ToArray(),
+            KnownEdges = KnownEdges.ToArray(),
+            BlockedEdges = BlockedEdges.ToArray()
         };
 
     public bool Restore(float originX, float originZ, float referenceY, float resolution, int width, int height,
-        byte[] connectedCells, short[] heightCentimeters)
+        byte[] connectedCells, short[] heightCentimeters, byte[] knownEdges, byte[] blockedEdges)
     {
         var count = (long)width * height;
         if (!float.IsFinite(originX) || !float.IsFinite(originZ) || !float.IsFinite(referenceY)
             || !float.IsFinite(resolution) || resolution is < .5f or > 4f || width <= 0 || height <= 0
-            || count > 1_000_000 || connectedCells.Length != count || heightCentimeters.Length != count)
+            || count > 1_000_000 || connectedCells.Length != count || heightCentimeters.Length != count
+            || knownEdges.Length != count || blockedEdges.Length != count)
             return false;
+        for (var i = 0; i < connectedCells.Length; ++i)
+            if ((knownEdges[i] & 0xF0) != 0 || (blockedEdges[i] & ~knownEdges[i]) != 0)
+                return false;
         OriginX = originX;
         OriginZ = originZ;
         ReferenceY = referenceY;
@@ -81,8 +106,12 @@ internal sealed class ForetellTopologyGrid
         Height = height;
         Cells = connectedCells.ToArray();
         Heights = heightCentimeters.Select(value => value == short.MinValue ? float.NaN : referenceY + value / 100f).ToArray();
+        KnownEdges = knownEdges.ToArray();
+        BlockedEdges = blockedEdges.ToArray();
         Cursor = CellCount;
-        return true;
+        if (EdgeMasksAreSymmetric()) return true;
+        Clear();
+        return false;
     }
 
     public Vector2 CellCenter(int index)
@@ -99,6 +128,36 @@ internal sealed class ForetellTopologyGrid
         Heights[index] = height;
     }
 
+    public void ClearEdges()
+    {
+        Array.Clear(KnownEdges);
+        Array.Clear(BlockedEdges);
+    }
+
+    public bool IsEdgeKnown(int from, int to)
+        => TryEdgeBits(from, to, out var fromBit, out _) && (KnownEdges[from] & (byte)fromBit) != 0;
+
+    public bool IsEdgeBlocked(int from, int to)
+        => TryEdgeBits(from, to, out var fromBit, out _) && (BlockedEdges[from] & (byte)fromBit) != 0;
+
+    public void SetEdge(int from, int to, bool blocked)
+    {
+        if (!TryEdgeBits(from, to, out var fromBit, out var toBit))
+            return;
+        KnownEdges[from] |= (byte)fromBit;
+        KnownEdges[to] |= (byte)toBit;
+        if (blocked)
+        {
+            BlockedEdges[from] |= (byte)fromBit;
+            BlockedEdges[to] |= (byte)toBit;
+        }
+        else
+        {
+            BlockedEdges[from] &= (byte)~(byte)fromBit;
+            BlockedEdges[to] &= (byte)~(byte)toBit;
+        }
+    }
+
     public bool Contains(Vector2 world)
         => world.X >= OriginX && world.Y >= OriginZ && world.X < OriginX + Width * Resolution && world.Y < OriginZ + Height * Resolution;
 
@@ -111,7 +170,7 @@ internal sealed class ForetellTopologyGrid
         return value == (byte)TopologyCell.Unknown ? null : value == (byte)TopologyCell.Passable;
     }
 
-    public TopologyAnalysis Analyze(Vector2 seedWorld, float maxStepHeight = 1.75f)
+    public TopologyAnalysis Analyze(Vector2 seedWorld, float maxStepHeight = 1.75f, bool requireKnownEdges = false)
     {
         var connected = new byte[CellCount];
         for (var i = 0; i < CellCount; ++i)
@@ -121,9 +180,9 @@ internal sealed class ForetellTopologyGrid
         var seedZ = Math.Clamp((int)((seedWorld.Y - OriginZ) / Resolution), 0, Height - 1);
         var seed = FindNearestPassable(seedX, seedZ);
         if (seed >= 0)
-            Flood(seed, connected, maxStepHeight);
+            Flood(seed, connected, maxStepHeight, requireKnownEdges);
 
-        var components = CountRawComponents(maxStepHeight);
+        var components = CountRawComponents(maxStepHeight, requireKnownEdges);
         var passable = 0;
         var blocked = 0;
         var unknown = 0;
@@ -139,8 +198,8 @@ internal sealed class ForetellTopologyGrid
         }
 
         var contours = BuildContours(connected);
-        var fingerprint = Fingerprint(connected, packedHeights);
-        return new(fingerprint, connected, packedHeights, contours, passable, blocked, unknown, components);
+        var fingerprint = Fingerprint(connected, packedHeights, KnownEdges, BlockedEdges);
+        return new(fingerprint, connected, Cells.ToArray(), packedHeights, KnownEdges.ToArray(), BlockedEdges.ToArray(), contours, passable, blocked, unknown, components);
     }
 
     private int FindNearestPassable(int sx, int sz)
@@ -154,7 +213,7 @@ internal sealed class ForetellTopologyGrid
         return -1;
     }
 
-    private void Flood(int seed, byte[] connected, float maxStep)
+    private void Flood(int seed, byte[] connected, float maxStep, bool requireKnownEdges)
     {
         var queue = new Queue<int>();
         connected[seed] = (byte)TopologyCell.Passable;
@@ -175,12 +234,13 @@ internal sealed class ForetellTopologyGrid
             var next = z * Width + x;
             if (connected[next] == (byte)TopologyCell.Passable || Cells[next] != (byte)TopologyCell.Passable) return;
             if (!float.IsFinite(Heights[from]) || !float.IsFinite(Heights[next]) || Math.Abs(Heights[from] - Heights[next]) > maxStep) return;
+            if (!CanTraverse(from, next, requireKnownEdges)) return;
             connected[next] = (byte)TopologyCell.Passable;
             queue.Enqueue(next);
         }
     }
 
-    private int CountRawComponents(float maxStep)
+    private int CountRawComponents(float maxStep, bool requireKnownEdges)
     {
         var visited = new bool[CellCount];
         var queue = new Queue<int>();
@@ -206,6 +266,7 @@ internal sealed class ForetellTopologyGrid
             var next = z * Width + x;
             if (visited[next] || Cells[next] != (byte)TopologyCell.Passable) return;
             if (Math.Abs(Heights[from] - Heights[next]) > maxStep) return;
+            if (!CanTraverse(from, next, requireKnownEdges)) return;
             visited[next] = true;
             queue.Enqueue(next);
         }
@@ -273,7 +334,50 @@ internal sealed class ForetellTopologyGrid
         return result.Count >= 3 ? result : source;
     }
 
-    private static string Fingerprint(byte[] connected, short[] heights)
+    private bool CanTraverse(int from, int to, bool requireKnownEdges)
+    {
+        if (!TryEdgeBits(from, to, out var bit, out _)) return false;
+        var known = (KnownEdges[from] & (byte)bit) != 0;
+        return (!requireKnownEdges || known) && (!known || (BlockedEdges[from] & (byte)bit) == 0);
+    }
+
+    private bool TryEdgeBits(int from, int to, out TopologyEdge fromBit, out TopologyEdge toBit)
+    {
+        fromBit = toBit = TopologyEdge.None;
+        if ((uint)from >= (uint)CellCount || (uint)to >= (uint)CellCount)
+            return false;
+        var fromX = from % Width;
+        var fromZ = from / Width;
+        var toX = to % Width;
+        var toZ = to / Width;
+        (fromBit, toBit) = (toX - fromX, toZ - fromZ) switch
+        {
+            (0, -1) => (TopologyEdge.North, TopologyEdge.South),
+            (1, 0) => (TopologyEdge.East, TopologyEdge.West),
+            (0, 1) => (TopologyEdge.South, TopologyEdge.North),
+            (-1, 0) => (TopologyEdge.West, TopologyEdge.East),
+            _ => (TopologyEdge.None, TopologyEdge.None)
+        };
+        return fromBit != TopologyEdge.None;
+    }
+
+    private bool EdgeMasksAreSymmetric()
+    {
+        for (var z = 0; z < Height; ++z)
+            for (var x = 0; x < Width; ++x)
+            {
+                var index = z * Width + x;
+                if (x + 1 < Width && !Same(index, index + 1, TopologyEdge.East, TopologyEdge.West)) return false;
+                if (z + 1 < Height && !Same(index, index + Width, TopologyEdge.South, TopologyEdge.North)) return false;
+            }
+        return true;
+
+        bool Same(int first, int second, TopologyEdge firstBit, TopologyEdge secondBit)
+            => ((KnownEdges[first] & (byte)firstBit) != 0) == ((KnownEdges[second] & (byte)secondBit) != 0)
+                && ((BlockedEdges[first] & (byte)firstBit) != 0) == ((BlockedEdges[second] & (byte)secondBit) != 0);
+    }
+
+    private static string Fingerprint(byte[] connected, short[] heights, byte[] knownEdges, byte[] blockedEdges)
     {
         ulong hash = 14695981039346656037UL;
         for (var i = 0; i < connected.Length; ++i)
@@ -282,6 +386,8 @@ internal sealed class ForetellTopologyGrid
             if (connected[i] == (byte)TopologyCell.Passable)
             {
                 hash ^= (ushort)heights[i]; hash *= 1099511628211UL;
+                hash ^= knownEdges[i]; hash *= 1099511628211UL;
+                hash ^= blockedEdges[i]; hash *= 1099511628211UL;
             }
         }
         return hash.ToString("X16");

@@ -68,7 +68,7 @@ public sealed class ForetellConfig : ConfigNode
     public float RadarPositionX = -1;
     public float RadarPositionY = -1;
 
-    [PropertyDisplay("Radar arena frame", tooltip: "Auto observes nearby collision walls and floor boundaries outside combat, reuses the learned shape during pulls, and otherwise falls back to a circle. It never reads authored BMR arena data. Circle and Square force the presentation shape without changing learned mechanics.")]
+    [PropertyDisplay("Radar arena frame", tooltip: "Auto continuously rasterizes nearby collision floors and barriers into a local walkable mesh, including barriers that close at pull start. The computation is player-centred, bounded by the visible radius and independent from authored BMR arena data. Circle and Square force the presentation frame without changing learned mechanics.")]
     public ForetellRadarShape RadarShape = ForetellRadarShape.Auto;
 
     [PropertyDisplay("Text hints", tooltip: "Show adaptive mechanic, countdown, confidence and likely-next information.")]

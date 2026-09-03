@@ -345,13 +345,13 @@ public sealed partial class ForetellEngine
             }
             changed |= ImGui.SliderFloat("Radar size on screen (pixels)", ref _cfg.RadarSize, 140, 600);
             changed |= ImGui.SliderFloat("Zoom: distance to edge (yalms)", ref _cfg.RadarWorldRadius, 5, 120);
-            ImGui.TextDisabled($"Current view: {_cfg.RadarWorldRadius:F0} yalms from the player to each edge; smaller means more zoom.");
+            ImGui.TextDisabled($"Current view and local mesh: {_cfg.RadarWorldRadius:F0} yalms around the player; smaller means more zoom.");
             if (_cfg.RadarShape == ForetellRadarShape.Auto)
-                ImGui.TextDisabled(CurrentArenaBoundary is { } boundary
-                    ? $"Auto uses a near-enclosed observed arena boundary ({boundary.Hits}/{boundary.Rays} wall rays)."
-                    : _topologyAnalysis is { UnknownCells: 0, PassableCells: > 0 }
-                        ? $"Auto uses observed floor topology ({_topologyAnalysis.PassableCells:N0} reachable cells)."
-                        : "Auto is scanning collision while you are briefly still outside combat; a circle is used until ready.");
+                ImGui.TextDisabled(_topologyAnalysis is { PassableCells: > 0 }
+                    ? $"Auto uses the live local collision mesh ({_topologyAnalysis.PassableCells:N0} connected cells; {_topologyEdgeSamples:N0} barrier probes)."
+                    : CurrentArenaBoundary is { } boundary
+                        ? $"Auto temporarily uses a near-enclosed wall outline ({boundary.Hits}/{boundary.Rays} rays)."
+                        : "Auto is building the nearby walkable mesh; a circle is used until the connected seed is ready.");
             if (ImGui.Button("Reset radar to top-right"))
             {
                 _cfg.RadarPositionX = -1;
@@ -374,7 +374,6 @@ public sealed partial class ForetellEngine
         var nativeBacklogged = _nativeHookPending > 2048;
         var replayDegraded = _replay is { } replayWriter && (replayWriter.Failed || replayWriter.Rejected != 0 || replayWriter.Pending > 4096);
         var topologyHealthy = !TopologySuspended;
-        var topologyWaitingForPrePull = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat] && CurrentArenaBoundary == null && _topologyAnalysis == null;
         var runtimeHealthy = _updateFailures == 0 && _drawFailures == 0 && _episodeRejections == 0 && _learningEvictions == 0
             && _semanticObservationsRejected == 0 && !PerformanceThrottled;
         var healthy = !_raw.Failed && _raw.RejectedItems == 0 && !rawBacklogged && !nativeBacklogged && !replayDegraded && _nativeHookFailures == 0 && _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 && topologyHealthy && runtimeHealthy && coverage.Unaccounted == 0;
@@ -394,7 +393,7 @@ public sealed partial class ForetellEngine
             DrawTelemetryRow("Typed runtime snapshots", _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 ? "ACTIVE" : "DEGRADED", $"1 Hz typed {_lastTypedSnapshotMilliseconds:F2} ms (peak {_peakTypedSnapshotMilliseconds:F2}); native {_lastNativeActorMilliseconds:F2} ms (peak {_peakNativeActorMilliseconds:F2}); {_typedSnapshotFailures + _nativeSnapshotFailures:N0} rejects");
             DrawTelemetryRow("Generic live reflection", "REPLACED", "Typed roots + WorldState deltas; no unmanaged getters on frame thread");
             DrawTelemetryRow("Native ObjectEffect + VFX lifecycle", _nativeHookFailures == 0 ? nativeBacklogged ? "BACKLOG" : "ACTIVE" : "DEGRADED", $"Primitive queue: {_nativeHookPending:N0} queued / {_nativeHookProcessed:N0} processed / {_nativeHookFailures:N0} rejected; drain {_lastNativeHookDrainMilliseconds:F2} ms (peak {_peakNativeHookDrainMilliseconds:F2})");
-            DrawTelemetryRow("Native collision topology", !topologyHealthy ? "SAFE COOLDOWN" : _ws.CurrentCFCID == 0 ? "IDLE" : topologyWaitingForPrePull ? "WAITING FOR PRE-PULL" : CurrentArenaBoundary != null || _topologyAnalysis != null ? "ACTIVE" : "SCANNING", $"Observed only; {_arenaBoundaryRays:N0} wall rays / {_arenaBoundarySweeps:N0} boundary sweeps / {_arenaBoundaryChanges:N0} changes; {_topologyRays:N0} floor probes / {_topologySweeps:N0} fallback sweeps; {_topologyInvalidations:N0} structural signals; {_lastTopologyMilliseconds:F2} ms (peak {_peakTopologyMilliseconds:F2}); {_topologyOverruns:N0} overruns / {_topologyFailures:N0} rejects");
+            DrawTelemetryRow("Native collision topology", !topologyHealthy ? "SAFE COOLDOWN" : CurrentArenaBoundary != null || _topologyAnalysis != null ? "ACTIVE" : "SCANNING", $"Local only; {_arenaBoundaryRays:N0} radial rays / {_arenaBoundarySweeps:N0} boundary sweeps / {_arenaBoundaryChanges:N0} changes; {_topologyFloorSamples:N0} floor + {_topologyEdgeSamples:N0} barrier probes / {_topologySweeps:N0} mesh sweeps; {_topologyInvalidations:N0} structural signals; {_lastTopologyMilliseconds:F2} ms (peak {_peakTopologyMilliseconds:F2}); {_topologyOverruns:N0} overruns / {_topologyFailures:N0} rejects");
             DrawTelemetryRow("Foretell frame budget", runtimeHealthy ? "HEALTHY" : PerformanceThrottled ? "ADAPTIVE THROTTLE" : "DEGRADED", $"update {_lastUpdateMilliseconds:F2} ms last / {_meanUpdateMilliseconds:F2} ms mean / {_peakUpdateMilliseconds:F2} ms peak; semantic {_semanticMillisecondsThisFrame:F2} ms this frame / {_semanticPeakMilliseconds:F2} ms peak observation; {_semanticBudgetTrips:N0} burst trips / {_semanticObservationsRejected:N0} derived observations shed / {_updateOverruns:N0} update overruns / {_episodeRejections:N0} episode rejects");
             DrawTelemetryRow("Coverage ledger", coverage.Unaccounted == 0 ? "ACCOUNTED" : "INCOMPLETE", $"{coverage.Ingested} ingested / {coverage.Excluded} explicitly excluded / {coverage.Unaccounted} unaccounted");
             ImGui.EndTable();
@@ -505,7 +504,7 @@ public sealed partial class ForetellEngine
                 ImGui.BulletText($"{boundary.Fingerprint[..Math.Min(8, boundary.Fingerprint.Length)]} · {boundary.Hits}/{boundary.Rays} wall rays · area {boundary.Area:F0} · {(boundary.ArenaLike ? "arena candidate" : "room/corridor")} · seen {boundary.Observations}x");
                 ImGui.SameLine();
                 if (ImGui.SmallButton($"Delete##delete-boundary-{encounter.TerritoryID}-{boundary.Fingerprint}"))
-                    RequestPurge("Observed arena boundary", "Delete this learned collision boundary? It can be scanned again outside combat.", () => PurgeArenaBoundary(encounter.TerritoryID, boundary.Fingerprint));
+                    RequestPurge("Observed arena boundary", "Delete this learned collision boundary? It can be scanned again from the live scene.", () => PurgeArenaBoundary(encounter.TerritoryID, boundary.Fingerprint));
             }
             ImGui.TreePop();
         }

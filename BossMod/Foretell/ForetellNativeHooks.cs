@@ -230,7 +230,9 @@ public sealed partial class ForetellEngine
 
     private void ProcessNativeObjectEffect(NativeObjectEffectCapture capture)
     {
-        InvalidateTopology();
+        // Object effects are common combat traffic. They request a stable background refresh because some can
+        // alter platforms, but unlike map/director transitions they do not collapse the current live component.
+        InvalidateTopology(hard: false);
         var actor = capture.InstanceID != 0 ? _ws.Actors.Find(capture.InstanceID) : null;
         var obs = Observation(ObservationKind.ObjectEffect, actor, capture.EntityID, capture.ActionID);
         obs.At = NormalizeObservationTime(capture.At);

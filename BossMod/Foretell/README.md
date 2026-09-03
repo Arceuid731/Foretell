@@ -10,6 +10,12 @@ World overlay and radar geometry use the same confidence visualization: cyan/blu
 
 Foretell intentionally does not automate player movement. Low-confidence predictions are suppressed by configurable thresholds, and safe-position suggestions are advisory only.
 
+## Local collision mesh
+
+Auto radar mode builds a bounded walkable surface directly from the live collision scene, with no vnavmesh dependency and no authored territory data. Vertical probes classify nearby floor samples; horizontal clearance probes classify the four connections around every sample; height limits and a flood from the player reject other floors, disconnected platforms and space behind closed collision barriers. Sampling is ordered from the player outward, runs in small watchdog-limited framework-thread slices, and sends only copied managed arrays to the background contour analysis.
+
+The sampled window follows the player and is derived from the radar's visible-radius slider with a small scan margin. Rendering is clipped to that visible radius and does not retain previously visited parts of a raid as one global map. Both combat-condition transitions and observed structural effects invalidate connection evidence, allowing generic pull barriers and changing platforms to be recomputed while the fight is active.
+
 ## Data Fabric completeness contract
 
 Foretell ingests generic structured evidence available through BMR WorldState, Dalamud runtime gameplay services, actor/target state, raw event payloads, native FFXIVClientStructs memory, and relevant Lumina rows. Reflection discovers scalar/enum/text/binary fields recursively and feeds them through a stable hashed feature space; ActionEffect/status/map/director payload details are retained in replay instead of discarded.

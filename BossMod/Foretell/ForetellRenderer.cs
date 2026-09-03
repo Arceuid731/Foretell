@@ -410,12 +410,13 @@ public sealed partial class ForetellEngine
         var center = canvas + new Vector2(size * .5f + 4, size * .5f + 22);
         var radius = size * .5f;
         var draw = ImGui.GetWindowDrawList();
-        var arenaBoundary = _cfg.RadarShape == ForetellRadarShape.Auto ? CurrentArenaBoundary : null;
-        var topologyAvailable = arenaBoundary == null && _cfg.RadarShape == ForetellRadarShape.Auto
-            && _topologyAnalysis is { PassableCells: > 0, UnknownCells: 0 };
+        var topologyAvailable = _cfg.RadarShape == ForetellRadarShape.Auto
+            && _topologyAnalysis is { PassableCells: > 0 } topology
+            && topology.ConnectedCells.Length == _topology.CellCount;
+        var arenaBoundary = !topologyAvailable && _cfg.RadarShape == ForetellRadarShape.Auto ? CurrentArenaBoundary : null;
         var shape = _cfg.RadarShape == ForetellRadarShape.Auto ? ForetellRadarShape.Circle : _cfg.RadarShape;
         var shapeLabel = _cfg.RadarShape == ForetellRadarShape.Auto
-            ? arenaBoundary != null ? "auto / learned boundary" : topologyAvailable ? "auto / collision topology" : _ws.CurrentCFCID != 0 ? "auto / circle fallback" : "auto / circle"
+            ? topologyAvailable ? "auto / local collision mesh" : arenaBoundary != null ? "auto / learned boundary" : "auto / circle fallback"
             : shape.ToString().ToLowerInvariant();
         draw.AddText(canvas + new Vector2(4, 1), 0xFFE0E0E0u,
             _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : $"Foretell radar · {shapeLabel} · {_cfg.RadarWorldRadius:F0}y");
@@ -575,26 +576,86 @@ public sealed partial class ForetellEngine
     {
         var min = center - new Vector2(radius);
         var max = center + new Vector2(radius);
-        draw.AddRectFilled(min, max, Pack(12, 14, 20, 150), 8);
+        draw.AddCircleFilled(center, radius, Pack(8, 10, 16, 170), 64);
         draw.PushClipRect(min, max, true);
         try
         {
-            if (_topologyAnalysis is { } topology)
+            if (_topologyAnalysis is { } topology && topology.ConnectedCells.Length == _topology.CellCount
+                && topology.SampledCells.Length == _topology.CellCount && _topology.Width > 0 && _topology.Height > 0)
             {
-                foreach (var loop in topology.Contours)
+                var worldRadius = radius / Math.Max(.01f, scale);
+                var visibleRadiusSq = MathF.Max(0, worldRadius - _topology.Resolution * .75f);
+                visibleRadiusSq *= visibleRadiusSq;
+                var fill = Pack(34, 112, 100, 82);
+                for (var z = 0; z < _topology.Height; ++z)
                 {
-                    if (loop.Count < 2) continue;
-                    for (var i = 0; i < loop.Count; ++i)
+                    var x = 0;
+                    while (x < _topology.Width)
                     {
-                        var a = RadarPoint(loop[i], player, cameraAzimuth, center, scale);
-                        var b = RadarPoint(loop[(i + 1) % loop.Count], player, cameraAzimuth, center, scale);
-                        draw.AddLine(a, b, Pack(80, 220, 175, 230), 2f);
+                        while (x < _topology.Width && !VisiblePassable(x, z)) ++x;
+                        var start = x;
+                        while (x < _topology.Width && VisiblePassable(x, z)) ++x;
+                        if (start >= x) continue;
+                        var a = RadarPoint(new(_topology.OriginX + start * _topology.Resolution, _topology.OriginZ + z * _topology.Resolution), player, cameraAzimuth, center, scale);
+                        var b = RadarPoint(new(_topology.OriginX + x * _topology.Resolution, _topology.OriginZ + z * _topology.Resolution), player, cameraAzimuth, center, scale);
+                        var c = RadarPoint(new(_topology.OriginX + x * _topology.Resolution, _topology.OriginZ + (z + 1) * _topology.Resolution), player, cameraAzimuth, center, scale);
+                        var d = RadarPoint(new(_topology.OriginX + start * _topology.Resolution, _topology.OriginZ + (z + 1) * _topology.Resolution), player, cameraAzimuth, center, scale);
+                        draw.AddTriangleFilled(a, b, c, fill);
+                        draw.AddTriangleFilled(a, c, d, fill);
                     }
+                }
+
+                var wall = Pack(90, 235, 195, 235);
+                var drop = Pack(75, 165, 190, 185);
+                for (var z = 0; z < _topology.Height; ++z)
+                    for (var x = 0; x < _topology.Width; ++x)
+                    {
+                        var index = z * _topology.Width + x;
+                        if (!VisiblePassable(x, z)) continue;
+                        DrawEdge(x, z, index, x + 1, z, TopologyEdge.East, vertical: true);
+                        DrawEdge(x, z, index, x - 1, z, TopologyEdge.West, vertical: true);
+                        DrawEdge(x, z, index, x, z + 1, TopologyEdge.South, vertical: false);
+                        DrawEdge(x, z, index, x, z - 1, TopologyEdge.North, vertical: false);
+                    }
+
+                bool VisiblePassable(int x, int z)
+                {
+                    var index = z * _topology.Width + x;
+                    return topology.ConnectedCells[index] == (byte)TopologyCell.Passable
+                        && Vector2.DistanceSquared(_topology.CellCenter(index), player) <= visibleRadiusSq;
+                }
+
+                void DrawEdge(int x, int z, int index, int neighborX, int neighborZ, TopologyEdge direction, bool vertical)
+                {
+                    var neighborInGrid = (uint)neighborX < (uint)_topology.Width && (uint)neighborZ < (uint)_topology.Height;
+                    var blockedWall = (topology.KnownEdges[index] & (byte)direction) != 0
+                        && (topology.BlockedEdges[index] & (byte)direction) != 0;
+                    var sampledDrop = neighborInGrid
+                        && topology.SampledCells[neighborZ * _topology.Width + neighborX] is (byte)TopologyCell.Blocked or (byte)TopologyCell.Void;
+                    if (!blockedWall && !sampledDrop) return;
+                    var wx = _topology.OriginX + (vertical && neighborX > x ? x + 1 : x) * _topology.Resolution;
+                    var wz = _topology.OriginZ + (!vertical && neighborZ > z ? z + 1 : z) * _topology.Resolution;
+                    Vector2 firstWorld;
+                    Vector2 secondWorld;
+                    if (vertical)
+                    {
+                        firstWorld = new(wx, _topology.OriginZ + z * _topology.Resolution);
+                        secondWorld = new(wx, _topology.OriginZ + (z + 1) * _topology.Resolution);
+                    }
+                    else
+                    {
+                        firstWorld = new(_topology.OriginX + x * _topology.Resolution, wz);
+                        secondWorld = new(_topology.OriginX + (x + 1) * _topology.Resolution, wz);
+                    }
+                    if (Vector2.DistanceSquared((firstWorld + secondWorld) * .5f, player) > worldRadius * worldRadius)
+                        return;
+                    draw.AddLine(RadarPoint(firstWorld, player, cameraAzimuth, center, scale),
+                        RadarPoint(secondWorld, player, cameraAzimuth, center, scale), blockedWall ? wall : drop, blockedWall ? 2.2f : 1.4f);
                 }
             }
         }
         finally { draw.PopClipRect(); }
-        draw.AddRect(min, max, Pack(80, 220, 175, 180), 8, ImDrawFlags.None, 1.5f);
+        draw.AddCircle(center, radius, Pack(80, 220, 175, 190), 64, 1.5f);
         draw.AddLine(new(center.X - radius, center.Y), new(center.X + radius, center.Y), 0x354F5560u);
         draw.AddLine(new(center.X, center.Y - radius), new(center.X, center.Y + radius), 0x354F5560u);
     }
@@ -717,6 +778,7 @@ public sealed partial class ForetellEngine
         if (!FiniteVector(pp)) return;
         bool Unsafe(Vector2 q) => dangers.Any(p => Contains(p, q));
         if (!Unsafe(pp)) return;
+        var hasObservedSurface = _topologyAnalysis is { PassableCells: > 0 } || CurrentArenaBoundary is { ArenaLike: true };
         Vector2? best = null;
         var bestD = float.MaxValue;
         for (var ring = 2f; ring <= 25f; ring += 2f)
@@ -725,7 +787,7 @@ public sealed partial class ForetellEngine
                 var a = MathF.Tau * i / 48;
                 var q = pp + new Vector2(MathF.Sin(a), MathF.Cos(a)) * ring;
                 var topology = IsTopologyPassable(q);
-                if (!Unsafe(q) && topology != false && ring < bestD) { best = q; bestD = ring; }
+                if (!Unsafe(q) && (topology == true || !hasObservedSurface && topology != false) && ring < bestD) { best = q; bestD = ring; }
             }
         if (best is not Vector2 b) return;
         var cam = Camera.Instance;
