@@ -54,7 +54,10 @@ public sealed partial class ForetellEngine
     private unsafe void SampleNativeTopology()
     {
         var now = DateTime.UtcNow;
-        if (now < _topologySuspendedUntil)
+        // Native collision is opt-in until every supported scene has proven bounded. Never probe during combat:
+        // one driver/game-scene call cannot be pre-empted by the managed stopwatch after it has entered native code.
+        if (!_cfg.EnableCollisionTopology || Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]
+            || now < _topologySuspendedUntil)
             return;
         var player = _ws.Party[PartyState.PlayerSlot];
         if (player == null || (!_inPull && _ws.CurrentCFCID == 0))

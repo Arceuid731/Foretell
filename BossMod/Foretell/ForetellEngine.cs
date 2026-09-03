@@ -50,6 +50,17 @@ public sealed partial class ForetellEngine : IDisposable
     private Dictionary<uint, long> _effectSequenceEpisodes = [];
     private long _episodeRejections;
     private long _learningEvictions;
+    // WorldState callbacks run outside Update(), so Update's watchdog cannot account for their cost. Keep a
+    // separate hard budget keyed to the game frame; bursty multi-target packs may shed derived semantic work,
+    // while the independently queued raw transport journal remains exact and replayable.
+    private const int MaxSemanticObservationsPerFrame = 48;
+    private const double MaxSemanticMillisecondsPerFrame = 0.85;
+    private long _semanticBudgetFrameTicks;
+    private int _semanticObservationsThisFrame;
+    private double _semanticMillisecondsThisFrame;
+    private long _semanticObservationsRejected;
+    private long _semanticBudgetTrips;
+    private double _semanticPeakMilliseconds;
     private long _finalizationBudgetFrameTicks;
     private int _finalizationsThisFrame;
 
@@ -86,6 +97,43 @@ public sealed partial class ForetellEngine : IDisposable
     private ForetellStorageMaintenanceResult _lastStorageMaintenanceResult = new();
     private bool _disposed;
     internal bool PerformanceThrottled => DateTime.UtcNow < _adaptiveThrottleUntil;
+
+    private bool SemanticBudgetAvailable()
+    {
+        var frameTicks = _ws.CurrentTime.Ticks;
+        if (frameTicks != _semanticBudgetFrameTicks)
+        {
+            _semanticBudgetFrameTicks = frameTicks;
+            _semanticObservationsThisFrame = 0;
+            _semanticMillisecondsThisFrame = 0;
+        }
+        return _semanticObservationsThisFrame < MaxSemanticObservationsPerFrame
+            && _semanticMillisecondsThisFrame < MaxSemanticMillisecondsPerFrame;
+    }
+
+    private bool TryEnterSemanticBudget()
+    {
+        if (!SemanticBudgetAvailable())
+        {
+            ++_semanticObservationsRejected;
+            return false;
+        }
+        ++_semanticObservationsThisFrame;
+        return true;
+    }
+
+    private void ChargeSemanticBudget(long started)
+    {
+        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        _semanticMillisecondsThisFrame += elapsed;
+        _semanticPeakMilliseconds = Math.Max(_semanticPeakMilliseconds, elapsed);
+        if (_semanticMillisecondsThisFrame < MaxSemanticMillisecondsPerFrame)
+            return;
+        ++_semanticBudgetTrips;
+        var cooldown = DateTime.UtcNow.AddSeconds(10);
+        if (cooldown > _adaptiveThrottleUntil) _adaptiveThrottleUntil = cooldown;
+        if (cooldown > _topologySuspendedUntil) _topologySuspendedUntil = cooldown;
+    }
 
     internal ForetellStore Store => _store;
     internal LiveSessionStats Session => _session;
@@ -238,6 +286,7 @@ public sealed partial class ForetellEngine : IDisposable
     private void UpdateCore()
     {
         var now = ObservationNow();
+        var gameInCombat = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];
         var territory = CurrentTerritory();
         if (territory != _territory)
             ChangeTerritory(territory);
@@ -247,10 +296,16 @@ public sealed partial class ForetellEngine : IDisposable
         SyncReplayWriter();
         if ((DateTime.UtcNow - _rawOpenedAt).TotalHours >= 1)
             OpenRawJournal();
-        DrainRawFeatureWindows();
-        DrainNativeCaptures();
+        // During burst recovery, exact captures continue on their bounded background queues. Optional derived
+        // drains and native topology wait so they cannot compete with the game for the same frame.
+        if (!PerformanceThrottled)
+        {
+            DrainRawFeatureWindows();
+            DrainNativeCaptures();
+        }
         PollStorageMaintenance();
-        SampleNativeTopology();
+        if (!PerformanceThrottled)
+            SampleNativeTopology();
         if ((now - _lastPositionSample).TotalMilliseconds >= 250)
         {
             SamplePartyPositions();
@@ -267,14 +322,14 @@ public sealed partial class ForetellEngine : IDisposable
         // Open-world combat has no duty lifecycle, so retain the inactivity fallback there. In duties the actual
         // combat condition owns pull lifetime; quiet transition phases must not split one pull into several.
         if (_inPull && ((_ws.CurrentCFCID == 0 && (now - _lastCombatSignal).TotalSeconds > 30)
-            || (_ws.CurrentCFCID != 0 && !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat])))
+            || (_ws.CurrentCFCID != 0 && !gameInCombat)))
             EndCombatPull();
 
         // Persistence is deliberately kept off the active-combat path. Store serialization can grow with learned
         // history; saving after combat preserves it without creating a periodic gameplay hitch.
-        if (!_inPull && (DateTime.UtcNow - _lastSave).TotalSeconds > 60)
+        if (!_inPull && !gameInCombat && (DateTime.UtcNow - _lastSave).TotalSeconds > 60)
             SaveStore();
-        if (!_inPull && _cfg.AutomaticStorageMaintenance && _storageMaintenanceTask == null
+        if (!_inPull && !gameInCombat && _cfg.AutomaticStorageMaintenance && _storageMaintenanceTask == null
             && (DateTime.UtcNow - _lastStorageMaintenance).TotalMinutes >= 10)
             StartStorageMaintenance();
     }
@@ -315,6 +370,9 @@ public sealed partial class ForetellEngine : IDisposable
         _timelineForecasts.Clear();
         _nextForecastID = -1;
         _effectSequenceEpisodes.Clear();
+        _semanticBudgetFrameTicks = 0;
+        _semanticObservationsThisFrame = 0;
+        _semanticMillisecondsThisFrame = 0;
         _finalizationBudgetFrameTicks = 0;
         _finalizationsThisFrame = 0;
         _actorControlGates.Clear();

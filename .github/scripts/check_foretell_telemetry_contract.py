@@ -31,6 +31,9 @@ requirements = {
         "At = ObservationNow()",
         "try { UpdateCore(); }",
         "PerformanceThrottled",
+        "MaxSemanticObservationsPerFrame",
+        "MaxSemanticMillisecondsPerFrame",
+        "TryEnterSemanticBudget()",
         "NormalizeEnum(ref _cfg.Mode",
         "NormalizeFinite(ref _cfg.RadarSize",
         "(DateTime.UtcNow - _rawOpenedAt).TotalHours >= 1",
@@ -49,6 +52,7 @@ requirements = {
         "ActorState.OpMove =>",
         "ClientState.OpActiveCompanionChange",
         "Combat chocobo",
+        "if (!SemanticBudgetAvailable())",
         "_raw.EnqueueServer(context.Path, context.TerritoryID, packet)",
         "_raw.EnqueueClient(context.Path, context.TerritoryID, packet)",
         "_raw.EnqueueActorControl(context.Path, context.TerritoryID, DateTime.UtcNow, control)",
@@ -75,6 +79,10 @@ requirements = {
         "finalized >= 2",
         "TotalMilliseconds >= .65",
         "TouchOutOfCombatHazardContext",
+        "ProcessObservationCore",
+        "ChargeSemanticBudget(started)",
+        "const int maxLiveEpisodes = 64",
+        ".Take(12)",
         "IsSignalExcluded",
     ],
     "BossMod/Foretell/ForetellDataFabric.cs": [
@@ -95,6 +103,7 @@ requirements = {
         "SampleCoreRuntimeSnapshot()",
         "ProcessObservation(obs, enriched: true)",
         "MaxFabricTraversalMilliseconds",
+        "if (!TryEnterSemanticBudget())",
         "MaxNativeActorsPerSlice",
         "MaxNativeActorTraversalMilliseconds",
         "NativeActorInterestRadius",
@@ -129,6 +138,7 @@ requirements = {
         'string.Equals(mode.GetString(), "Compare"',
         "public enum ForetellRadarShape",
         "RadarShape = ForetellRadarShape.Auto",
+        "EnableCollisionTopology",
         "RadarUnlocked",
         "RadarPositionX",
         "RadarPositionY",
@@ -151,6 +161,7 @@ requirements = {
         "DrawRadarFrame",
         "ForetellRadarShape.Square",
         "RadarWorldRadius",
+        "_cfg.EnableCollisionTopology",
         "MaxRenderedMechanics",
         "FiniteViewport(viewport)",
     ],
@@ -291,6 +302,7 @@ requirements = {
         'obs.Numeric[$"raw.window.binaryBucket[{i}]"]',
     ],
     "BossMod/Foretell/ForetellTopology.cs": [
+        "!_cfg.EnableCollisionTopology",
         "RaycastMaterialFilter",
         "MaxTopologyRaysPerFrame",
         "MaxTopologyMillisecondsPerFrame",
@@ -414,9 +426,9 @@ if "_replay.Enqueue(_replayPath, observation)" not in engine or "_replay.WriteLi
     errors.append("Foretell replay serialization can run synchronously on the framework thread")
 if "_ws.Network.CaptureRawTransport = true" not in engine:
     errors.append("Foretell data-complete raw transport capture is not always armed")
-if "if (!_inPull && (DateTime.UtcNow - _lastSave).TotalSeconds > 60)" not in engine:
+if "if (!_inPull && !gameInCombat && (DateTime.UtcNow - _lastSave).TotalSeconds > 60)" not in engine:
     errors.append("Foretell persistent-store serialization can return to the active-combat frame path")
-if "!_inPull && _cfg.AutomaticStorageMaintenance" not in engine:
+if "!_inPull && !gameInCombat && _cfg.AutomaticStorageMaintenance" not in engine:
     errors.append("Foretell storage maintenance can return to the active-combat frame path")
 
 plugin = read("BossMod/Framework/Plugin.cs")

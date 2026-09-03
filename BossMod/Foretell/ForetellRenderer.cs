@@ -409,10 +409,11 @@ public sealed partial class ForetellEngine
         var center = canvas + new Vector2(size * .5f + 4, size * .5f + 22);
         var radius = size * .5f;
         var draw = ImGui.GetWindowDrawList();
-        var topologyAvailable = _cfg.RadarShape == ForetellRadarShape.Auto && _topologyAnalysis is { PassableCells: > 0, UnknownCells: 0 };
+        var topologyAvailable = _cfg.EnableCollisionTopology && _cfg.RadarShape == ForetellRadarShape.Auto
+            && _topologyAnalysis is { PassableCells: > 0, UnknownCells: 0 };
         var shape = _cfg.RadarShape == ForetellRadarShape.Auto ? ForetellRadarShape.Circle : _cfg.RadarShape;
         var shapeLabel = _cfg.RadarShape == ForetellRadarShape.Auto
-            ? topologyAvailable ? "auto / collision topology" : "auto / scanning"
+            ? topologyAvailable ? "auto / collision topology" : _cfg.EnableCollisionTopology ? "auto / scanning" : "auto / circle"
             : shape.ToString().ToLowerInvariant();
         draw.AddText(canvas + new Vector2(4, 1), 0xFFE0E0E0u,
             _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : $"Foretell radar · {shapeLabel} · {_cfg.RadarWorldRadius:F0}y");

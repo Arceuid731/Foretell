@@ -53,6 +53,12 @@ public sealed partial class ForetellEngine
         var seen = new HashSet<ulong>();
         foreach (var target in ev.Targets)
         {
+            // Do not allocate and flatten another effect dictionary after this frame's semantic budget is spent.
+            if (!SemanticBudgetAvailable())
+            {
+                ++_semanticObservationsRejected;
+                break;
+            }
             seen.Add(target.ID);
             var affected = Observation(ObservationKind.AffectedTarget, actor, action, target: target.ID);
             affected.Numeric["action.globalSequence"] = ev.GlobalSequence;

@@ -19,7 +19,7 @@ public sealed partial class ForetellEngine
     // party/actor collection can never starve camera, client, network or environment state. The budget is a
     // recursion/bug guard, not a collection sampling policy.
     private const int MaxFabricEntriesPerRoot = 4096;
-    private const double MaxFabricTraversalMilliseconds = 1.0;
+    private const double MaxFabricTraversalMilliseconds = 0.25;
     private const int RuntimeRootCount = 21;
     private const int MaxNativeActorsPerSlice = 3;
     private const double MaxNativeActorTraversalMilliseconds = 0.75;
@@ -299,8 +299,20 @@ public sealed partial class ForetellEngine
 
     private void ProcessRichObservation(ForetellObservation observation, object? payload)
     {
-        EnrichObservation(observation, payload);
-        ProcessObservation(observation, enriched: true);
+        // Enrichment includes bounded reflection and sheet lookups, so it must be inside the callback budget rather
+        // than paid before ProcessObservation gets a chance to reject a burst.
+        if (!TryEnterSemanticBudget())
+            return;
+        var started = Stopwatch.GetTimestamp();
+        try
+        {
+            EnrichObservation(observation, payload);
+            ProcessObservationCore(observation, replaying: false, enriched: true);
+        }
+        finally
+        {
+            ChargeSemanticBudget(started);
+        }
     }
 
     private void EnrichObservation(ForetellObservation observation, object? payload = null)

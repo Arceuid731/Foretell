@@ -6,6 +6,26 @@ public sealed partial class ForetellEngine
 {
     private void ProcessObservation(ForetellObservation observation, bool replaying = false, bool enriched = false)
     {
+        if (replaying)
+        {
+            ProcessObservationCore(observation, replaying: true, enriched: enriched);
+            return;
+        }
+        if (!TryEnterSemanticBudget())
+            return;
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            ProcessObservationCore(observation, replaying: false, enriched: enriched);
+        }
+        finally
+        {
+            ChargeSemanticBudget(started);
+        }
+    }
+
+    private void ProcessObservationCore(ForetellObservation observation, bool replaying, bool enriched)
+    {
         // JSON replay files and future schema migrations are external inputs. Normalize nullable collections before
         // any learner or UI code can enumerate them.
         observation.Detail ??= "";
@@ -625,7 +645,9 @@ public sealed partial class ForetellEngine
 
     private void StartEpisode(ForetellObservation trigger, EncounterMemory? encounter)
     {
-        const int maxLiveEpisodes = 512;
+        // Correlation is intentionally linear over the bounded live set. A large combat pack used to grow this
+        // to 512 and scan it twice for every target/effect callback, producing catastrophic frame loss.
+        const int maxLiveEpisodes = 64;
         if (_episodes.Values.Any(e => !e.Finalized && e.Trigger.ActorID == trigger.ActorID && e.Trigger.Kind == trigger.Kind &&
             e.Trigger.PrimaryID == trigger.PrimaryID && Math.Abs((e.Trigger.At - trigger.At).TotalSeconds) < .6))
             return;
@@ -745,6 +767,7 @@ public sealed partial class ForetellEngine
     {
         var nearby = _episodes.Values
             .Where(other => !other.Finalized && Math.Abs((episode.Trigger.At - other.Trigger.At).TotalSeconds) <= .75)
+            .Take(12)
             .Append(episode)
             .GroupBy(other => other.SignalKey)
             .Select(group => group.OrderBy(other => Math.Abs((episode.Trigger.At - other.Trigger.At).Ticks)).First())

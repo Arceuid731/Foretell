@@ -370,8 +370,9 @@ public sealed partial class ForetellEngine
             || _raw.RejectedFeatureWindows != 0 || Interlocked.Read(ref _ws.Network.RejectedActorControlSemantic) != 0;
         var nativeBacklogged = _nativeHookPending > 2048;
         var replayDegraded = _replay is { } replayWriter && (replayWriter.Failed || replayWriter.Rejected != 0 || replayWriter.Pending > 4096);
-        var topologyHealthy = _topologyFailures == 0 && !TopologySuspended;
-        var runtimeHealthy = _updateFailures == 0 && _drawFailures == 0 && _episodeRejections == 0 && _learningEvictions == 0 && !PerformanceThrottled;
+        var topologyHealthy = !_cfg.EnableCollisionTopology || _topologyFailures == 0 && !TopologySuspended;
+        var runtimeHealthy = _updateFailures == 0 && _drawFailures == 0 && _episodeRejections == 0 && _learningEvictions == 0
+            && _semanticObservationsRejected == 0 && !PerformanceThrottled;
         var healthy = !_raw.Failed && _raw.RejectedItems == 0 && !rawBacklogged && !nativeBacklogged && !replayDegraded && _nativeHookFailures == 0 && _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 && topologyHealthy && runtimeHealthy && coverage.Unaccounted == 0;
         ImGui.Separator();
         ImGui.TextUnformatted("Telemetry completeness");
@@ -389,8 +390,8 @@ public sealed partial class ForetellEngine
             DrawTelemetryRow("Typed runtime snapshots", _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 ? "ACTIVE" : "DEGRADED", $"1 Hz typed {_lastTypedSnapshotMilliseconds:F2} ms (peak {_peakTypedSnapshotMilliseconds:F2}); native {_lastNativeActorMilliseconds:F2} ms (peak {_peakNativeActorMilliseconds:F2}); {_typedSnapshotFailures + _nativeSnapshotFailures:N0} rejects");
             DrawTelemetryRow("Generic live reflection", "REPLACED", "Typed roots + WorldState deltas; no unmanaged getters on frame thread");
             DrawTelemetryRow("Native ObjectEffect + VFX lifecycle", _nativeHookFailures == 0 ? nativeBacklogged ? "BACKLOG" : "ACTIVE" : "DEGRADED", $"Primitive queue: {_nativeHookPending:N0} queued / {_nativeHookProcessed:N0} processed / {_nativeHookFailures:N0} rejected; drain {_lastNativeHookDrainMilliseconds:F2} ms (peak {_peakNativeHookDrainMilliseconds:F2})");
-            DrawTelemetryRow("Native collision topology", topologyHealthy ? _topologyAnalysis == null ? "WAITING" : "ACTIVE" : "SAFE COOLDOWN", $"{_topologyRays:N0} probes / {_topologySweeps:N0} sweeps / {_topologyChanges:N0} changes / {_topologyInvalidations:N0} structural signals; {_lastTopologyMilliseconds:F2} ms (peak {_peakTopologyMilliseconds:F2}); {_topologyOverruns:N0} overruns / {_topologyFailures:N0} rejects");
-            DrawTelemetryRow("Foretell frame budget", runtimeHealthy ? "HEALTHY" : PerformanceThrottled ? "ADAPTIVE THROTTLE" : "DEGRADED", $"{_lastUpdateMilliseconds:F2} ms last / {_meanUpdateMilliseconds:F2} ms mean / {_peakUpdateMilliseconds:F2} ms peak; {_updateOverruns:N0} overruns / {_updateFailures:N0} rejected updates / {_drawFailures:N0} rejected draws / {_episodeRejections:N0} pressure rejects / {_learningEvictions:N0} derived-memory evictions");
+            DrawTelemetryRow("Native collision topology", !_cfg.EnableCollisionTopology ? "OPTIONAL / OFF" : topologyHealthy ? _topologyAnalysis == null ? "WAITING" : "ACTIVE" : "SAFE COOLDOWN", $"{_topologyRays:N0} probes / {_topologySweeps:N0} sweeps / {_topologyChanges:N0} changes / {_topologyInvalidations:N0} structural signals; {_lastTopologyMilliseconds:F2} ms (peak {_peakTopologyMilliseconds:F2}); {_topologyOverruns:N0} overruns / {_topologyFailures:N0} rejects");
+            DrawTelemetryRow("Foretell frame budget", runtimeHealthy ? "HEALTHY" : PerformanceThrottled ? "ADAPTIVE THROTTLE" : "DEGRADED", $"update {_lastUpdateMilliseconds:F2} ms last / {_meanUpdateMilliseconds:F2} ms mean / {_peakUpdateMilliseconds:F2} ms peak; semantic {_semanticMillisecondsThisFrame:F2} ms this frame / {_semanticPeakMilliseconds:F2} ms peak observation; {_semanticBudgetTrips:N0} burst trips / {_semanticObservationsRejected:N0} derived observations shed / {_updateOverruns:N0} update overruns / {_episodeRejections:N0} episode rejects");
             DrawTelemetryRow("Coverage ledger", coverage.Unaccounted == 0 ? "ACCOUNTED" : "INCOMPLETE", $"{coverage.Ingested} ingested / {coverage.Excluded} explicitly excluded / {coverage.Unaccounted} unaccounted");
             ImGui.EndTable();
         }
