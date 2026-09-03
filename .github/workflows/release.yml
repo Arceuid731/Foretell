@@ -90,15 +90,12 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Player-relative radar and independently observed arena boundaries.
+          Camera-relative radar hotfix.
 
-          - Rotates the radar with the player, adds enemies, party members, the combat companion, range rings and a clear forward marker.
-          - Learns nearby room/arena outlines from bounded native collision probes outside combat and remembers them for later pulls.
-          - Never reads BMR BossModule arena definitions, layouts or state machines; Hybrid only displays BMR and Foretell side by side.
-          - Separates credible dungeon/raid bosses and their adds from ordinary trash and open-world mobs using observed collision plus generic actor health/size evidence.
-          - Prevents doors, keys, shortcuts, director state and raw control noise from becoming learned mechanics, and migrates contaminated schema-16 memory to schema 17.
-          - Adds one-click focused Knowledge Explorer export and per-boundary inspection/deletion.
-          - Replaces the expensive fallback topology sweep with a 64-ray wall scan and a coarser 36-yalm floor fallback; probes never execute during combat and retain the watchdog cooldown.
+          - Rotates the complete Foretell radar with the live camera azimuth instead of the character facing direction.
+          - Uses the same north/east/south/west convention as BMR MiniArena, so camera-forward is always radar-up without a 180-degree inversion.
+          - Applies the camera transform consistently to learned arena boundaries, floor topology, enemies, allies, predictions and guidance geometry.
+          - Renames the radar orientation marker to camera and adds deterministic north/east/right transform coverage.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@
