@@ -813,7 +813,7 @@ public sealed partial class ForetellEngine : IDisposable
     {
         var invalid = encounter.Mechanics
             .Where(item => !ForetellInferenceCore.CanStartMechanicEpisode(item.Value.TriggerKind, item.Value.SourceKind,
-                item.Value.SourceOID == 0 ? 0 : 1, item.Value.SourceOID))
+                item.Value.SourceOID == 0 ? 0UL : 1UL, item.Value.SourceOID))
             .ToArray();
         if (invalid.Length == 0)
             return 0;
