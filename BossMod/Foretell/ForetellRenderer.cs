@@ -6,6 +6,8 @@ public sealed partial class ForetellEngine
 {
     private bool _radarWasUnlocked;
     private bool _radarPositionDirty;
+    private bool _textWasUnlocked;
+    private bool _textPositionDirty;
     private long _drawFailures;
     private DateTime _lastDrawFailureLog;
 
@@ -180,38 +182,150 @@ public sealed partial class ForetellEngine
 
     private void DrawTextHints()
     {
-        var draw = ImGui.GetForegroundDrawList();
-        var viewport = Camera.Instance?.ViewportSize ?? new Vector2(1920, 1080);
-        if (!FiniteViewport(viewport)) viewport = new(1920, 1080);
-        var y = viewport.Y * .18f;
-        var active = _predictions.Values.Where(p => ValidPrediction(p) && p.Confidence >= _cfg.VisualConfidence / 100f)
-            .OrderBy(p => p.Activation).FirstOrDefault();
-        if (!string.IsNullOrEmpty(active.SignalKey) || active.ActionID != 0 || active.Guidance != GuidanceKind.None)
+        var mainViewport = ImGui.GetMainViewport();
+        var viewportOrigin = mainViewport.Pos;
+        var viewport = mainViewport.Size;
+        if (!FiniteViewport(viewport)) { viewportOrigin = default; viewport = new(1920, 1080); }
+        var defaultPosition = viewportOrigin + new Vector2(viewport.X * .5f - 210, viewport.Y * .12f);
+        var savedPosition = _cfg.TextPositionX >= 0 && _cfg.TextPositionY >= 0
+            ? viewportOrigin + new Vector2(_cfg.TextPositionX * viewport.X, _cfg.TextPositionY * viewport.Y)
+            : defaultPosition;
+        savedPosition.X = Math.Clamp(savedPosition.X, viewportOrigin.X, viewportOrigin.X + Math.Max(0, viewport.X - 260));
+        savedPosition.Y = Math.Clamp(savedPosition.Y, viewportOrigin.Y, viewportOrigin.Y + Math.Max(0, viewport.Y - 80));
+        if (!_cfg.TextHintsUnlocked || !_textWasUnlocked)
+            ImGui.SetNextWindowPos(savedPosition, ImGuiCond.Always);
+
+        var flags = ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
+        if (!_cfg.TextHintsUnlocked)
+            flags |= ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.NoBackground
+                | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoFocusOnAppearing;
+        if (!ImGui.Begin("Foretell guidance - drag to move###ForetellTextHintsWindow", flags))
         {
-            var remain = Math.Max(0, (active.Activation - _ws.CurrentTime).TotalSeconds);
-            var actionName = LookupActionName(active.ActionID);
-            var label = !string.IsNullOrWhiteSpace(active.Label) ? active.Label
-                : !string.IsNullOrWhiteSpace(actionName) ? actionName
-                : active.Kind != MechanicKind.Unknown ? active.Kind.ToString() : "Learned signal";
-            draw.AddText(new(viewport.X * .5f - 190, y), ConfidenceColor(active.Confidence),
-                $"FORETELL  {label}  {remain:F1}s  verified {active.Confidence:P0}{(active.Anticipated ? " · anticipated" : "")}");
-            y += 22;
+            ImGui.End();
+            _textWasUnlocked = _cfg.TextHintsUnlocked;
+            return;
         }
-        var next = PredictNextContextual();
-        if (next != null)
+
+        try
         {
-            var encounter = _store.Encounters.GetValueOrDefault(_territory);
-            var nextName = encounter == null ? next.To : SignalDisplayName(encounter, next.To);
-            draw.AddText(new(viewport.X * .5f - 190, y), 0xFFE0E0E0u, $"Likely next: {nextName}  ~{next.MeanDelay:F1}s  ({next.Count}x, {next.Stability:P0} stable)");
+            if (_cfg.TextHintsUnlocked)
+            {
+                var position = ImGui.GetWindowPos();
+                var normalizedX = Math.Clamp((position.X - viewportOrigin.X) / Math.Max(1, viewport.X), 0, 1);
+                var normalizedY = Math.Clamp((position.Y - viewportOrigin.Y) / Math.Max(1, viewport.Y), 0, 1);
+                if (Math.Abs(normalizedX - _cfg.TextPositionX) > .0001f || Math.Abs(normalizedY - _cfg.TextPositionY) > .0001f)
+                {
+                    _cfg.TextPositionX = normalizedX;
+                    _cfg.TextPositionY = normalizedY;
+                    _textPositionDirty = true;
+                }
+                if (_textPositionDirty && !ImGui.IsMouseDown(ImGuiMouseButton.Left))
+                {
+                    _cfg.Modified.Fire();
+                    _textPositionDirty = false;
+                }
+            }
+            _textWasUnlocked = _cfg.TextHintsUnlocked;
+
+            var active = _predictions.Values.Where(p => ValidPrediction(p) && p.Confidence >= _cfg.VisualConfidence / 100f)
+                .OrderBy(p => p.Activation).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
+            var hasActive = active.Length != 0;
+            for (var i = 0; i < active.Length; ++i)
+            {
+                var prediction = active[i];
+                if (i != 0) ImGui.Separator();
+                var remain = Math.Max(0, (prediction.Activation - _ws.CurrentTime).TotalSeconds);
+                ImGui.TextColored(ConfidenceTextColor(prediction.Confidence), $"{GuidanceInstruction(prediction.Guidance, prediction.Kind, prediction.Geometry)} — {UserFacingPredictionLabel(prediction)}");
+                ImGui.TextDisabled($"{remain:F1}s · confidence {prediction.Confidence:P0}{(prediction.Anticipated ? " · predicted ahead" : "")}");
+            }
+            var next = PredictNextContextual();
+            if (next != null)
+            {
+                var encounter = _store.Encounters.GetValueOrDefault(_territory);
+                if (encounter?.Mechanics.GetValueOrDefault(next.To) is { } mechanic)
+                {
+                    if (hasActive) ImGui.Separator();
+                    ImGui.TextUnformatted($"NEXT — {UserFacingMechanicLabel(mechanic)}");
+                    ImGui.TextDisabled($"about {next.MeanDelay:F1}s · learned {next.Count}× · timing {next.Stability:P0}");
+                }
+            }
+            else if (!hasActive)
+            {
+                var legacyNext = PredictNext();
+                var legacyName = legacyNext == null ? null : LookupActionName(legacyNext.To);
+                if (legacyNext != null && !string.IsNullOrWhiteSpace(legacyName))
+                {
+                    ImGui.TextUnformatted($"NEXT — {legacyName}");
+                    ImGui.TextDisabled($"about {legacyNext.MeanDelay:F1}s · learned {legacyNext.Count}×");
+                }
+                else
+                {
+                    var contextualCount = _store.Encounters.GetValueOrDefault(_territory)?.Mechanics.Count ?? 0;
+                    ImGui.TextDisabled($"Foretell is learning · {contextualCount} candidates · no verified guidance yet");
+                }
+            }
         }
-        else
+        finally { ImGui.End(); }
+    }
+
+    private Vector4 ConfidenceTextColor(float confidence)
+    {
+        var packed = ConfidenceColor(confidence);
+        return new((packed & 0xFF) / 255f, ((packed >> 8) & 0xFF) / 255f, ((packed >> 16) & 0xFF) / 255f, 1);
+    }
+
+    private static string GuidanceInstruction(GuidanceKind guidance, MechanicKind kind, GeometryKind geometry) => guidance switch
+    {
+        GuidanceKind.Avoid => "AVOID",
+        GuidanceKind.Stack => "STACK",
+        GuidanceKind.Spread => "SPREAD",
+        GuidanceKind.Soak => "SOAK TOWER",
+        GuidanceKind.LookAway => "LOOK AWAY",
+        GuidanceKind.Knockback => "KNOCKBACK",
+        GuidanceKind.Tether => "CHECK TETHER",
+        GuidanceKind.Raidwide => "RAIDWIDE",
+        GuidanceKind.Cleanse => "CLEANSE",
+        GuidanceKind.Move => "MOVE",
+        _ when geometry != GeometryKind.Unknown || kind is MechanicKind.GroundAOE or MechanicKind.TargetedAOE => "AVOID",
+        _ => "WATCH"
+    };
+
+    private static string FriendlyMechanicLabel(MechanicKind kind, GeometryKind geometry) => kind switch
+    {
+        MechanicKind.GroundAOE => geometry == GeometryKind.Unknown ? "area attack" : $"{geometry.ToString().ToLowerInvariant()} area",
+        MechanicKind.TargetedAOE => "targeted area attack",
+        MechanicKind.Stack => "stack marker",
+        MechanicKind.LineStack => "line stack",
+        MechanicKind.Spread => "spread markers",
+        MechanicKind.Tower => "tower",
+        MechanicKind.Gaze => "gaze attack",
+        MechanicKind.Knockback => "knockback",
+        MechanicKind.ForcedMovement => "forced movement",
+        MechanicKind.Tether => "tether mechanic",
+        MechanicKind.Raidwide => "raid-wide damage",
+        MechanicKind.Tankbuster => "tankbuster",
+        MechanicKind.Debuff => "debuff",
+        MechanicKind.Proximity => "proximity damage",
+        MechanicKind.Environment => "arena change",
+        MechanicKind.Transition => "phase transition",
+        _ when geometry != GeometryKind.Unknown => $"{geometry.ToString().ToLowerInvariant()} area",
+        _ => "learned mechanic"
+    };
+
+    private static string UserFacingMechanicLabel(ContextualMechanic mechanic)
+    {
+        if (mechanic.TriggerKind is ObservationKind.CastStart or ObservationKind.CastFinish or ObservationKind.ActionResolved or ObservationKind.AffectedTarget)
         {
-            var legacyNext = PredictNext();
-            if (legacyNext != null)
-                draw.AddText(new(viewport.X * .5f - 190, y), 0xFFE0E0E0u, $"Likely next: {LookupActionName(legacyNext.To) ?? $"Action 0x{legacyNext.To:X}"}  ~{legacyNext.MeanDelay:F1}s  ({legacyNext.Count}x)");
+            var actionName = LookupActionName(mechanic.TriggerID);
+            if (!string.IsNullOrWhiteSpace(actionName)) return actionName;
         }
-        var contextualCount = _store.Encounters.GetValueOrDefault(_territory)?.Mechanics.Count ?? 0;
-        draw.AddText(new(20, viewport.Y - 35), 0xFFB0B0B0u, $"Foretell · {EncounterName(_territory)} · {contextualCount} mechanics learned · {_session.Observations:N0} observations");
+        return FriendlyMechanicLabel(mechanic.Kind, mechanic.Geometry);
+    }
+
+    private static string UserFacingPredictionLabel(ActivePrediction prediction)
+    {
+        var actionName = LookupActionName(prediction.ActionID);
+        return !string.IsNullOrWhiteSpace(actionName) ? actionName : FriendlyMechanicLabel(prediction.Kind, prediction.Geometry);
     }
 
     private TimelineEdge? PredictNext()
@@ -223,8 +337,12 @@ public sealed partial class ForetellEngine
     private SignalTimelineEdge? PredictNextContextual()
     {
         if (string.IsNullOrEmpty(_previousSignal) || !_store.Encounters.TryGetValue(_territory, out var encounter)) return null;
-        return encounter.Timeline.Values.Where(e => e.Phase == _session.Phase && e.From == _previousSignal && e.Count >= 2)
-            .OrderByDescending(e => e.Stability).ThenByDescending(e => e.Count).FirstOrDefault();
+        var outgoing = encounter.Timeline.Values.Where(e => e.Phase == _session.Phase && e.From == _previousSignal && e.Count >= 3
+            && e.MeanDelay is >= .15 and <= 120 && e.Stability >= .45f && encounter.Mechanics.TryGetValue(e.To, out var mechanic)
+            && (mechanic.Geometry != GeometryKind.Unknown || ForetellInferenceCore.GuidanceFor(mechanic.Kind) != GuidanceKind.None)).ToArray();
+        return outgoing.Where(e => ForetellInferenceCore.TimelineProbability(e, outgoing) >= .55f)
+            .OrderByDescending(e => ForetellInferenceCore.TimelineProbability(e, outgoing) * e.Stability)
+            .ThenByDescending(e => e.Count).FirstOrDefault();
     }
 
     private void DrawRadar()
@@ -232,20 +350,20 @@ public sealed partial class ForetellEngine
         var player = _ws.Party[PartyState.PlayerSlot];
         if (player == null)
             return;
-        var cam = Camera.Instance;
-        if (cam == null)
-            return;
-
         var size = _cfg.RadarSize;
-        var viewport = cam.ViewportSize;
+        var mainViewport = ImGui.GetMainViewport();
+        var viewportOrigin = mainViewport.Pos;
+        var viewport = mainViewport.Size;
         if (!FiniteViewport(viewport)) return;
         var playerPos = V(player.Position);
         if (!FiniteVector(playerPos)) return;
         var windowSize = new Vector2(size + 24, size + 62);
-        var defaultPosition = new Vector2(Math.Max(8, viewport.X - windowSize.X - 22), 22);
+        var defaultPosition = viewportOrigin + new Vector2(Math.Max(8, viewport.X - windowSize.X - 22), 22);
         var savedPosition = _cfg.RadarPositionX >= 0 && _cfg.RadarPositionY >= 0
-            ? new Vector2(_cfg.RadarPositionX * viewport.X, _cfg.RadarPositionY * viewport.Y)
+            ? viewportOrigin + new Vector2(_cfg.RadarPositionX * viewport.X, _cfg.RadarPositionY * viewport.Y)
             : defaultPosition;
+        savedPosition.X = Math.Clamp(savedPosition.X, viewportOrigin.X, viewportOrigin.X + Math.Max(0, viewport.X - windowSize.X));
+        savedPosition.Y = Math.Clamp(savedPosition.Y, viewportOrigin.Y, viewportOrigin.Y + Math.Max(0, viewport.Y - windowSize.Y));
 
         // Locked placement is applied every frame; unlocked placement is only seeded on transition so ImGui can
         // move the window normally. Position is stored normalized to survive resolution/viewport changes.
@@ -271,8 +389,8 @@ public sealed partial class ForetellEngine
             if (_cfg.RadarUnlocked)
             {
                 var position = ImGui.GetWindowPos();
-                var normalizedX = Math.Clamp(position.X / Math.Max(1, viewport.X), 0, 1);
-                var normalizedY = Math.Clamp(position.Y / Math.Max(1, viewport.Y), 0, 1);
+                var normalizedX = Math.Clamp((position.X - viewportOrigin.X) / Math.Max(1, viewport.X), 0, 1);
+                var normalizedY = Math.Clamp((position.Y - viewportOrigin.Y) / Math.Max(1, viewport.Y), 0, 1);
                 if (Math.Abs(normalizedX - _cfg.RadarPositionX) > .0001f || Math.Abs(normalizedY - _cfg.RadarPositionY) > .0001f)
                 {
                     _cfg.RadarPositionX = normalizedX;

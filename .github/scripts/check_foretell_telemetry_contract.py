@@ -123,6 +123,9 @@ requirements = {
         "RadarUnlocked",
         "RadarPositionX",
         "RadarPositionY",
+        "TextHintsUnlocked",
+        "TextPositionX",
+        "TextPositionY",
         "public bool RecordReplay;",
         "ReplayPerformancePolicyVersion",
         "AutomaticStorageMaintenance",
@@ -131,6 +134,9 @@ requirements = {
     ],
     "BossMod/Foretell/ForetellRenderer.cs": [
         "ForetellRadarWindow",
+        "ForetellTextHintsWindow",
+        "GuidanceInstruction",
+        "UserFacingPredictionLabel",
         "drag to move",
         "RadarPositionX",
         "DrawRadarFrame",
@@ -233,13 +239,14 @@ requirements = {
         "PendingFeatureWindows",
         "RejectedFeatureWindows",
         "MaxQueuedFeatureWindows",
-        "DurationTicks >= TimeSpan.TicksPerMillisecond * 250",
+        "DurationTicks >= ForetellRawFormat.FeatureWindowTicks",
+        "Records >= ForetellRawFormat.FeatureWindowMaxRecords",
     ],
     "BossMod/Foretell/ForetellRawFeatures.cs": [
         "MaxRawFeatureWindowsPerFrame",
         "MaxRawFeatureDrainMilliseconds",
         "_raw.TryDequeueFeature(out var window)",
-        "RawWindowObservation(window)",
+        "RawWindowObservation(window, includeStructuralDetails: false)",
         "RegisterRecordedFeatures(obs)",
         "ProcessObservation(obs, enriched: true)",
     ],
@@ -248,6 +255,8 @@ requirements = {
         "MaxPayloadBytes",
         "MaxInMemoryWindows",
         "ForetellRawWindowAccumulator",
+        "FeatureWindowTicks = TimeSpan.TicksPerSecond",
+        "FeatureWindowMaxRecords = 1024",
         "truncated payload",
         "ForetellRawOpcodeFeature",
         "SequenceHash",
@@ -262,7 +271,8 @@ requirements = {
         "ForetellRawFormat.Read",
         "MaxReadableReplayBytes",
         "MaxReadableReplayLines",
-        'Detail = "raw:250ms-window"',
+        'Detail = "raw:feature-window"',
+        "if (includeStructuralDetails)",
         'obs.Numeric["raw.window.payloadBytes"]',
         'obs.Numeric[$"raw.window.opcode[{opcode:X8}]"]',
         'obs.Numeric[$"raw.window.binaryBucket[{i}]"]',
@@ -284,11 +294,12 @@ requirements = {
     ],
     "BossMod/Foretell/ForetellTypedSnapshots.cs": [
         "StoreTypedWorldSnapshot",
+        "StoreColdTypedWorldSnapshot",
         "runtime.party.capacity",
         "runtime.client.cooldowns.capacity",
         "runtime.client.hate.primary",
         "runtime.deepDungeon.rooms",
-        "foreach (var (itemId, quantity) in client.Inventory)",
+        "Full player cooldown, inventory and progression collections are not encounter evidence",
     ],
     "BossMod/Data/NetworkState.cs": [
         "public volatile bool CaptureRawTransport",
@@ -422,6 +433,12 @@ if "ProcessObservation(obs, enriched: true)" not in observer[observer.find("priv
 config = read("BossMod/Foretell/ForetellConfig.cs")
 if "public bool RecordReplay = true" in config:
     errors.append("Foretell high-volume replay recording became default-on again")
+
+typed_snapshots = read("BossMod/Foretell/ForetellTypedSnapshots.cs")
+hot_client_snapshot = typed_snapshots[typed_snapshots.find("private void StoreClient("):typed_snapshots.find("private void StoreDeepDungeon(")]
+for forbidden_sweep in ["foreach (var (itemId, quantity) in client.Inventory)", "for (var i = 0; i < client.Cooldowns.Length; ++i)"]:
+    if forbidden_sweep in hot_client_snapshot:
+        errors.append(f"Foretell reintroduced a high-allocation periodic player-state sweep: {forbidden_sweep!r}")
 
 native_hooks = read("BossMod/Foretell/ForetellNativeHooks.cs")
 actor_create = native_hooks[native_hooks.find("private unsafe nint ForetellActorVFXCreateDetour"):native_hooks.find("private void ForetellActorVFXDestroyDetour")]

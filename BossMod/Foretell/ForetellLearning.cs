@@ -34,7 +34,7 @@ public sealed partial class ForetellEngine
             encounter.LastSeen = DateTime.UtcNow;
             encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;
             UpdateSourceMemory(encounter, observation);
-            if (observation.Detail == "raw:250ms-window")
+            if (observation.Detail is "raw:feature-window" or "raw:250ms-window")
                 UpdateRawProtocolMemory(encounter, observation);
         }
         Record(observation, replaying);
@@ -51,7 +51,7 @@ public sealed partial class ForetellEngine
         LearnPhaseBoundary(observation);
 
         var lifecycleSignal = observation.Kind is ObservationKind.DutyStarted or ObservationKind.DutyWiped or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted;
-        if (IsTimelineSignal(observation) && (_inPull || lifecycleSignal))
+        if (IsPredictiveTimelineSignal(observation) && (_inPull || lifecycleSignal))
         {
             if (encounter != null)
                 ResolveTimelineForecasts(encounter, observation);
@@ -79,6 +79,10 @@ public sealed partial class ForetellEngine
     private void UpdateSourceMemory(EncounterMemory encounter, ForetellObservation observation)
     {
         // Environment is intentionally represented as OID 0 so map/director effects remain inspectable as one source.
+        // Player OIDs are also 0; never let a character name overwrite that synthetic environment bucket.
+        if (observation.SourceKind is SourceKind.Player or SourceKind.Pet
+            || (observation.ActorOID == 0 && observation.SourceKind != SourceKind.Environment))
+            return;
         if (!encounter.Sources.TryGetValue(observation.ActorOID, out var source))
         {
             if (encounter.Sources.Count >= 8192)
@@ -109,6 +113,12 @@ public sealed partial class ForetellEngine
             source.NameID = (uint)nameID;
         if (observation.Text.TryGetValue("actor.name", out var name) && !string.IsNullOrWhiteSpace(name))
             source.Name = name;
+        if (observation.ActorOID == 0)
+        {
+            source.Kind = SourceKind.Environment;
+            source.NameID = 0;
+            source.Name = "";
+        }
         if (observation.Kind == ObservationKind.CastStart) ++source.Casts;
         if (observation.Kind is ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart or ObservationKind.StatusGain or
             ObservationKind.EventObjectState or ObservationKind.EventObjectAnimation or ObservationKind.ActionTimelineEvent or
@@ -166,7 +176,13 @@ public sealed partial class ForetellEngine
 
     private void TouchPull(EncounterMemory? encounter, ForetellObservation observation)
     {
-        if (!_inPull || (observation.At - _lastCombatSignal).TotalSeconds > 30)
+        // Duty entry emits director/map/VFX traffic before the countdown or first engage. It is useful evidence,
+        // but must not invent pulls and phases. Open world has no equivalent condition boundary, so signals retain
+        // the inactivity-based heuristic there.
+        var inDuty = _ws.CurrentCFCID != 0;
+        if (inDuty && !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat])
+            return;
+        if (!_inPull || (!inDuty && (observation.At - _lastCombatSignal).TotalSeconds > 30))
         {
             _inPull = true;
             _pullStartedAt = observation.At;
@@ -199,6 +215,11 @@ public sealed partial class ForetellEngine
             or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn or ObservationKind.DutyStarted or ObservationKind.DutyWiped
             or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted or ObservationKind.SystemLog
             or ObservationKind.TargetableChanged or ObservationKind.ModelStateChanged or ObservationKind.TopologySnapshot;
+
+    private static bool IsPredictiveTimelineSignal(ForetellObservation observation)
+        => IsTimelineSignal(observation)
+            && observation.SourceKind is not SourceKind.Player and not SourceKind.Pet
+            && (observation.ActorOID != 0 || observation.SourceKind == SourceKind.Environment);
 
     private void LearnPhaseBoundary(ForetellObservation observation)
     {

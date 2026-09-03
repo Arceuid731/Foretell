@@ -18,7 +18,8 @@ public sealed partial class ForetellEngine : IDisposable
     private readonly string _replayDir;
     private readonly string _rawDir;
     private readonly EventSubscriptions _subscriptions;
-    private readonly JsonSerializerOptions _json = new() { WriteIndented = true, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() } };
+    private readonly JsonSerializerOptions _json = new() { WriteIndented = false, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() } };
+    private readonly JsonSerializerOptions _diagnosticJson = new() { WriteIndented = true, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() } };
     private readonly JsonSerializerOptions _replayJson = new() { WriteIndented = false, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() } };
 
     private ForetellStore _store;
@@ -258,7 +259,9 @@ public sealed partial class ForetellEngine : IDisposable
         foreach (var key in _predictions.Where(p => p.Value.Activation.AddSeconds(1.5) < now).Select(p => p.Key).ToArray())
             _predictions.Remove(key);
 
-        if (_inPull && (now - _lastCombatSignal).TotalSeconds > 30)
+        // Open-world combat has no duty lifecycle, so retain the inactivity fallback there. In duties the actual
+        // combat condition owns pull lifetime; quiet transition phases must not split one pull into several.
+        if (_inPull && _ws.CurrentCFCID == 0 && (now - _lastCombatSignal).TotalSeconds > 30)
             _inPull = false;
 
         // Persistence is deliberately kept off the active-combat path. Store serialization can grow with learned
@@ -420,6 +423,27 @@ public sealed partial class ForetellEngine : IDisposable
             _cfg.RadarPositionX = _cfg.RadarPositionY = -1;
             changed = true;
         }
+        if (!float.IsFinite(_cfg.TextPositionX) || !float.IsFinite(_cfg.TextPositionY))
+        {
+            _cfg.TextPositionX = _cfg.TextPositionY = -1;
+            changed = true;
+        }
+        else if (_cfg.TextPositionX >= 0 && _cfg.TextPositionY >= 0)
+        {
+            var x = Math.Clamp(_cfg.TextPositionX, 0, 1);
+            var y = Math.Clamp(_cfg.TextPositionY, 0, 1);
+            if (x != _cfg.TextPositionX || y != _cfg.TextPositionY)
+            {
+                _cfg.TextPositionX = x;
+                _cfg.TextPositionY = y;
+                changed = true;
+            }
+        }
+        else if (_cfg.TextPositionX != -1 || _cfg.TextPositionY != -1)
+        {
+            _cfg.TextPositionX = _cfg.TextPositionY = -1;
+            changed = true;
+        }
         if (changed) _cfg.Modified.Fire();
     }
 
@@ -531,11 +555,12 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void NormalizeStore()
     {
+        var loadedSchema = _store.Schema;
         // The old live reflection scanner generated hundreds of thousands of dynamic diagnostic paths. Coverage
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 13);
+        _store.Schema = Math.Max(_store.Schema, 14);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -584,6 +609,8 @@ public sealed partial class ForetellEngine : IDisposable
                 RemoveNullValues(encounter.CausalEdges);
                 RemoveNullValues(encounter.RawOpcodes);
                 RemoveNullValues(encounter.Topologies);
+                if (loadedSchema < 14)
+                    MigrateUnreliableV08DerivedMemory(encounter);
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
                 foreach (var edge in encounter.CausalEdges.Values)
@@ -645,6 +672,31 @@ public sealed partial class ForetellEngine : IDisposable
                 _store.Encounters.Remove(encounterKey);
                 Service.Log($"[Foretell] Rejected malformed learned encounter {encounterKey} safely: {e.Message}");
             }
+        }
+    }
+
+    private static void MigrateUnreliableV08DerivedMemory(EncounterMemory encounter)
+    {
+        // v0.8 mixed local WorldState time with UTC native-hook time. Keep expensive empirical mechanic samples,
+        // but discard timing/forecast products whose delays and hit rates can therefore be off by a timezone.
+        encounter.Timeline.Clear();
+        encounter.Phases.Clear();
+        encounter.PhaseBoundaries.Clear();
+        encounter.Composites.Clear();
+        encounter.CausalEdges.Clear();
+        encounter.Pulls = 0;
+        foreach (var mechanic in encounter.Mechanics.Values)
+        {
+            mechanic.Forecasts = 0;
+            mechanic.ForecastHits = 0;
+            mechanic.ForecastMisses = 0;
+            mechanic.BrierScoreSum = 0;
+        }
+        if (encounter.Sources.TryGetValue(0, out var environment))
+        {
+            environment.Kind = SourceKind.Environment;
+            environment.NameID = 0;
+            environment.Name = "";
         }
     }
 
@@ -830,7 +882,13 @@ public sealed partial class ForetellEngine : IDisposable
     private DateTime ObservationNow() => NormalizeObservationTime(_ws.CurrentTime);
 
     private static DateTime NormalizeObservationTime(DateTime value)
-        => value.Ticks < TimeSpan.TicksPerDay || value.Ticks > DateTime.MaxValue.Ticks - TimeSpan.TicksPerDay ? DateTime.UtcNow : value;
+    {
+        // WorldState uses the game's local wall-clock time while hook capture queues use UTC. DateTime subtraction
+        // ignores Kind, so normalize UTC captures before any expiry, episode or timeline arithmetic.
+        if (value.Ticks < TimeSpan.TicksPerDay || value.Ticks > DateTime.MaxValue.Ticks - TimeSpan.TicksPerDay)
+            return DateTime.Now;
+        return value.Kind == DateTimeKind.Utc ? value.ToLocalTime() : value;
+    }
 
     private static SourceKind ClassifySource(Actor actor)
     {

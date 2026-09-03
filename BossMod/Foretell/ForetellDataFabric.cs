@@ -21,7 +21,7 @@ public sealed partial class ForetellEngine
     private const int MaxFabricEntriesPerRoot = 4096;
     private const double MaxFabricTraversalMilliseconds = 1.0;
     private const int RuntimeRootCount = 21;
-    private const int MaxNativeActorsPerSlice = 6;
+    private const int MaxNativeActorsPerSlice = 3;
     private const double MaxNativeActorTraversalMilliseconds = 0.75;
     private DateTime _lastFabricSample;
     private DateTime _lastNativeActorSample;
@@ -46,6 +46,7 @@ public sealed partial class ForetellEngine
     private double _lastNativeActorMilliseconds;
     private double _peakNativeActorMilliseconds;
     private string _coreRuntimeFingerprint = "";
+    private bool _coldRuntimeSnapshotPending = true;
 
     private sealed class FabricActorTrack
     {
@@ -70,19 +71,28 @@ public sealed partial class ForetellEngine
         _lastNativeActorSample = default;
         _lastNativeFabricSample = default;
         _coreRuntimeFingerprint = "";
+        _coldRuntimeSnapshotPending = true;
     }
 
     private void SampleDataFabric(bool force = false, bool includeNative = true)
     {
         var now = ObservationNow();
 
-        // Production sampling is a small typed snapshot at 1 Hz. The previous 4 Hz reflection sweep discovered
+        // Production sampling is a small typed snapshot at 0.5 Hz. The previous 4 Hz reflection sweep discovered
         // hundreds of thousands of dynamic paths and dominated the framework thread in populated zones.
-        if (force || (now - _lastFabricSample).TotalMilliseconds >= 1000)
+        if (force || (now - _lastFabricSample).TotalMilliseconds >= 2000)
         {
             _lastFabricSample = now;
             var typedStarted = Stopwatch.GetTimestamp();
-            try { SampleCoreRuntimeSnapshot(); }
+            try
+            {
+                SampleCoreRuntimeSnapshot();
+                if (force || _coldRuntimeSnapshotPending)
+                {
+                    SampleColdRuntimeSnapshot();
+                    _coldRuntimeSnapshotPending = false;
+                }
+            }
             catch (Exception e)
             {
                 ++_typedSnapshotFailures;
@@ -110,17 +120,18 @@ public sealed partial class ForetellEngine
         if (!includeNative || !NativeSnapshotTelemetryEnabled || PerformanceThrottled)
             return;
 
-        // Character containers are sampled through a rotating cursor at up to 4 Hz. Every actor is eventually
-        // visited, but total work is bounded by both item count and elapsed time; unchanged snapshots are removed
-        // by fingerprints before they reach learning.
-        if (force || (now - _lastNativeActorSample).TotalMilliseconds >= 250)
+        // Predictive native character state is sampled through a rotating cursor at 1 Hz. WorldState events and
+        // position samples already provide the high-frequency path, so native snapshots must not compete with it.
+        // Total work is bounded by both item count and elapsed time; fingerprints reject unchanged snapshots.
+        if (force || (now - _lastNativeActorSample).TotalMilliseconds >= 1000)
         {
             _lastNativeActorSample = now;
             SampleNativeActorSlice(now);
         }
 
-        // Environment and camera use a slower 2 Hz change-detected cadence.
-        if (!force && (now - _lastNativeFabricSample).TotalMilliseconds < 500)
+        // Environment and camera are contextual evidence, not timing signals; 0.5 Hz is sufficient and avoids
+        // rebuilding matrix/feature dictionaries every other frame interval while the camera is moving.
+        if (!force && (now - _lastNativeFabricSample).TotalMilliseconds < 2000)
             return;
         _lastNativeFabricSample = now;
         try { SampleNativeEnvironment(); }
@@ -155,6 +166,14 @@ public sealed partial class ForetellEngine
             return;
         _coreRuntimeFingerprint = fingerprint;
         ProcessObservation(obs, enriched: true);
+    }
+
+    private void SampleColdRuntimeSnapshot()
+    {
+        var obs = Observation(ObservationKind.GenericFeature, detail: "runtime.initial-state");
+        StoreColdTypedWorldSnapshot(obs);
+        if (obs.Numeric.Count != 0 || obs.Text.Count != 0 || obs.Binary.Count != 0)
+            ProcessObservation(obs, enriched: true);
     }
 
     private void SampleGenericActorSlice()
@@ -231,7 +250,10 @@ public sealed partial class ForetellEngine
 
     private bool TrySampleNativeActor(Actor actor, DateTime now)
     {
-        if (!HasNativeCharacterLayout(actor.Type))
+        // Player outcomes already arrive through actions, statuses and 4 Hz position tracks. Sampling the player's
+        // full native Character graph generated large allocations without helping enemy-mechanic inference.
+        if (actor.Type is ActorType.Player or ActorType.Pet or ActorType.Chocobo or ActorType.Buddy or ActorType.Companion or ActorType.MountType
+            || !HasNativeCharacterLayout(actor.Type))
             return false;
         var obs = Observation(ObservationKind.ActorSnapshot, actor, detail: $"{actor.Type}:native");
         try

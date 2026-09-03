@@ -46,6 +46,9 @@ public sealed class DataCapability
 
 public sealed class DataCoverage
 {
+    // Capability discovery is live diagnostic state, not learned encounter evidence. Persisting tens of thousands
+    // of reflection paths made the minute autosave serialize a very large ledger on the framework thread.
+    [JsonIgnore]
     public Dictionary<string, DataCapability> Items { get; set; } = [];
     [JsonIgnore] public int Discovered => Items.Count;
     [JsonIgnore] public int Ingested => Items.Values.Count(v => v.Ingested);
@@ -366,7 +369,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 13;
+    public int Schema { get; set; } = 14;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];

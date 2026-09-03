@@ -19,7 +19,9 @@ public sealed partial class ForetellEngine
             && _raw.TryDequeueFeature(out var window))
         {
             ++processed;
-            var obs = RawWindowObservation(window);
+            // Exact bytes and structural profiles remain lossless in the gzip journal. The live frame loop only
+            // consumes the bounded summary; expensive per-opcode byte statistics are rebuilt by Replay Lab.
+            var obs = RawWindowObservation(window, includeStructuralDetails: false);
             obs.Sequence = ++_sequence;
             RegisterRecordedFeatures(obs);
             ProcessObservation(obs, enriched: true);

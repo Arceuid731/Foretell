@@ -160,6 +160,8 @@ internal sealed class ForetellRawWindowAccumulator
 
 internal static class ForetellRawFormat
 {
+    public static readonly long FeatureWindowTicks = TimeSpan.TicksPerSecond;
+    public const int FeatureWindowMaxRecords = 1024;
     public const ulong Magic = 0x315741524C5446UL;
     public const int CurrentSchema = 2;
     public const int ArgumentCount = 10;
@@ -215,7 +217,7 @@ internal static class ForetellRawFormat
                     throw new InvalidDataException($"journal exceeds the {MaxIndexedRecords:N0}-record in-memory analysis safety limit");
                 if (report.Opcodes.Count > MaxOpcodeFamilies)
                     throw new InvalidDataException($"journal exceeds the {MaxOpcodeFamilies:N0}-opcode-family safety limit");
-                if (aggregate.DurationTicks >= TimeSpan.TicksPerMillisecond * 250 || aggregate.Records >= 256)
+                if (aggregate.DurationTicks >= FeatureWindowTicks || aggregate.Records >= FeatureWindowMaxRecords)
                 {
                     if (report.Windows.Count >= MaxInMemoryWindows)
                         throw new InvalidDataException($"journal exceeds the {MaxInMemoryWindows:N0}-window in-memory analysis safety limit");

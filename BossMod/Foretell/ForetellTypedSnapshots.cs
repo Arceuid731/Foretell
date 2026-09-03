@@ -10,7 +10,27 @@ public sealed partial class ForetellEngine
         StoreWaymarks(obs);
         StoreParty(obs);
         StoreClient(obs);
-        StoreDeepDungeon(obs);
+        if (_ws.DeepDungeon.DungeonId != 0)
+            StoreDeepDungeon(obs);
+        else
+            StoreFabric(obs, "runtime.deepDungeon.id", 0);
+    }
+
+    // Large player-owned arrays are captured once on startup/territory change. Their subsequent WorldState
+    // operations remain lossless, but they no longer get re-enumerated on a timer while the player is fighting.
+    private void StoreColdTypedWorldSnapshot(ForetellObservation obs)
+    {
+        var client = _ws.Client;
+        for (var i = 0; i < client.Cooldowns.Length; ++i)
+        {
+            StoreFabric(obs, $"runtime.client.cooldowns[{i}].elapsed", client.Cooldowns[i].Elapsed);
+            StoreFabric(obs, $"runtime.client.cooldowns[{i}].total", client.Cooldowns[i].Total);
+        }
+        StoreArray(obs, "runtime.client.bozjaHolster", client.BozjaHolster);
+        StoreArray(obs, "runtime.client.blueMageSpells", client.BlueMageSpells);
+        StoreArray(obs, "runtime.client.classJobLevels", client.ClassJobLevels);
+        StoreArray(obs, "runtime.client.contentKeyValue", client.ContentKeyValueData);
+        StoreArray(obs, "runtime.client.procTimers", client.ProcTimers);
     }
 
     private void StoreWaymarks(ForetellObservation obs)
@@ -79,11 +99,9 @@ public sealed partial class ForetellEngine
         StoreFabric(obs, "runtime.client.forcedMovementDirection", client.ForcedMovementDirection.Rad);
 
         StoreFabric(obs, "runtime.client.cooldowns.capacity", client.Cooldowns.Length);
-        for (var i = 0; i < client.Cooldowns.Length; ++i)
-        {
-            StoreFabric(obs, $"runtime.client.cooldowns[{i}].elapsed", client.Cooldowns[i].Elapsed);
-            StoreFabric(obs, $"runtime.client.cooldowns[{i}].total", client.Cooldowns[i].Total);
-        }
+        // Full player cooldown, inventory and progression collections are not encounter evidence. Their previous
+        // one-hertz enumeration caused allocation/GC spikes in open world; action/status deltas retain the useful
+        // combat signal without sweeping unrelated account state.
         for (var i = 0; i < client.DutyActions.Length; ++i)
         {
             StoreFabric(obs, $"runtime.client.dutyActions[{i}].type", client.DutyActions[i].Action.Type);
@@ -91,21 +109,12 @@ public sealed partial class ForetellEngine
             StoreFabric(obs, $"runtime.client.dutyActions[{i}].charges", client.DutyActions[i].CurCharges);
             StoreFabric(obs, $"runtime.client.dutyActions[{i}].maxCharges", client.DutyActions[i].MaxCharges);
         }
-        StoreArray(obs, "runtime.client.bozjaHolster", client.BozjaHolster);
-        StoreArray(obs, "runtime.client.blueMageSpells", client.BlueMageSpells);
-        StoreArray(obs, "runtime.client.classJobLevels", client.ClassJobLevels);
-        StoreArray(obs, "runtime.client.contentKeyValue", client.ContentKeyValueData);
-        StoreArray(obs, "runtime.client.procTimers", client.ProcTimers);
-
         StoreFabric(obs, "runtime.client.hate.primary", client.CurrentTargetHate.InstanceID);
         for (var i = 0; i < client.CurrentTargetHate.Targets.Length; ++i)
         {
             StoreFabric(obs, $"runtime.client.hate[{i}].instanceId", client.CurrentTargetHate.Targets[i].InstanceID);
             StoreFabric(obs, $"runtime.client.hate[{i}].enmity", client.CurrentTargetHate.Targets[i].Enmity);
         }
-        StoreFabric(obs, "runtime.client.inventory.count", client.Inventory.Count);
-        foreach (var (itemId, quantity) in client.Inventory)
-            StoreFabric(obs, $"runtime.client.inventory[{itemId}]", quantity);
     }
 
     private void StoreDeepDungeon(ForetellObservation obs)

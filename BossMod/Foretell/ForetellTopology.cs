@@ -23,6 +23,9 @@ public sealed partial class ForetellEngine
     private double _peakTopologyMilliseconds;
     private int _topologyConsecutiveOverruns;
     private long _topologyInvalidations;
+    private bool _topologySweepRequested = true;
+    private bool _topologySweepInProgress;
+    private DateTime _topologyRescanAfter;
 
     internal TopologyAnalysis? CurrentTopology => _topologyAnalysis;
     internal bool TopologySuspended => DateTime.UtcNow < _topologySuspendedUntil;
@@ -34,13 +37,16 @@ public sealed partial class ForetellEngine
         _topology.Cursor = 0;
         _topologyConsecutiveOverruns = 0;
         _topologySuspendedUntil = default;
+        _topologySweepRequested = true;
+        _topologySweepInProgress = false;
+        _topologyRescanAfter = default;
     }
 
     private void InvalidateTopology()
     {
-        // The sweep is continuous, so this is diagnostic only. Never reset Cursor here: map/director/VFX
-        // bursts can otherwise starve completion indefinitely.
         ++_topologyInvalidations;
+        _topologySweepRequested = true;
+        _topologyRescanAfter = DateTime.UtcNow.AddMilliseconds(500);
     }
 
     // Collision calls already back BMR line-of-sight checks. Foretell performs a bounded downward probe sweep on
@@ -52,6 +58,8 @@ public sealed partial class ForetellEngine
             return;
         var player = _ws.Party[PartyState.PlayerSlot];
         if (player == null || (!_inPull && _ws.CurrentCFCID == 0))
+            return;
+        if (!_topologySweepInProgress && (!_topologySweepRequested || now < _topologyRescanAfter))
             return;
 
         var framework = FFXIVFramework.Instance();
@@ -77,9 +85,15 @@ public sealed partial class ForetellEngine
             _topology.Reset(player3, TopologyRadius, TopologyResolution);
             _topologyAnalysis = null;
             _topologyFingerprint = "";
+            _topologySweepRequested = true;
+            _topologySweepInProgress = false;
         }
-        // A structural event requests another full pass, but never restarts the pass currently in progress.
-        // Repeated MapEffect/Director/VFX signals would otherwise pin the cursor near zero forever.
+        if (!_topologySweepInProgress)
+        {
+            _topology.Cursor = 0;
+            _topologySweepInProgress = true;
+            _topologySweepRequested = false;
+        }
 
         var started = Stopwatch.GetTimestamp();
         var sampled = 0;
@@ -90,7 +104,8 @@ public sealed partial class ForetellEngine
                 if (_topology.Cursor >= _topology.CellCount)
                 {
                     CompleteTopologySweep(new(player3.X, player3.Z));
-                    _topology.Cursor = 0;
+                    _topologySweepInProgress = false;
+                    break;
                 }
 
                 var index = _topology.Cursor++;
@@ -115,6 +130,12 @@ public sealed partial class ForetellEngine
             ++_topologyFailures;
             SuspendTopology(now, $"collision probe rejected safely: {e.GetType().Name}");
             return;
+        }
+
+        if (_topologySweepInProgress && _topology.Cursor >= _topology.CellCount)
+        {
+            CompleteTopologySweep(new(player3.X, player3.Z));
+            _topologySweepInProgress = false;
         }
 
         _lastTopologyMilliseconds = Stopwatch.GetElapsedTime(started).TotalMilliseconds;

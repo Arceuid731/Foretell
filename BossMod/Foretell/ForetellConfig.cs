@@ -19,7 +19,7 @@ public enum ForetellRadarShape
 [ConfigDisplay(Name = "Foretell", Order = 0)]
 public sealed class ForetellConfig : ConfigNode
 {
-    [PropertyDisplay("Presentation mode", tooltip: "Recommended path: Observe -> Compare -> Hybrid. Legacy shows BMR only. Observe learns silently while BMR guides you. Compare shows BMR and Foretell together. Hybrid uses Foretell guidance while retaining BMR as a safety net. Foretell hides legacy encounter presentation and shows the adaptive layer only. Use /foretell for the guided dashboard.")]
+    [PropertyDisplay("Presentation mode", tooltip: "Recommended path: Observe -> Compare -> Hybrid. Legacy shows BMR only. Observe learns silently while BMR guides you. Compare shows the complete BMR and Foretell presentations together. Hybrid makes Foretell guidance primary and retains only BMR's arena as a visual safety baseline. Foretell hides legacy encounter presentation and shows the adaptive layer only. Use /foretell for the guided dashboard.")]
     public ForetellMode Mode = ForetellMode.Observe;
 
     [PropertyDisplay("Adaptive learning", tooltip: "When ON, Foretell updates persistent mechanics, sources, timelines and the local ML model from new evidence. When OFF, those learned data are read-only; live observation and guidance from existing memory can continue.")]
@@ -47,10 +47,17 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("Text hints", tooltip: "Show adaptive mechanic, countdown, confidence and likely-next information.")]
     public bool TextHints = true;
 
+    [PropertyDisplay("Unlock text hints", tooltip: "Give the combat guidance text a draggable window. Lock it again after placing it.")]
+    public bool TextHintsUnlocked;
+
+    // Normalized top-left viewport position. Negative values select the default top-center placement.
+    public float TextPositionX = -1;
+    public float TextPositionY = -1;
+
     [PropertyDisplay("Safe-position suggestions", tooltip: "Draw a suggested safe destination only for predictions above the strict safe-guidance confidence threshold. Suggestion only: Foretell never moves your character.")]
     public bool SafePositionSuggestions = true;
 
-    [PropertyDisplay("Record local Replay Lab stream", tooltip: "Optional high-volume diagnostic capture. Raw packets and normalized encounter observations are serialized on a background thread; this is never uploaded automatically.")]
+    [PropertyDisplay("Record local Replay Lab stream", tooltip: "Optional high-volume, human-readable stream of normalized encounter observations. It is written on a background thread, hard-limited to 512 MiB per territory segment, and never uploaded automatically. Exact packets remain in the separate compact raw journal.")]
     public bool RecordReplay;
 
     [PropertyDisplay("Automatically prune old recordings", tooltip: "Optional. When enabled, Foretell removes only inactive files from its own raw/replay folders, outside combat and on a background worker. Active recordings and learned memory are always protected.")]

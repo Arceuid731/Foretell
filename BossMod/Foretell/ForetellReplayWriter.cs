@@ -12,6 +12,7 @@ internal sealed class ForetellReplayWriter : IDisposable
     private readonly record struct Item(string Path, ForetellObservation Observation);
 
     private const int MaxQueuedObservations = 16384;
+    private const long MaxFileBytes = 512L * 1024 * 1024;
     private readonly BlockingCollection<Item> _queue = new(new ConcurrentQueue<Item>(), MaxQueuedObservations);
     private readonly CancellationTokenSource _stop = new();
     private readonly JsonSerializerOptions _json;
@@ -86,17 +87,34 @@ internal sealed class ForetellReplayWriter : IDisposable
     {
         StreamWriter? writer = null;
         var path = "";
+        var cappedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             foreach (var item in _queue.GetConsumingEnumerable(_stop.Token))
             {
+                if (cappedPaths.Contains(item.Path))
+                {
+                    Interlocked.Decrement(ref _pending);
+                    Interlocked.Increment(ref _rejected);
+                    continue;
+                }
                 if (writer == null || !string.Equals(path, item.Path, StringComparison.Ordinal))
                 {
                     writer?.Dispose();
                     path = item.Path;
                     writer = new(path, append: true) { AutoFlush = true };
                 }
-                writer.WriteLine(JsonSerializer.Serialize(item.Observation, _json));
+                var line = JsonSerializer.Serialize(item.Observation, _json);
+                var encodedBytes = System.Text.Encoding.UTF8.GetByteCount(line) + Environment.NewLine.Length;
+                if (writer.BaseStream.Position + encodedBytes > MaxFileBytes)
+                {
+                    cappedPaths.Add(path);
+                    Interlocked.Decrement(ref _pending);
+                    Interlocked.Increment(ref _rejected);
+                    Service.Log($"[Foretell] Replay Lab segment {Path.GetFileName(path)} reached its 512 MiB hard limit; recording continues only in the compact raw journal.");
+                    continue;
+                }
+                writer.WriteLine(line);
                 Interlocked.Decrement(ref _pending);
                 Interlocked.Increment(ref _written);
             }

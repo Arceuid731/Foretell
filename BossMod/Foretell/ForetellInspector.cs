@@ -124,7 +124,7 @@ public sealed partial class ForetellEngine
         ForetellMode.Legacy => "BossMod Reborn presentation only; Foretell guidance is hidden.",
         ForetellMode.Observe => "Recommended first step: Foretell learns silently while BMR remains your guide.",
         ForetellMode.Compare => "Shows BMR and Foretell together so you can compare what Foretell inferred.",
-        ForetellMode.Hybrid => "Foretell guidance is active while BMR remains available as a safety net.",
+        ForetellMode.Hybrid => "Foretell guidance is primary; BMR keeps only its arena as a visual safety baseline.",
         ForetellMode.Foretell => "Pure Foretell presentation; legacy BMR encounter hints are hidden.",
         _ => ""
     };
@@ -315,6 +315,15 @@ public sealed partial class ForetellEngine
         {
             changed |= ImGui.Checkbox("World-space overlay", ref _cfg.WorldOverlay);
             changed |= ImGui.Checkbox("Text hints", ref _cfg.TextHints);
+            changed |= ImGui.Checkbox("Unlock text hints to move them", ref _cfg.TextHintsUnlocked);
+            if (ImGui.Button("Reset text hints to top-center"))
+            {
+                _cfg.TextPositionX = -1;
+                _cfg.TextPositionY = -1;
+                changed = true;
+            }
+            ImGui.SameLine();
+            ImGui.TextDisabled(_cfg.TextHintsUnlocked ? "Drag the guidance window, then lock it here." : "Locked: text hints ignore mouse input.");
             changed |= ImGui.Checkbox("Safe-position suggestions", ref _cfg.SafePositionSuggestions);
             changed |= ImGui.SliderFloat("Visual threshold (%)", ref _cfg.VisualConfidence, 50, 100);
             changed |= ImGui.SliderFloat("Warning threshold (%)", ref _cfg.WarningConfidence, 50, 100);
@@ -673,7 +682,7 @@ public sealed partial class ForetellEngine
             ForetellMode.Observe => $"{learned} candidates learned, including {high} high-confidence. Compare is the useful next step.",
             ForetellMode.Compare when high < 3 => "Keep Compare enabled and review Learned mechanics while evidence accumulates.",
             ForetellMode.Compare => $"{high} high-confidence candidates. If the overlay matches the fight, Hybrid is ready to test.",
-            ForetellMode.Hybrid => "Validation mode: Foretell guides while BMR remains visible as a reference.",
+            ForetellMode.Hybrid => "Validation mode: Foretell guides while only BMR's arena remains as a reference.",
             ForetellMode.Foretell => "Pure Foretell is active. Review ambiguous mechanics after the run.",
             _ => ""
         };
@@ -994,6 +1003,7 @@ public sealed partial class ForetellEngine
                 $"Delete inactive recordings older than {_cfg.RecordingRetentionDays} days, then oldest files above {_cfg.MaximumRecordingStorageGiB} GiB? Active files and learned memory remain protected.",
                 StartStorageMaintenance);
         ImGui.TextDisabled($"Active files are protected. Automatic cleanup is {(_cfg.AutomaticStorageMaintenance ? "ON" : "OFF")} · {_cfg.RecordingRetentionDays} days · {_cfg.MaximumRecordingStorageGiB} GiB.");
+        ImGui.TextDisabled("When sharing a .ftraw.gz, choose an inactive file: the active gzip receives its final footer only after rotation or plugin shutdown.");
         if (_lastStorageMaintenanceResult.CompletedAt != default)
         {
             if (string.IsNullOrEmpty(_lastStorageMaintenanceResult.Error))

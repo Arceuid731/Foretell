@@ -148,7 +148,7 @@ internal sealed class ForetellRawWriter : IDisposable
 
                 ForetellRawFormat.Write(writer, item.Record);
                 aggregate.Add(item.Record);
-                if (aggregate.DurationTicks >= TimeSpan.TicksPerMillisecond * 250 || aggregate.Records >= 256)
+                if (aggregate.DurationTicks >= ForetellRawFormat.FeatureWindowTicks || aggregate.Records >= ForetellRawFormat.FeatureWindowMaxRecords)
                     FlushFeatures(aggregate);
                 Interlocked.Decrement(ref _pendingItems);
                 Interlocked.Add(ref _pendingBytes, -item.Record.Payload.LongLength);

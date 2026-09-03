@@ -304,7 +304,7 @@ public sealed partial class ForetellEngine
         return _lastReplayReport = report;
     }
 
-    private ForetellObservation RawWindowObservation(ForetellRawFeatureWindow window)
+    private ForetellObservation RawWindowObservation(ForetellRawFeatureWindow window, bool includeStructuralDetails = true)
     {
         var obs = new ForetellObservation
         {
@@ -312,7 +312,7 @@ public sealed partial class ForetellEngine
             TerritoryID = window.TerritoryID,
             Kind = ObservationKind.GenericFeature,
             SourceKind = SourceKind.Environment,
-            Detail = "raw:250ms-window"
+            Detail = "raw:feature-window"
         };
         obs.Numeric["raw.window.serverPackets"] = window.ServerPackets;
         obs.Numeric["raw.window.clientPackets"] = window.ClientPackets;
@@ -320,22 +320,25 @@ public sealed partial class ForetellEngine
         obs.Numeric["raw.window.payloadBytes"] = window.PayloadBytes;
         foreach (var (opcode, count) in window.Opcodes) obs.Numeric[$"raw.window.opcode[{opcode:X8}]"] = count;
         for (var i = 0; i < window.BinaryBuckets.Length; ++i) obs.Numeric[$"raw.window.binaryBucket[{i}]"] = window.BinaryBuckets[i];
-        foreach (var (opcode, feature) in window.OpcodeFeatures)
+        if (includeStructuralDetails)
         {
-            var prefix = $"raw.window.structure[{opcode:X8}]";
-            obs.Numeric[$"{prefix}.count"] = feature.Count;
-            obs.Numeric[$"{prefix}.payloadBytes"] = feature.PayloadBytes;
-            obs.Numeric[$"{prefix}.minLength"] = feature.MinLength;
-            obs.Numeric[$"{prefix}.maxLength"] = feature.MaxLength;
-            obs.Text[$"{prefix}.sequenceHash"] = feature.SequenceHash.ToString("X16");
-            for (var i = 0; i < feature.ByteMeans.Length; ++i)
+            foreach (var (opcode, feature) in window.OpcodeFeatures)
             {
-                obs.Numeric[$"{prefix}.byte[{i}].mean"] = feature.ByteMeans[i];
-                obs.Numeric[$"{prefix}.byte[{i}].variance"] = feature.ByteVariances[i];
+                var prefix = $"raw.window.structure[{opcode:X8}]";
+                obs.Numeric[$"{prefix}.count"] = feature.Count;
+                obs.Numeric[$"{prefix}.payloadBytes"] = feature.PayloadBytes;
+                obs.Numeric[$"{prefix}.minLength"] = feature.MinLength;
+                obs.Numeric[$"{prefix}.maxLength"] = feature.MaxLength;
+                obs.Text[$"{prefix}.sequenceHash"] = feature.SequenceHash.ToString("X16");
+                for (var i = 0; i < feature.ByteMeans.Length; ++i)
+                {
+                    obs.Numeric[$"{prefix}.byte[{i}].mean"] = feature.ByteMeans[i];
+                    obs.Numeric[$"{prefix}.byte[{i}].variance"] = feature.ByteVariances[i];
+                }
             }
+            foreach (var (transition, count) in window.Transitions)
+                obs.Numeric[$"raw.window.transition[{transition:X16}]"] = count;
         }
-        foreach (var (transition, count) in window.Transitions)
-            obs.Numeric[$"raw.window.transition[{transition:X16}]"] = count;
         return obs;
     }
 
@@ -363,9 +366,53 @@ public sealed partial class ForetellEngine
             mlUpdates = _store.ML.Updates,
             activeEpisodes = _episodes.Values.Count(e => !e.Finalized),
             activePredictions = _predictions.Count,
+            configuration = new
+            {
+                _cfg.Mode,
+                _cfg.EnableLearning,
+                _cfg.EnableML,
+                _cfg.WorldOverlay,
+                _cfg.TextHints,
+                _cfg.TextHintsUnlocked,
+                _cfg.TextPositionX,
+                _cfg.TextPositionY,
+                _cfg.SafePositionSuggestions,
+                _cfg.VisualConfidence,
+                _cfg.WarningConfidence,
+                _cfg.SafeConfidence,
+                _cfg.MaxRenderedMechanics,
+                _cfg.MiniRadar,
+                _cfg.RadarUnlocked,
+                _cfg.RadarShape,
+                _cfg.RadarSize,
+                _cfg.RadarWorldRadius,
+                _cfg.RecordReplay,
+                _cfg.AutomaticStorageMaintenance
+            },
+            runtime = new
+            {
+                updateFailures = _updateFailures,
+                updateOverruns = _updateOverruns,
+                updateLastMilliseconds = _lastUpdateMilliseconds,
+                updateMeanMilliseconds = _meanUpdateMilliseconds,
+                updatePeakMilliseconds = _peakUpdateMilliseconds,
+                drawFailures = _drawFailures,
+                performanceThrottled = PerformanceThrottled,
+                typedSnapshotLastMilliseconds = _lastTypedSnapshotMilliseconds,
+                typedSnapshotPeakMilliseconds = _peakTypedSnapshotMilliseconds,
+                nativeActorLastMilliseconds = _lastNativeActorMilliseconds,
+                nativeActorPeakMilliseconds = _peakNativeActorMilliseconds,
+                rawFeatureDrainLastMilliseconds = _lastRawFeatureDrainMilliseconds,
+                rawFeatureDrainPeakMilliseconds = _peakRawFeatureDrainMilliseconds,
+                topologyLastMilliseconds = _lastTopologyMilliseconds,
+                topologyPeakMilliseconds = _peakTopologyMilliseconds,
+                topologySweepRequested = _topologySweepRequested,
+                topologySweepInProgress = _topologySweepInProgress
+            },
             dataComplete = new
             {
                 rawJournal = _rawPath,
+                rawJournalActive = true,
                 rawPendingItems = _raw.PendingItems,
                 rawPendingBytes = _raw.PendingBytes,
                 rawWrittenItems = _raw.WrittenItems,
@@ -397,7 +444,7 @@ public sealed partial class ForetellEngine
             replay = _lastReplayReport,
             lastEvidence = _lastEvidence
         };
-        File.WriteAllText(path, JsonSerializer.Serialize(payload, _json));
+        File.WriteAllText(path, JsonSerializer.Serialize(payload, _diagnosticJson));
         return path;
     }
 }
