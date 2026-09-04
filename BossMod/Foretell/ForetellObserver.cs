@@ -116,7 +116,10 @@ public sealed partial class ForetellEngine
         => ProcessObservation(Observation(ObservationKind.RenderFlagsChanged, actor, detail: actor.Renderflags.ToString()));
 
     private void OnEventStateChanged(Actor actor)
-        => ProcessObservation(Observation(ObservationKind.EventStateChanged, actor, primary: ToUInt(actor.EventState) ?? 0));
+    {
+        if (actor.Type == ActorType.EventObj) InvalidateTopology(immediate: true);
+        ProcessObservation(Observation(ObservationKind.EventStateChanged, actor, primary: ToUInt(actor.EventState) ?? 0));
+    }
 
     private void OnModelStateChanged(Actor actor)
     {
@@ -178,10 +181,16 @@ public sealed partial class ForetellEngine
         => ProcessObservation(Observation(ObservationKind.VFX, actor, vfx, target: target));
 
     private void OnEventObjectState(Actor actor, ushort state)
-        => ProcessObservation(Observation(ObservationKind.EventObjectState, actor, state));
+    {
+        InvalidateTopology(immediate: true);
+        ProcessObservation(Observation(ObservationKind.EventObjectState, actor, state));
+    }
 
     private void OnEventObjectAnimation(Actor actor, ushort p1, ushort p2)
-        => ProcessObservation(Observation(ObservationKind.EventObjectAnimation, actor, p1, p2));
+    {
+        ObserveDynamicTerrainAnimation(actor);
+        ProcessObservation(Observation(ObservationKind.EventObjectAnimation, actor, p1, p2));
+    }
 
     private void OnActionTimelineEvent(Actor actor, ushort id)
         => ProcessObservation(Observation(ObservationKind.ActionTimelineEvent, actor, id));

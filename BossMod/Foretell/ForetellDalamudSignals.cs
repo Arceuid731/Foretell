@@ -43,7 +43,7 @@ public sealed partial class ForetellEngine
 
     private void OnConditionChange(ConditionFlag flag, bool value)
     {
-        if (flag == ConditionFlag.InCombat && !value && _ws.CurrentCFCID != 0)
+        if (flag == ConditionFlag.InCombat && !value)
             EndCombatPull();
     }
 

@@ -308,9 +308,9 @@ public sealed partial class ForetellEngine : IDisposable
         else if (_store.Encounters.TryGetValue(_territory, out var currentEncounter) && _ws.CurrentCFCID != 0 && currentEncounter.ContentFinderConditionID != _ws.CurrentCFCID)
             RefreshEncounterIdentity(currentEncounter, _ws.CurrentCFCID);
 
-        // The duty combat flag normally changes before the first cast packet. Starting the phase clock here lets
-        // an already learned T+N mechanic be announced before its trigger instead of using that trigger as T0.
-        if (!_inPull && _ws.CurrentCFCID != 0 && gameInCombat)
+        // The combat flag normally changes before the first cast packet. Starting the phase clock here lets an
+        // already learned T+N mechanic be announced before its trigger in duties and in open-world encounters.
+        if (!_inPull && gameInCombat)
             BeginCombatPull(_store.Encounters.GetValueOrDefault(_territory), now);
 
         SyncReplayWriter();
@@ -342,10 +342,9 @@ public sealed partial class ForetellEngine : IDisposable
         foreach (var key in _predictions.Where(p => p.Value.Activation.AddSeconds(1.5) < now).Select(p => p.Key).ToArray())
             ExpirePrediction(key, "display lifetime ended");
 
-        // Open-world combat has no duty lifecycle, so retain the inactivity fallback there. In duties the actual
-        // combat condition owns pull lifetime; quiet transition phases must not split one pull into several.
-        if (_inPull && ((_ws.CurrentCFCID == 0 && (now - _lastCombatSignal).TotalSeconds > 30)
-            || (_ws.CurrentCFCID != 0 && !gameInCombat)))
+        // The game combat condition is available globally. Ending on its falling edge prevents stale predictions
+        // and 3D drawings after an open-world enemy or an instanced boss dies.
+        if (_inPull && !gameInCombat)
             EndCombatPull();
 
         // Persistence is deliberately kept off the active-combat path. Store serialization can grow with learned
@@ -390,6 +389,7 @@ public sealed partial class ForetellEngine : IDisposable
         ResetDataFabric();
         ResetTopology();
         _predictions.Clear();
+        ClearDynamicTerrainWarnings();
         _timelineForecasts.Clear();
         _nextForecastID = -1;
         _effectSequenceEpisodes.Clear();
@@ -495,10 +495,14 @@ public sealed partial class ForetellEngine : IDisposable
         if ((int)_cfg.Mode == 3) { _cfg.Mode = ForetellMode.Hybrid; changed = true; }
         changed |= NormalizeEnum(ref _cfg.Mode, ForetellMode.Observe);
         changed |= NormalizeEnum(ref _cfg.RadarShape, ForetellRadarShape.Auto);
+        changed |= NormalizeEnum(ref _cfg.RadarZoom, ForetellRadarZoom.Automatic);
+        changed |= NormalizeEnum(ref _cfg.RadarTerrainStyle, ForetellRadarTerrainStyle.Outline);
         changed |= NormalizeFinite(ref _cfg.VisualConfidence, 75, 50, 100);
         changed |= NormalizeFinite(ref _cfg.WarningConfidence, 95, _cfg.VisualConfidence, 100);
         changed |= NormalizeFinite(ref _cfg.SafeConfidence, 99, _cfg.WarningConfidence, 100);
         changed |= NormalizeFinite(ref _cfg.RadarWorldRadius, 30, 5, 120);
+        changed |= NormalizeFinite(ref _cfg.RadarAutoMinimumRadius, 30, 10, 60);
+        changed |= NormalizeFinite(ref _cfg.RadarAutoMaximumRadius, 65, Math.Max(20, _cfg.RadarAutoMinimumRadius), 120);
         changed |= NormalizeFinite(ref _cfg.RadarSize, 220, 140, 600);
         var maxRendered = Math.Clamp(_cfg.MaxRenderedMechanics, 1, 32);
         if (maxRendered != _cfg.MaxRenderedMechanics) { _cfg.MaxRenderedMechanics = maxRendered; changed = true; }

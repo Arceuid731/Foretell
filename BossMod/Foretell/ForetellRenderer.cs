@@ -6,6 +6,8 @@ public sealed partial class ForetellEngine
 {
     private bool _radarWasUnlocked;
     private bool _radarPositionDirty;
+    private float _radarDisplayedWorldRadius;
+    private DateTime _radarZoomUpdatedAt;
     private bool _textWasUnlocked;
     private bool _textPositionDirty;
     private long _drawFailures;
@@ -14,9 +16,12 @@ public sealed partial class ForetellEngine
     public void Draw()
     {
         DrawSafely(DrawInspector, "inspector");
+        if (_cfg.MiniRadar)
+            DrawSafely(() => DrawRadar(_cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell), "radar");
         if (_cfg.Mode is ForetellMode.Legacy or ForetellMode.Observe) return;
         DrawSafely(() =>
         {
+            if (_cfg.WorldOverlay) DrawDynamicTerrainWorld();
             var confidenceCut = _cfg.VisualConfidence / 100f;
             var displayed = 0;
             foreach (var p in _predictions.Values.Where(p => ValidPrediction(p) && HasSpatialPresentation(p)).OrderBy(p => p.Activation))
@@ -26,7 +31,6 @@ public sealed partial class ForetellEngine
             }
         }, "world overlay");
         if (_cfg.TextHints) DrawSafely(DrawTextHints, "text hints");
-        if (_cfg.MiniRadar) DrawSafely(DrawRadar, "radar");
         if (_cfg.SafePositionSuggestions) DrawSafely(DrawSafeSuggestion, "safe suggestion");
     }
 
@@ -345,7 +349,7 @@ public sealed partial class ForetellEngine
             .ThenByDescending(e => e.Count).FirstOrDefault();
     }
 
-    private void DrawRadar()
+    private void DrawRadar(bool showPredictions)
     {
         var player = _ws.Party[PartyState.PlayerSlot];
         if (player == null)
@@ -418,9 +422,11 @@ public sealed partial class ForetellEngine
         var shapeLabel = _cfg.RadarShape == ForetellRadarShape.Auto
             ? topologyAvailable ? "auto / local collision mesh" : arenaBoundary != null ? "auto / learned boundary" : "auto / circle fallback"
             : shape.ToString().ToLowerInvariant();
+        var worldRadius = EffectiveRadarWorldRadius(playerPos);
+        var zoomLabel = _cfg.RadarZoom == ForetellRadarZoom.Automatic ? "auto" : "manual";
         draw.AddText(canvas + new Vector2(4, 1), 0xFFE0E0E0u,
-            _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : $"Foretell radar · {shapeLabel} · {_cfg.RadarWorldRadius:F0}y");
-        var scale = radius / MathF.Max(1, _cfg.RadarWorldRadius);
+            _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : $"Foretell radar · {shapeLabel} · {zoomLabel} {worldRadius:F0}y");
+        var scale = radius / MathF.Max(1, worldRadius);
         if (arenaBoundary != null)
             DrawArenaBoundaryRadarFrame(draw, center, radius, playerPos, cameraAzimuth, scale, arenaBoundary);
         else if (topologyAvailable)
@@ -429,25 +435,35 @@ public sealed partial class ForetellEngine
             DrawRadarFrame(draw, center, radius, shape);
         DrawRadarScale(draw, center, radius, scale);
         DrawRadarActors(draw, player, playerPos, cameraAzimuth, center, radius, scale);
+        if (showPredictions)
+            DrawDynamicTerrainRadar(draw, playerPos, cameraAzimuth, center, scale);
 
-        var displayed = 0;
-        foreach (var p in _predictions.Values.Where(p => ValidPrediction(p) && HasSpatialPresentation(p)).OrderBy(p => p.Activation))
+        if (showPredictions)
         {
-            if (p.Confidence < _cfg.VisualConfidence / 100f || displayed++ >= _cfg.MaxRenderedMechanics)
-                continue;
-            var col = ConfidenceColor(p.Confidence);
-            var thickness = ConfidenceThickness(p.Confidence);
-            DrawRadarGeometry(draw, p, playerPos, cameraAzimuth, center, scale, col, thickness);
-            DrawRadarGuidance(draw, p, playerPos, cameraAzimuth, center, scale, col, thickness);
-            var c = RadarPoint(p.Origin, playerPos, cameraAzimuth, center, scale);
-            draw.AddText(c + new Vector2(5, -9), col, $"{p.Confidence:P0}");
+            var displayed = 0;
+            foreach (var p in _predictions.Values.Where(p => ValidPrediction(p) && HasSpatialPresentation(p)).OrderBy(p => p.Activation))
+            {
+                if (p.Confidence < _cfg.VisualConfidence / 100f || displayed++ >= _cfg.MaxRenderedMechanics)
+                    continue;
+                var col = ConfidenceColor(p.Confidence);
+                var thickness = ConfidenceThickness(p.Confidence);
+                DrawRadarGeometry(draw, p, playerPos, cameraAzimuth, center, scale, col, thickness);
+                DrawRadarGuidance(draw, p, playerPos, cameraAzimuth, center, scale, col, thickness);
+                var c = RadarPoint(p.Origin, playerPos, cameraAzimuth, center, scale);
+                draw.AddText(c + new Vector2(5, -9), col, $"{p.Confidence:P0}");
+            }
         }
         DrawRadarPlayer(draw, center);
 
         var legendY = center.Y + radius + 4;
-        draw.AddText(new(center.X - radius, legendY), ConfidenceColor(_cfg.VisualConfidence / 100f), $"{_cfg.VisualConfidence:F0}% learn");
-        draw.AddText(new(center.X - 22, legendY), ConfidenceColor(_cfg.WarningConfidence / 100f), $"{_cfg.WarningConfidence:F0}% high");
-        draw.AddText(new(center.X + radius - 58, legendY), ConfidenceColor(_cfg.SafeConfidence / 100f), $"{_cfg.SafeConfidence:F0}% safe");
+        if (showPredictions)
+        {
+            draw.AddText(new(center.X - radius, legendY), ConfidenceColor(_cfg.VisualConfidence / 100f), $"{_cfg.VisualConfidence:F0}% learn");
+            draw.AddText(new(center.X - 22, legendY), ConfidenceColor(_cfg.WarningConfidence / 100f), $"{_cfg.WarningConfidence:F0}% high");
+            draw.AddText(new(center.X + radius - 58, legendY), ConfidenceColor(_cfg.SafeConfidence / 100f), $"{_cfg.SafeConfidence:F0}% safe");
+        }
+        else
+            draw.AddText(new(center.X - radius, legendY), Pack(165, 180, 195, 180), "terrain only · guidance silent");
         }
         finally
         {
@@ -477,7 +493,7 @@ public sealed partial class ForetellEngine
         }
     }
 
-    private static void DrawArenaBoundaryRadarFrame(ImDrawListPtr draw, Vector2 center, float radius, Vector2 player,
+    private void DrawArenaBoundaryRadarFrame(ImDrawListPtr draw, Vector2 center, float radius, Vector2 player,
         float cameraAzimuth, float scale, ArenaBoundaryAnalysis boundary)
     {
         var min = center - new Vector2(radius);
@@ -487,13 +503,14 @@ public sealed partial class ForetellEngine
         try
         {
             var origin = RadarPoint(boundary.Origin, player, cameraAzimuth, center, scale);
-            var color = boundary.ArenaLike ? Pack(80, 220, 175, 235) : Pack(90, 175, 235, 220);
-            var fill = boundary.ArenaLike ? Pack(32, 85, 70, 72) : Pack(25, 55, 85, 62);
+            var color = RadarTerrainColor();
+            var fill = RadarTerrainFillColor();
             for (var i = 0; i < boundary.Points.Count; ++i)
             {
                 var a = RadarPoint(boundary.Points[i], player, cameraAzimuth, center, scale);
                 var b = RadarPoint(boundary.Points[(i + 1) % boundary.Points.Count], player, cameraAzimuth, center, scale);
-                draw.AddTriangleFilled(origin, a, b, fill);
+                if (_cfg.RadarTerrainStyle == ForetellRadarTerrainStyle.Filled)
+                    draw.AddTriangleFilled(origin, a, b, fill);
                 draw.AddLine(a, b, color, 2f);
             }
         }
@@ -586,7 +603,8 @@ public sealed partial class ForetellEngine
                 var worldRadius = radius / Math.Max(.01f, scale);
                 var visibleRadiusSq = MathF.Max(0, worldRadius - _topology.Resolution * .75f);
                 visibleRadiusSq *= visibleRadiusSq;
-                var fill = Pack(34, 112, 100, 82);
+                var fill = RadarTerrainFillColor();
+                if (_cfg.RadarTerrainStyle == ForetellRadarTerrainStyle.Filled)
                 for (var z = 0; z < _topology.Height; ++z)
                 {
                     var x = 0;
@@ -605,8 +623,8 @@ public sealed partial class ForetellEngine
                     }
                 }
 
-                var wall = Pack(90, 235, 195, 235);
-                var drop = Pack(75, 165, 190, 185);
+                var wall = RadarTerrainColor();
+                var drop = RadarTerrainColor(.72f);
                 for (var z = 0; z < _topology.Height; ++z)
                     for (var x = 0; x < _topology.Width; ++x)
                     {
@@ -655,7 +673,9 @@ public sealed partial class ForetellEngine
             }
         }
         finally { draw.PopClipRect(); }
-        draw.AddCircle(center, radius, Pack(80, 220, 175, 190), 64, 1.5f);
+        if (CurrentArenaBoundary is { ArenaLike: true } boundary)
+            DrawArenaBoundaryOutline(draw, boundary, player, cameraAzimuth, center, scale);
+        draw.AddCircle(center, radius, Pack(110, 130, 150, 80), 64, 1f);
         draw.AddLine(new(center.X - radius, center.Y), new(center.X + radius, center.Y), 0x354F5560u);
         draw.AddLine(new(center.X, center.Y - radius), new(center.X, center.Y + radius), 0x354F5560u);
     }
@@ -688,6 +708,107 @@ public sealed partial class ForetellEngine
                 DrawRadarRect(draw, p.Origin, p.Rotation - MathF.PI * .5f, p.P1, p.P2, player, cameraAzimuth, center, scale, color, thickness);
                 break;
         }
+    }
+
+    private float EffectiveRadarWorldRadius(Vector2 player)
+    {
+        var target = _cfg.RadarWorldRadius;
+        if (_cfg.RadarZoom == ForetellRadarZoom.Automatic)
+        {
+            target = _cfg.RadarAutoMinimumRadius;
+            if (CurrentArenaBoundary is { ArenaLike: true } boundary && boundary.Points.Count >= 3)
+                target = boundary.Points.Max(point => Vector2.Distance(point, player)) + 3;
+            else if (TryClosedTopologyRadius(player, out var topologyRadius))
+                target = topologyRadius + 3;
+            target = Math.Clamp(target, _cfg.RadarAutoMinimumRadius, _cfg.RadarAutoMaximumRadius);
+        }
+        target = Math.Clamp(target, 5, 120);
+        var now = DateTime.UtcNow;
+        if (_radarDisplayedWorldRadius <= 0 || !float.IsFinite(_radarDisplayedWorldRadius))
+            _radarDisplayedWorldRadius = target;
+        else
+        {
+            var elapsed = _radarZoomUpdatedAt == default ? 0 : Math.Clamp((float)(now - _radarZoomUpdatedAt).TotalSeconds, 0, .1f);
+            var speed = target > _radarDisplayedWorldRadius ? 36f : 12f;
+            var delta = target - _radarDisplayedWorldRadius;
+            _radarDisplayedWorldRadius += Math.Clamp(delta, -speed * elapsed, speed * elapsed);
+        }
+        _radarZoomUpdatedAt = now;
+        return _radarDisplayedWorldRadius;
+    }
+
+    private bool TryClosedTopologyRadius(Vector2 player, out float radius)
+    {
+        radius = 0;
+        if (_topologyAnalysis is not { UnknownCells: 0, PassableCells: > 0 } topology
+            || topology.ConnectedCells.Length != _topology.CellCount || _topologySampleRadius <= 0)
+            return false;
+        for (var index = 0; index < topology.ConnectedCells.Length; ++index)
+        {
+            if (topology.ConnectedCells[index] != (byte)TopologyCell.Passable) continue;
+            var distance = Vector2.Distance(_topology.CellCenter(index), player);
+            radius = Math.Max(radius, distance);
+            if (Vector2.Distance(_topology.CellCenter(index), TopologyCenter()) >= _topologySampleRadius - _topology.Resolution * 1.5f)
+                return false;
+        }
+        return radius >= 6;
+    }
+
+    private void DrawArenaBoundaryOutline(ImDrawListPtr draw, ArenaBoundaryAnalysis boundary, Vector2 player,
+        float cameraAzimuth, Vector2 center, float scale)
+    {
+        var color = RadarTerrainColor();
+        for (var i = 0; i < boundary.Points.Count; ++i)
+            draw.AddLine(RadarPoint(boundary.Points[i], player, cameraAzimuth, center, scale),
+                RadarPoint(boundary.Points[(i + 1) % boundary.Points.Count], player, cameraAzimuth, center, scale), color, 2f);
+    }
+
+    private uint RadarTerrainColor(float alphaScale = 1)
+    {
+        var color = _cfg.RadarTerrainColor;
+        var alpha = (byte)(color >> 24);
+        return color & 0x00FFFFFFu | (uint)Math.Clamp((int)MathF.Round(alpha * alphaScale), 0, 255) << 24;
+    }
+
+    private uint RadarTerrainFillColor()
+        => RadarTerrainColor(.32f);
+
+    private IEnumerable<DynamicTerrainWarning> ActiveDynamicTerrainWarnings()
+    {
+        var now = ObservationNow();
+        foreach (var warning in _dynamicTerrainWarnings.Values)
+            if (warning.Expires > now)
+                yield return warning;
+    }
+
+    private void DrawDynamicTerrainRadar(ImDrawListPtr draw, Vector2 player, float cameraAzimuth, Vector2 center, float scale)
+    {
+        var color = Pack(255, 95, 55, 245);
+        var fill = Pack(255, 70, 35, 62);
+        foreach (var warning in ActiveDynamicTerrainWarnings())
+        {
+            for (var i = 1; i + 1 < warning.Points.Count; ++i)
+                draw.AddTriangleFilled(RadarPoint(warning.Points[0], player, cameraAzimuth, center, scale),
+                    RadarPoint(warning.Points[i], player, cameraAzimuth, center, scale),
+                    RadarPoint(warning.Points[i + 1], player, cameraAzimuth, center, scale), fill);
+            for (var i = 0; i < warning.Points.Count; ++i)
+                draw.AddLine(RadarPoint(warning.Points[i], player, cameraAzimuth, center, scale),
+                    RadarPoint(warning.Points[(i + 1) % warning.Points.Count], player, cameraAzimuth, center, scale), color, 2.5f);
+        }
+    }
+
+    private void DrawDynamicTerrainWorld()
+    {
+        var camera = Camera.Instance;
+        if (camera == null) return;
+        var color = Pack(255, 80, 45, 245);
+        foreach (var warning in ActiveDynamicTerrainWarnings())
+            for (var i = 0; i < warning.Points.Count; ++i)
+            {
+                var a = warning.Points[i];
+                var b = warning.Points[(i + 1) % warning.Points.Count];
+                camera.DrawWorldLine(new(a.X, warning.ReferenceY, a.Y), new(b.X, warning.ReferenceY, b.Y), color, 3f);
+            }
     }
 
     private void DrawRadarGuidance(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)

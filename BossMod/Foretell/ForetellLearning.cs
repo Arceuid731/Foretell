@@ -255,6 +255,7 @@ public sealed partial class ForetellEngine
     {
         if (!_inPull) return;
         _inPull = false;
+        ClearDynamicTerrainWarnings();
         _pullStartedAt = default;
         _phaseStartedAt = default;
         _lastContextForecastSample = default;
@@ -787,7 +788,7 @@ public sealed partial class ForetellEngine
         lossPerSecond = 0;
         // HP thresholds are boss-only evidence. A large trash mob in a corridor must never become a fake HP gate;
         // require the independently observed arena boundary and the same boss-candidate test used by the radar.
-        if (_ws.CurrentCFCID == 0 || CurrentArenaBoundary is not { ArenaLike: true } boundary)
+        if (CurrentArenaBoundary is not { ArenaLike: true } boundary)
             return false;
         var summary = ArenaEnemySummary(boundary);
         if (!summary.HasBossCandidate)

@@ -25,6 +25,8 @@ public sealed partial class ForetellEngine
     private DateTime _lastStorageRefresh;
     private List<StorageFileEntry> _storageFiles = [];
     private static readonly string[] RadarShapeLabels = ["Auto (observed arena boundary)", "Circle", "Square"];
+    private static readonly string[] RadarZoomLabels = ["Automatic (bounded arena fit)", "Manual"];
+    private static readonly string[] RadarTerrainStyleLabels = ["Outline only", "Outline + filled surface"];
     private static readonly string[] KnowledgeConfidenceLabels = ["All confidence levels", "Learned (75%+)", "High (95%+)", "Safe (99%+)"];
     private static readonly string[] ObservationKindLabels = ["All event types", .. Enum.GetNames<ObservationKind>()];
     private readonly record struct StorageFileEntry(string Path, string Kind, long Bytes, DateTime Updated, bool Active);
@@ -344,11 +346,42 @@ public sealed partial class ForetellEngine
                 changed = true;
             }
             changed |= ImGui.SliderFloat("Radar size on screen (pixels)", ref _cfg.RadarSize, 140, 600);
-            changed |= ImGui.SliderFloat("Zoom: distance to edge (yalms)", ref _cfg.RadarWorldRadius, 5, 120);
-            ImGui.TextDisabled($"Current view and local mesh: {_cfg.RadarWorldRadius:F0} yalms around the player; smaller means more zoom.");
+            var radarZoom = (int)_cfg.RadarZoom;
+            if (ImGui.Combo("Zoom mode", ref radarZoom, RadarZoomLabels, RadarZoomLabels.Length))
+            {
+                _cfg.RadarZoom = (ForetellRadarZoom)radarZoom;
+                changed = true;
+            }
+            if (_cfg.RadarZoom == ForetellRadarZoom.Manual)
+                changed |= ImGui.SliderFloat("Manual distance to edge (yalms)", ref _cfg.RadarWorldRadius, 5, 120);
+            else
+            {
+                changed |= ImGui.SliderFloat("Auto zoom minimum (yalms)", ref _cfg.RadarAutoMinimumRadius, 10, 60);
+                _cfg.RadarAutoMaximumRadius = Math.Max(_cfg.RadarAutoMaximumRadius, _cfg.RadarAutoMinimumRadius);
+                changed |= ImGui.SliderFloat("Auto zoom maximum (yalms)", ref _cfg.RadarAutoMaximumRadius, Math.Max(20, _cfg.RadarAutoMinimumRadius), 120);
+                ImGui.TextDisabled("Closed rooms are fitted automatically; open terrain and unfinished corridors keep the minimum zoom.");
+            }
+            var terrainStyle = (int)_cfg.RadarTerrainStyle;
+            if (ImGui.Combo("Terrain drawing", ref terrainStyle, RadarTerrainStyleLabels, RadarTerrainStyleLabels.Length))
+            {
+                _cfg.RadarTerrainStyle = (ForetellRadarTerrainStyle)terrainStyle;
+                changed = true;
+            }
+            var terrainColor = new Vector4(
+                (_cfg.RadarTerrainColor & 0xFF) / 255f,
+                ((_cfg.RadarTerrainColor >> 8) & 0xFF) / 255f,
+                ((_cfg.RadarTerrainColor >> 16) & 0xFF) / 255f,
+                ((_cfg.RadarTerrainColor >> 24) & 0xFF) / 255f);
+            if (ImGui.ColorEdit4("Terrain colour", ref terrainColor, ImGuiColorEditFlags.PickerHueWheel | ImGuiColorEditFlags.AlphaBar))
+            {
+                static uint Channel(float value) => (uint)Math.Clamp((int)MathF.Round(value * 255), 0, 255);
+                _cfg.RadarTerrainColor = Channel(terrainColor.X) | Channel(terrainColor.Y) << 8
+                    | Channel(terrainColor.Z) << 16 | Channel(terrainColor.W) << 24;
+                changed = true;
+            }
             if (_cfg.RadarShape == ForetellRadarShape.Auto)
                 ImGui.TextDisabled(_topologyAnalysis is { PassableCells: > 0 }
-                    ? $"Auto uses the live local collision mesh ({_topologyAnalysis.PassableCells:N0} connected cells; {_topologyEdgeSamples:N0} barrier probes)."
+                    ? $"Auto uses the live local collision mesh ({_topologyAnalysis.PassableCells:N0} connected cells; {_topologyEdgeSamples:N0} barrier probes; {_topologySampleRadius:F0}y survey radius)."
                     : CurrentArenaBoundary is { } boundary
                         ? $"Auto temporarily uses a near-enclosed wall outline ({boundary.Hits}/{boundary.Rays} rays)."
                         : "Auto is building the nearby walkable mesh; a circle is used until the connected seed is ready.");

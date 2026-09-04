@@ -22,6 +22,7 @@ static class ForetellCoreTests
         TopologyLoadBudget();
         TopologyFuzzMaintainsInvariants();
         ArenaBoundaryInference();
+        DynamicTerrainSectorInference();
         RawRoundTrip();
         RawLiveReplayDeterminism();
         RawStructuralFeaturesAreDeterministic();
@@ -336,6 +337,18 @@ static class ForetellCoreTests
         var b = new SignalTimelineEdge { From = "A", To = "C", Phase = 1, Count = 3 };
         Check.That(Math.Abs(ForetellInferenceCore.TimelineProbability(a, [a, b]) - .7f) < .0001f, "timeline branch probability is incorrect");
         Check.That(ForetellInferenceCore.WilsonLowerBound(10, 10) > ForetellInferenceCore.WilsonLowerBound(5, 10), "reliability ordering regressed");
+    }
+
+    private static void DynamicTerrainSectorInference()
+    {
+        var center = Vector2.Zero;
+        var peers = new[] { new Vector2(0, 15), new Vector2(15, 0), new Vector2(0, -15), new Vector2(-15, 0) };
+        var sector = ForetellDynamicTerrainCore.BuildRadialSector(center, peers[1], peers, 5, out var width);
+        Check.That(sector.Count == 14, "radial terrain sector was not reconstructed");
+        Check.That(Math.Abs(width - MathF.PI / 2) < .01f, $"unexpected radial terrain width {width}");
+        Check.That(Math.Abs(Vector2.Distance(center, sector[^1]) - 20) < .01f, "radial terrain outer edge is incorrect");
+        Check.That(ForetellDynamicTerrainCore.BuildRadialSector(center, peers[1], peers[..2], 5, out _).Count == 0,
+            "sparse event objects invented a terrain sector");
     }
 
     private static void TopologyBarrierClosesConnectedSurface()

@@ -5,8 +5,8 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
-    private const int ArenaBoundaryRayCount = 64;
-    private const float ArenaBoundaryRadius = 42f;
+    private const int ArenaBoundaryRayCount = 96;
+    private const float ArenaBoundaryRadius = 90f;
     private const int MaxArenaBoundaryRaysPerFrame = 4;
     private const double MaxArenaBoundaryMillisecondsPerFrame = .12;
     private readonly float[] _arenaBoundaryDistances = new float[ArenaBoundaryRayCount];
@@ -225,7 +225,7 @@ public sealed partial class ForetellEngine
 
     private void RefreshLearnedArenaSourceContext()
     {
-        if (!_cfg.EnableLearning || _ws.CurrentCFCID == 0 || CurrentArenaBoundary is not { ArenaLike: true } boundary
+        if (!_cfg.EnableLearning || CurrentArenaBoundary is not { ArenaLike: true } boundary
             || !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat])
             return;
         var now = _ws.CurrentTime;
@@ -258,7 +258,7 @@ public sealed partial class ForetellEngine
             source.MaximumHP = Math.Max(source.MaximumHP, (uint)hp);
         if (observation.Numeric.TryGetValue("actor.hitboxRadius", out var radius) && float.IsFinite((float)radius))
             source.MaximumHitboxRadius = Math.Max(source.MaximumHitboxRadius, (float)radius);
-        if (_ws.CurrentCFCID == 0 || CurrentArenaBoundary is not { ArenaLike: true } boundary
+        if (CurrentArenaBoundary is not { ArenaLike: true } boundary
             || !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat])
             return;
         var actor = observation.ActorID != 0 ? _ws.Actors.Find(observation.ActorID) : null;

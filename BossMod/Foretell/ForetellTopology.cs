@@ -6,12 +6,12 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
-    private const float MinimumTopologyRadius = 12f;
+    private const float MinimumTopologyRadius = 64f;
     private const float MinimumTopologyResolution = 1.25f;
     private const float MaximumTopologyResolution = 4f;
     private const float MaximumTopologyStepHeight = 1.5f;
     private const float TopologyWallProbeHeight = .75f;
-    private const int TargetTopologyHalfCells = 34;
+    private const int TargetTopologyHalfCells = 40;
     private const int MaxTopologyRaysPerFrame = 12;
     private const double MaxTopologyMillisecondsPerFrame = .30;
     private readonly ForetellTopologyGrid _topology = new();
@@ -143,7 +143,7 @@ public sealed partial class ForetellEngine
         var needsReset = _topology.CellCount == 0
             || !_topology.Contains(new(player3.X, player3.Z))
             || Math.Abs(player3.Y - _topology.ReferenceY) > 6
-            || DistanceToTopologyCenter(new(player3.X, player3.Z)) > desiredRadius * .30f
+            || DistanceToTopologyCenter(new(player3.X, player3.Z)) > TopologyRecenterDistance(desiredRadius)
             || Math.Abs(_topologySampleRadius - desiredRadius) > desiredResolution * 1.5f
             || Math.Abs(_topology.Resolution - desiredResolution) > .05f;
         if (needsReset)
@@ -245,7 +245,19 @@ public sealed partial class ForetellEngine
     }
 
     private float DesiredTopologyRadius()
-        => Math.Clamp(_cfg.RadarWorldRadius + Math.Max(4, _cfg.RadarWorldRadius * .12f), MinimumTopologyRadius, 128f);
+    {
+        var visibleCapacity = _cfg.RadarZoom == ForetellRadarZoom.Automatic ? _cfg.RadarAutoMaximumRadius : _cfg.RadarWorldRadius;
+        return Math.Clamp(visibleCapacity + 10, MinimumTopologyRadius, 128f);
+    }
+
+    private float TopologyRecenterDistance(float sampleRadius)
+    {
+        var visibleRadius = _radarDisplayedWorldRadius > 0
+            ? _radarDisplayedWorldRadius
+            : _cfg.RadarZoom == ForetellRadarZoom.Automatic ? _cfg.RadarAutoMinimumRadius : _cfg.RadarWorldRadius;
+        var displayMargin = Math.Max(8, sampleRadius - visibleRadius - 6);
+        return Math.Min(sampleRadius * .55f, displayMargin);
+    }
 
     private static float DesiredTopologyResolution(float radius)
         => Math.Clamp(radius / TargetTopologyHalfCells, MinimumTopologyResolution, MaximumTopologyResolution);

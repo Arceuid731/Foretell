@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="../BossMod/Foretell/ForetellTopologyGrid.cs" Link="ForetellTopologyGrid.cs" />
     <Compile Include="../BossMod/Foretell/ForetellArenaBoundaryCore.cs" Link="ForetellArenaBoundaryCore.cs" />
+    <Compile Include="../BossMod/Foretell/ForetellDynamicTerrainCore.cs" Link="ForetellDynamicTerrainCore.cs" />
     <Compile Include="../BossMod/Foretell/ForetellRawFormat.cs" Link="ForetellRawFormat.cs" />
     <Compile Include="../BossMod/Foretell/ForetellModel.cs" Link="ForetellModel.cs" />
     <Compile Include="../BossMod/Foretell/ForetellInferenceCore.cs" Link="ForetellInferenceCore.cs" />

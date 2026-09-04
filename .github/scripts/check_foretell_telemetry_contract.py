@@ -184,6 +184,9 @@ requirements = {
         "CameraRelativeRadarOffset",
         "DrawRadarActors",
         "DrawArenaBoundaryRadarFrame",
+        "DrawDynamicTerrainRadar",
+        "DrawDynamicTerrainWorld",
+        "EffectiveRadarWorldRadius",
         "↑ camera",
     ],
     "BossMod/Foretell/ForetellInspector.cs": [
@@ -358,7 +361,7 @@ requirements = {
         "ProbeTopologyEdge",
     ],
     "BossMod/Foretell/ForetellArenaBoundary.cs": [
-        "ArenaBoundaryRayCount = 64",
+        "ArenaBoundaryRayCount = 96",
         "MaxArenaBoundaryRaysPerFrame = 4",
         "MaxArenaBoundaryMillisecondsPerFrame = .12",
         "BGCollisionModule.RaycastMaterialFilter",
@@ -375,6 +378,17 @@ requirements = {
         "playerMaximumHP * 2f",
         "arenaLike",
         "nothing about BMR modules or encounter identities",
+    ],
+    "BossMod/Foretell/ForetellDynamicTerrainCore.cs": [
+        "BuildRadialSector",
+        "peerAngles.Length < 3",
+        "No territory, action, object ID or animation-state table enters the decision",
+    ],
+    "BossMod/Foretell/ForetellDynamicTerrain.cs": [
+        "ObserveDynamicTerrainAnimation",
+        "ConditionFlag.InCombat",
+        "ActorType.EventObj",
+        "signals >= 2 ? DateTime.MaxValue",
     ],
     "BossMod/Foretell/ForetellTopologyGrid.cs": [
         "Flood(seed, connected, maxStepHeight, requireKnownEdges)",

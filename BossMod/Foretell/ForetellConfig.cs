@@ -18,6 +18,18 @@ public enum ForetellRadarShape
     Square
 }
 
+public enum ForetellRadarZoom
+{
+    Automatic,
+    Manual
+}
+
+public enum ForetellRadarTerrainStyle
+{
+    Outline,
+    Filled
+}
+
 [ConfigDisplay(Name = "Foretell", Order = 0)]
 public sealed class ForetellConfig : ConfigNode
 {
@@ -58,7 +70,7 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("World-space overlay", tooltip: "Draw learned mechanic geometry directly in the game world when it passes the configured confidence threshold.")]
     public bool WorldOverlay = true;
 
-    [PropertyDisplay("Foretell mini radar", tooltip: "Show Foretell's compact encounter radar for learned/predicted mechanics.")]
+    [PropertyDisplay("Foretell mini radar", tooltip: "Show Foretell's permanent local terrain radar. Learned/predicted mechanics are added only in Hybrid and Foretell presentation modes.")]
     public bool MiniRadar = true;
 
     [PropertyDisplay("Unlock radar position", tooltip: "Give the radar a draggable window. Lock it again after placing it.")]
@@ -70,6 +82,15 @@ public sealed class ForetellConfig : ConfigNode
 
     [PropertyDisplay("Radar arena frame", tooltip: "Auto continuously rasterizes nearby collision floors and barriers into a local walkable mesh, including barriers that close at pull start. The computation is player-centred, bounded by the visible radius and independent from authored BMR arena data. Circle and Square force the presentation frame without changing learned mechanics.")]
     public ForetellRadarShape RadarShape = ForetellRadarShape.Auto;
+
+    [PropertyDisplay("Radar zoom mode", tooltip: "Automatic fits a detected closed room or arena, but stays within the configured readable limits in open areas and corridors. Manual always uses the selected visible radius.")]
+    public ForetellRadarZoom RadarZoom = ForetellRadarZoom.Automatic;
+
+    [PropertyDisplay("Radar terrain style", tooltip: "Outline draws only observed walls, drops and closed-arena edges. Filled also shades the connected walkable surface.")]
+    public ForetellRadarTerrainStyle RadarTerrainStyle = ForetellRadarTerrainStyle.Outline;
+
+    // ImGui ABGR packed colour, including opacity. Kept as a scalar for stable JSON migration.
+    public uint RadarTerrainColor = 0xEBAFDC50;
 
     [PropertyDisplay("Text hints", tooltip: "Show adaptive mechanic, countdown, confidence and likely-next information.")]
     public bool TextHints = true;
@@ -120,6 +141,14 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("Radar zoom / visible radius (yalms)", tooltip: "Distance from your character to the edge of the radar. Lower values zoom in; higher values show more of the arena.")]
     [PropertySlider(5, 120, Speed = 1)]
     public float RadarWorldRadius = 30;
+
+    [PropertyDisplay("Automatic zoom minimum radius (yalms)", tooltip: "Local radius used when no complete closed boundary can be proved.")]
+    [PropertySlider(10, 60, Speed = 1)]
+    public float RadarAutoMinimumRadius = 30;
+
+    [PropertyDisplay("Automatic zoom maximum radius (yalms)", tooltip: "Hard readability cap when fitting a closed arena; distant terrain stays intentionally outside the radar.")]
+    [PropertySlider(20, 120, Speed = 1)]
+    public float RadarAutoMaximumRadius = 65;
 
     [PropertyDisplay("Mini radar size (pixels)")]
     [PropertySlider(140, 600, Speed = 5)]
