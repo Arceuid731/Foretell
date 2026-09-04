@@ -32,7 +32,9 @@ public sealed partial class ForetellEngine
         get
         {
             var player = _ws.Party[PartyState.PlayerSlot];
-            if (_arenaBoundary is not { ArenaLike: true } boundary || player == null
+            var inCombat = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];
+            if (!ForetellInferenceCore.ShouldUseFastArenaBoundary(inCombat)
+                || _arenaBoundary is not { ArenaLike: true } boundary || player == null
                 || Math.Abs(player.PosRot.Y - boundary.ReferenceY) > 6
                 || !ForetellArenaBoundaryCore.Contains(boundary.Points, V(player.Position)))
                 return null;
@@ -62,8 +64,19 @@ public sealed partial class ForetellEngine
 
     // Returns true when the fast wall scan consumed this frame's collision budget. The slower floor grid waits so
     // both native surfaces can never stack their budgets in one frame.
-    private unsafe bool SampleNativeArenaBoundary(BGCollisionModule* collision, Vector3 player, Actor playerActor, DateTime now)
+    private unsafe bool SampleNativeArenaBoundary(BGCollisionModule* collision, Vector3 player, DateTime now)
     {
+        var inCombat = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];
+        if (!ForetellInferenceCore.ShouldUseFastArenaBoundary(inCombat))
+        {
+            // Courtyard walls, stairs and nearby buildings form plausible radial polygons while travelling. They
+            // are not walkable topology and caused the cyan outline to appear late then vanish on height changes.
+            _arenaBoundary = null;
+            _arenaBoundarySweepInProgress = false;
+            _arenaBoundaryCursor = 0;
+            _arenaBoundarySweepRequested = true;
+            return false;
+        }
         if (_arenaBoundary == null)
             TryRestoreKnownArenaBoundary(player);
         if (_arenaBoundary is { } active && (Math.Abs(player.Y - active.ReferenceY) > 6
@@ -75,19 +88,6 @@ public sealed partial class ForetellEngine
 
         if (!_arenaBoundarySweepInProgress && (!_arenaBoundarySweepRequested || now < _arenaBoundaryRescanAfter))
             return false;
-
-        // Out of combat we wait for a short low-motion window. In combat the fixed-origin sweep is allowed to run
-        // immediately so a newly spawned pull barrier can replace the pre-pull outline within a few frames.
-        var inCombat = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];
-        if (!inCombat && playerActor.LastFrameMovement.LengthSq() > .04f)
-        {
-            if (_arenaBoundarySweepInProgress && Vector2.Distance(new(player.X, player.Z), new(_arenaBoundaryOrigin.X, _arenaBoundaryOrigin.Z)) > 2.5f)
-            {
-                _arenaBoundarySweepInProgress = false;
-                _arenaBoundaryCursor = 0;
-            }
-            return false;
-        }
 
         if (!_arenaBoundarySweepInProgress)
         {
@@ -156,11 +156,13 @@ public sealed partial class ForetellEngine
             ++_arenaBoundaryChanges;
         // Partial radial visibility polygons are still useful raw evidence, but they are not stable arena frames.
         // Keep them out of live rendering and persistent knowledge so the denser floor scan can take over.
-        _arenaBoundary = result.ArenaLike ? result : null;
+        _arenaEnemySummaryAt = default;
+        var accepted = result.ArenaLike && ArenaEnemySummary(result).HasBossCandidate;
+        _arenaBoundary = accepted ? result : null;
 
         var encounter = Encounter(_territory);
         var now = DateTime.UtcNow;
-        if (result.ArenaLike && !encounter.ArenaBoundaries.TryGetValue(result.Fingerprint, out var memory))
+        if (accepted && !encounter.ArenaBoundaries.TryGetValue(result.Fingerprint, out var memory))
         {
             memory = new()
             {
@@ -184,7 +186,7 @@ public sealed partial class ForetellEngine
                 encounter.ArenaBoundaries.Remove(oldest.Fingerprint);
             }
         }
-        if (result.ArenaLike)
+        if (accepted)
         {
             var acceptedMemory = encounter.ArenaBoundaries[result.Fingerprint];
             acceptedMemory.LastSeen = now;
@@ -199,11 +201,14 @@ public sealed partial class ForetellEngine
         StoreNative(observation, "native.arenaBoundary.compactness", result.Compactness);
         StoreNative(observation, "native.arenaBoundary.aspectRatio", result.AspectRatio);
         StoreNative(observation, "native.arenaBoundary.arenaLike", result.ArenaLike);
+        StoreNative(observation, "native.arenaBoundary.accepted", accepted);
         ProcessObservation(observation, enriched: true);
     }
 
     private bool TryRestoreKnownArenaBoundary(Vector3 player)
     {
+        if (!ForetellInferenceCore.ShouldUseFastArenaBoundary(Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]))
+            return false;
         if (!_store.Encounters.TryGetValue(_territory, out var encounter))
             return false;
         var position = new Vector2(player.X, player.Z);
@@ -214,9 +219,13 @@ public sealed partial class ForetellEngine
             .FirstOrDefault();
         if (memory == null)
             return false;
-        _arenaBoundary = new(memory.Fingerprint, new(memory.OriginX, memory.OriginZ), memory.ReferenceY,
+        var restored = new ArenaBoundaryAnalysis(memory.Fingerprint, new(memory.OriginX, memory.OriginZ), memory.ReferenceY,
             memory.Points.Select(point => new Vector2(point.X, point.Z)).ToList(), memory.Rays, memory.Hits,
             memory.Area, memory.Compactness, memory.AspectRatio, memory.ArenaLike);
+        _arenaEnemySummaryAt = default;
+        if (!ArenaEnemySummary(restored).HasBossCandidate)
+            return false;
+        _arenaBoundary = restored;
         return true;
     }
 

@@ -12,8 +12,7 @@ public sealed partial class ForetellEngine
     private void ObserveDynamicTerrainAnimation(Actor actor)
     {
         InvalidateTopology(immediate: true);
-        if (!Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]
-            || actor.Type != ActorType.EventObj || actor.IsDestroyed)
+        if (actor.Type != ActorType.EventObj || actor.IsDestroyed)
             return;
         var position = V(actor.Position);
         if (!FiniteVector(position) || !TryDynamicTerrainCenter(position, out var center))
@@ -29,7 +28,8 @@ public sealed partial class ForetellEngine
         var signals = _dynamicTerrainWarnings.GetValueOrDefault(actor.InstanceID)?.Signals + 1 ?? 1;
         // A second structural animation for the same radial tile confirms the transition; retain the forbidden
         // sector until combat ends while the collision mesh independently observes the missing floor.
-        var expires = signals >= 2 ? DateTime.MaxValue : now.AddSeconds(7);
+        var inPull = _inPull || Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];
+        var expires = signals >= 2 ? inPull ? DateTime.MaxValue : now.AddMinutes(2) : now.AddSeconds(7);
         _dynamicTerrainWarnings[actor.InstanceID] = new(actor.InstanceID, center, Vector2.Distance(center, points[^1]),
             points, actor.PosRot.Y + .08f, expires, signals);
     }
@@ -52,4 +52,11 @@ public sealed partial class ForetellEngine
     }
 
     private void ClearDynamicTerrainWarnings() => _dynamicTerrainWarnings.Clear();
+
+    private void PromoteDynamicTerrainWarningsForPull()
+    {
+        foreach (var (id, warning) in _dynamicTerrainWarnings.ToArray())
+            if (warning.Signals >= 2)
+                _dynamicTerrainWarnings[id] = warning with { Expires = DateTime.MaxValue };
+    }
 }

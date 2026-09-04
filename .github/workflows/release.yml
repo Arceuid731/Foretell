@@ -90,16 +90,17 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Permanent, farther-reaching local terrain radar with bounded intelligent zoom.
+          Faster generic terrain reconstruction and complete target-marker ingestion.
 
-          - Makes the local terrain radar available continuously in every presentation mode and every territory; silent modes still suppress learned combat guidance.
-          - Makes Hybrid learning, pull lifecycle, boss context, predictions and alerting work in open-world combat as well as duties.
-          - Expands the bounded collision survey independently from the displayed zoom and recentres only near its useful edge, so an opposite arena edge can be discovered without walking up to it.
-          - Extends generic radial enclosure probes for a quicker complete boss-arena outline while the denser floor/barrier mesh progressively catches up.
-          - Adds bounded automatic zoom: closed rooms and arenas are fitted, while open terrain and unfinished corridors remain at a readable local radius.
-          - Adds manual zoom, separate on-screen sizing, outline-only or filled terrain styles, and a configurable terrain colour with opacity.
-          - Reconstructs radial destructible-platform sectors and their enclosing arena from live event-object peers and animation signals, drawing both on the radar and in 3D without encounter IDs or authored mechanic tables.
-          - Ends open-world pulls on the real combat-condition falling edge so stale text, radar and 3D predictions disappear after the enemy dies.
+          - Keeps the bounded collision mapper active under its own frame watchdog even while optional semantic drains are adaptively throttled during combat bursts.
+          - Interleaves floor and barrier probes, publishes progress twice as often and retains a useful prior component while a structural rescan grows outward.
+          - Restricts fast radial wall polygons to active combat with a credible boss candidate, preventing courtyards, corridors and stairs from becoming false cyan arenas.
+          - Accepts destructible-platform animation before the game raises its combat flag, then retains confirmed sectors through the pull and clears them on all duty/combat endings.
+          - Normalizes player-attached target icons as encounter signals and displays new ambiguous symbols as MARKER without inventing stack, spread or danger geometry.
+          - Promotes complete dynamic-line metadata to display-grade confidence while keeping it below safe-guidance thresholds until observed outcomes validate it.
+          - Adds detailed topology, boundary and dynamic-terrain counters to analysis bundles for conclusive post-run diagnosis.
+
+          Every change is generic: no territory, boss, action, icon or event-object identifier was added.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@

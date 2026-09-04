@@ -421,7 +421,15 @@ public sealed partial class ForetellEngine
                 topologyLastMilliseconds = _lastTopologyMilliseconds,
                 topologyPeakMilliseconds = _peakTopologyMilliseconds,
                 topologySweepRequested = _topologySweepRequested,
-                topologySweepInProgress = _topologySweepInProgress
+                topologySweepInProgress = _topologySweepInProgress,
+                topologyFloorSamples = _topologyFloorSamples,
+                topologyEdgeSamples = _topologyEdgeSamples,
+                topologyPassableCells = _topologyAnalysis?.PassableCells ?? 0,
+                topologyUnknownCells = _topologyAnalysis?.UnknownCells ?? 0,
+                arenaBoundaryRays = _arenaBoundaryRays,
+                arenaBoundarySweeps = _arenaBoundarySweeps,
+                arenaBoundaryAccepted = CurrentArenaBoundary != null,
+                activeDynamicTerrainWarnings = ActiveDynamicTerrainWarnings().Count()
             },
             dataComplete = new
             {

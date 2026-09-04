@@ -175,7 +175,28 @@ public sealed partial class ForetellEngine
     }
 
     private void OnIcon(Actor actor, uint icon, ulong target)
-        => ProcessObservation(Observation(ObservationKind.Icon, actor, icon, target: target));
+    {
+        // TargetIcon actor-control records are attached to the marked actor, not emitted by that actor. Treating a
+        // marked player as the source made the party-action filter discard the mechanic. Preserve every marked
+        // actor as the target and normalize the unknown encounter source; no icon IDs or encounters are special-cased.
+        var sourceKind = ClassifySource(actor);
+        var markerTarget = actor.InstanceID;
+        var observation = Observation(ObservationKind.Icon, actor, icon, target: markerTarget);
+        observation.SourceKind = SourceKind.Environment;
+        observation.ActorID = 0;
+        observation.ActorOID = 0;
+        observation.X = 0;
+        observation.Z = 0;
+        observation.TargetID = markerTarget;
+        observation.TargetX = actor.Position.X;
+        observation.TargetZ = actor.Position.Z;
+        observation.Detail = "target-attached";
+        observation.Text["icon.targetSourceKind"] = sourceKind.ToString();
+        observation.Numeric["icon.targetOID"] = actor.OID;
+        if (target != 0)
+            observation.Numeric["icon.relatedActor"] = target;
+        ProcessObservation(observation);
+    }
 
     private void OnVFX(Actor actor, uint vfx, ulong target)
         => ProcessObservation(Observation(ObservationKind.VFX, actor, vfx, target: target));

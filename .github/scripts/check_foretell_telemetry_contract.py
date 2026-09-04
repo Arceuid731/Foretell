@@ -388,7 +388,9 @@ requirements = {
         "ObserveDynamicTerrainAnimation",
         "ConditionFlag.InCombat",
         "ActorType.EventObj",
-        "signals >= 2 ? DateTime.MaxValue",
+        "now.AddMinutes(2)",
+        "PromoteDynamicTerrainWarningsForPull",
+        "warning with { Expires = DateTime.MaxValue }",
     ],
     "BossMod/Foretell/ForetellTopologyGrid.cs": [
         "Flood(seed, connected, maxStepHeight, requireKnownEdges)",

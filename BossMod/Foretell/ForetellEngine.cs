@@ -290,7 +290,6 @@ public sealed partial class ForetellEngine : IDisposable
                 if (++_consecutiveUpdateOverruns >= 3)
                 {
                     _adaptiveThrottleUntil = DateTime.UtcNow.AddSeconds(15);
-                    _topologySuspendedUntil = _adaptiveThrottleUntil;
                     _consecutiveUpdateOverruns = 0;
                 }
             }
@@ -317,7 +316,8 @@ public sealed partial class ForetellEngine : IDisposable
         if ((DateTime.UtcNow - _rawOpenedAt).TotalHours >= 1)
             OpenRawJournal();
         // During burst recovery, exact captures continue on their bounded background queues. Optional derived
-        // drains and native topology wait so they cannot compete with the game for the same frame.
+        // drains wait; native topology retains its own much smaller ray/time watchdog so combat bursts cannot
+        // starve the radar for repeated 15-second windows.
         if (!PerformanceThrottled)
         {
             DrainRawFeatureWindows();
@@ -325,8 +325,7 @@ public sealed partial class ForetellEngine : IDisposable
         }
         PollStorageMaintenance();
         PollAnalysisBundleExport();
-        if (!PerformanceThrottled)
-            SampleNativeTopology();
+        SampleNativeTopology();
         RefreshLearnedArenaSourceContext();
         if ((now - _lastPositionSample).TotalMilliseconds >= 250)
         {
@@ -1021,7 +1020,8 @@ public sealed partial class ForetellEngine : IDisposable
     {
         var invalid = encounter.Mechanics
             .Where(item => !ForetellInferenceCore.CanStartMechanicEpisode(item.Value.TriggerKind, item.Value.SourceKind,
-                item.Value.SourceOID == 0 ? 0UL : 1UL, item.Value.SourceOID))
+                item.Value.SourceOID == 0 ? 0UL : 1UL, item.Value.SourceOID,
+                item.Value.TriggerKind == ObservationKind.Icon ? 1UL : 0UL))
             .ToArray();
         if (invalid.Length == 0)
             return 0;

@@ -12,8 +12,8 @@ public sealed partial class ForetellEngine
     private const float MaximumTopologyStepHeight = 1.5f;
     private const float TopologyWallProbeHeight = .75f;
     private const int TargetTopologyHalfCells = 40;
-    private const int MaxTopologyRaysPerFrame = 12;
-    private const double MaxTopologyMillisecondsPerFrame = .30;
+    private const int MaxTopologyRaysPerFrame = 24;
+    private const double MaxTopologyMillisecondsPerFrame = .35;
     private readonly ForetellTopologyGrid _topology = new();
     private readonly List<int> _topologyProbeOrder = [];
     private readonly Queue<(int From, int To)> _topologyPendingEdges = [];
@@ -157,18 +157,23 @@ public sealed partial class ForetellEngine
         }
         if (!_topologySweepInProgress && _topologySweepRequested && now >= _topologyRescanAfter)
             StartTopologySweep(new(player3.X, player3.Z));
-        if (SampleNativeArenaBoundary(module, player3, player, now))
+        if (SampleNativeArenaBoundary(module, player3, now))
             return;
         if (!_topologySweepInProgress)
             return;
 
         var started = Stopwatch.GetTimestamp();
         var sampled = 0;
+        var edgeSamples = 0;
         try
         {
             while (sampled < MaxTopologyRaysPerFrame && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxTopologyMillisecondsPerFrame)
             {
-                if (_topologyPendingEdges.TryDequeue(out var edge))
+                // Interleave surface and barrier probes. Draining every newly queued edge first made the visible
+                // surface expand far too slowly even though the per-frame native-call budget was respected.
+                var probeEdge = _topologyPendingEdges.Count > 0
+                    && (edgeSamples < MaxTopologyRaysPerFrame / 2 || _topologyProbeCursor >= _topologyProbeOrder.Count);
+                if (probeEdge && _topologyPendingEdges.TryDequeue(out var edge))
                 {
                     _topologyQueuedEdges.Remove(EdgeKey(edge.From, edge.To));
                     if (_topology.IsEdgeKnown(edge.From, edge.To)
@@ -184,6 +189,7 @@ public sealed partial class ForetellEngine
                     ++sampled;
                     ++_topologyRays;
                     ++_topologyEdgeSamples;
+                    ++edgeSamples;
                     continue;
                 }
 
@@ -224,7 +230,7 @@ public sealed partial class ForetellEngine
             _topologyRescanAfter = now.AddSeconds(inCombat ? 6 : 12);
             RequestTopologyAnalysis(player2, complete: true);
         }
-        else if (_topologyPublishProgress && sampled != 0 && (now - _topologyLastAnalysisAt).TotalMilliseconds >= 250)
+        else if (_topologyPublishProgress && sampled != 0 && (now - _topologyLastAnalysisAt).TotalMilliseconds >= 125)
         {
             RequestTopologyAnalysis(player2, complete: false);
         }
@@ -291,9 +297,9 @@ public sealed partial class ForetellEngine
         _topologySweepRequested = false;
         _topologyPublishProgress = _topologyHardInvalidation || _topologyAnalysis == null;
         _topologyHardInvalidation = false;
-        // An arena barrier can appear exactly at pull start. Requiring freshly observed edges makes the old open
-        // component disappear as soon as the managed worker runs, before the outward scan grows it again.
-        if (_topologyPublishProgress)
+        // An arena barrier can appear exactly at pull start. Keep an already useful published component until the
+        // outward rescan has caught up instead of replacing it immediately with a one-cell island.
+        if (_topologyPublishProgress && _topologyAnalysis == null)
             RequestTopologyAnalysis(player, complete: false);
     }
 
@@ -442,6 +448,8 @@ public sealed partial class ForetellEngine
 
     private void ApplyTopologyAnalysis(ForetellTopologyGrid grid, TopologyAnalysis analysis, bool complete)
     {
+        if (!ForetellInferenceCore.ShouldReplaceTopologyAnalysis(_topologyAnalysis?.PassableCells ?? 0, analysis.PassableCells, complete))
+            return;
         _topologyAnalysis = analysis;
         if (!complete || analysis.UnknownCells != 0 || analysis.PassableCells == 0 || analysis.Fingerprint == _topologyFingerprint)
             return;

@@ -94,7 +94,7 @@ public sealed partial class ForetellEngine
 
         var correlated = excludedSignal ? null : CorrelateObservation(observation);
         var mayStartEpisode = !excludedSignal && IsEpisodeTrigger(observation);
-        if (mayStartEpisode && (observation.Kind == ObservationKind.CastStart || correlated == null))
+        if (mayStartEpisode && (observation.Kind is ObservationKind.CastStart or ObservationKind.Icon || correlated == null))
             StartEpisode(observation, encounter);
         if (mayStartEpisode && observation.Kind == ObservationKind.CastStart)
             ApplyActionMetadataPrior(observation);
@@ -220,6 +220,7 @@ public sealed partial class ForetellEngine
     private void BeginCombatPull(EncounterMemory? encounter, DateTime at)
     {
         _inPull = true;
+        PromoteDynamicTerrainWarningsForPull();
         ResetHazardContext(cancelForecasts: true);
         _pullStartedAt = at;
         _phaseStartedAt = at;
@@ -368,6 +369,7 @@ public sealed partial class ForetellEngine
     {
         if (observation.Kind is ObservationKind.DutyStarted or ObservationKind.DutyWiped or ObservationKind.DutyRecommenced or ObservationKind.DutyCompleted)
         {
+            ClearDynamicTerrainWarnings();
             EndCombatPull();
             ResetHazardContext(cancelForecasts: true);
             return;
@@ -466,7 +468,7 @@ public sealed partial class ForetellEngine
 
     private static bool IsEpisodeTrigger(ForetellObservation observation)
         => ForetellInferenceCore.CanStartMechanicEpisode(observation.Kind, observation.SourceKind,
-            observation.ActorID, observation.ActorOID);
+            observation.ActorID, observation.ActorOID, observation.TargetID);
 
     private static string SignalKey(ForetellObservation observation)
         => $"{observation.ActorOID:X}:{observation.Kind}:{observation.PrimaryID:X}";
@@ -1036,9 +1038,12 @@ public sealed partial class ForetellEngine
         ContextualMechanic? contextual = null;
         if (encounter != null)
             encounter.Mechanics.TryGetValue(SignalKey(trigger), out contextual);
+        var learnedLead = contextual?.MeanLeadSeconds ?? 0;
         var lead = trigger.Kind == ObservationKind.CastStart && float.IsFinite(trigger.Value1)
             ? Math.Clamp(trigger.Value1, 0, 120)
-            : Math.Clamp(contextual?.MeanLeadSeconds ?? 0, 0, 120);
+            : trigger.Kind == ObservationKind.Icon && learnedLead <= .25
+                ? 10
+                : Math.Clamp(learnedLead, 0, 120);
         var episode = new MechanicEpisode
         {
             ID = trigger.Sequence,
@@ -1104,6 +1109,18 @@ public sealed partial class ForetellEngine
             episode.ForecastP2 = fallback.P2;
             episode.ForecastConfidence = Math.Min(fallback.Confidence, .94f);
         }
+        else if (trigger.Kind == ObservationKind.Icon && trigger.TargetID != 0)
+        {
+            var target = new Vector2(trigger.TargetX, trigger.TargetZ);
+            var prediction = new ActivePrediction(0, trigger.PrimaryID, GeometryKind.Unknown, MechanicKind.Marker,
+                target, target, 0, 0, 0, episode.Activation, .90f,
+                "Observed target marker; stack/spread/targeted meaning remains unclaimed until outcomes disambiguate it",
+                episode.SignalKey, trigger.TargetID, GuidanceKind.Marker, false, "Target marker");
+            StorePrediction(episode.ID, prediction, trigger);
+            episode.ForecastIssued = true;
+            episode.ForecastKind = MechanicKind.Marker;
+            episode.ForecastConfidence = .90f;
+        }
     }
 
     private void IssueMechanicPrediction(MechanicEpisode episode, ContextualMechanic mechanic, ForetellObservation trigger, bool anticipated)
@@ -1148,6 +1165,8 @@ public sealed partial class ForetellEngine
             geometry = GeometryKind.Unknown;
         var origin = mechanic.OriginKind == PredictionOriginKind.Target ? target : source;
         var confidence = mechanic.GuidanceConfidence;
+        if (!anticipated && trigger.Kind == ObservationKind.Icon && mechanic.Kind == MechanicKind.Marker)
+            confidence = Math.Max(confidence, .90f);
         var evidence = $"{(anticipated ? "timeline forecast" : "observed trigger")}; {mechanic.Observations} outcomes; " +
             $"{mechanic.ForecastHits}/{mechanic.Forecasts} verified; evidence {mechanic.Confidence:P0}; guidance {confidence:P0}";
         return new(trigger.ActorID, trigger.PrimaryID, geometry, mechanic.Kind, origin, target, trigger.Rotation,
@@ -1603,7 +1622,9 @@ public sealed partial class ForetellEngine
         ReassertReliableActionPrior(mechanic);
         var resolvedKind = mechanic.Kind;
 
-        if (_cfg.EnableLearning && _cfg.EnableML && resolvedKind != MechanicKind.Unknown)
+        // Marker means only "a target symbol exists"; it is an abstention from stack/spread/targeted semantics,
+        // not a behavioral class for the outcome classifier.
+        if (_cfg.EnableLearning && _cfg.EnableML && resolvedKind is not MechanicKind.Unknown and not MechanicKind.Marker)
             _classifier.Train(features, resolvedKind);
 
         if (_cfg.EnableLearning && episode.Trigger.Kind == ObservationKind.CastStart && fit is FitResult globalFit
@@ -1825,7 +1846,7 @@ public sealed partial class ForetellEngine
                 return average > 7 ? MechanicKind.Spread : MechanicKind.Stack;
             }
         }
-        if (episode.Evidence.ContainsKey(ObservationKind.Icon) && affected.Count == 1) return MechanicKind.TargetedAOE;
+        if (episode.Evidence.ContainsKey(ObservationKind.Icon)) return MechanicKind.Marker;
         if (affected.Count == 0 && episode.Trigger.Kind is ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn or ObservationKind.EventObjectState
             && episode.MovementTargets.Count > 0)
         {
@@ -1897,6 +1918,7 @@ public sealed partial class ForetellEngine
         MechanicKind.Stack or MechanicKind.Spread => .74f,
         MechanicKind.Debuff => .68f,
         MechanicKind.TargetedAOE => .66f,
+        MechanicKind.Marker => .90f,
         MechanicKind.Environment or MechanicKind.Transition => .58f,
         MechanicKind.GroundAOE => fit?.Score ?? .60f,
         _ => fit?.Score ?? .25f

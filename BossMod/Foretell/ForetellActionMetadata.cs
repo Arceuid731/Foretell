@@ -146,8 +146,10 @@ public sealed partial class ForetellEngine
                         geometry = GeometryKind.Rectangle;
                         p1 = Math.Max(targetDistance, effectRange);
                         p2 = xAxis * .5f;
-                        confidence = .70f; // intentionally below the default visual gate until corroborated
-                        why = "CastType dynamic line + current target distance + XAxisModifier";
+                        // CastType, width and both live endpoints fully establish a line telegraph. Target motion
+                        // can still alter the final length, so this is display-grade rather than safe-guidance-grade.
+                        confidence = .86f;
+                        why = "CastType dynamic line + live source/target endpoints + XAxisModifier";
                     }
                     break;
                 case 10: // donut family; inner radius is not safely derivable from verified Action fields alone

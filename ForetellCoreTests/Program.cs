@@ -425,6 +425,7 @@ static class ForetellCoreTests
         Check.That(!ForetellInferenceCore.GeometryMatches(GeometryKind.Circle, 10, 0, GeometryKind.Cone, 10, 0), "different geometry families matched");
         Check.That(ForetellInferenceCore.GuidanceFor(MechanicKind.Stack) == GuidanceKind.Stack, "stack guidance mapping missing");
         Check.That(ForetellInferenceCore.GuidanceFor(MechanicKind.Proximity) == GuidanceKind.Move, "proximity guidance mapping missing");
+        Check.That(ForetellInferenceCore.GuidanceFor(MechanicKind.Marker) == GuidanceKind.Marker, "unclassified target marker mapping missing");
         var stable = new ContextualMechanic { AnchorSamples = 3, AnchorForwardM2 = 1, AnchorSideM2 = 1 };
         var unstable = new ContextualMechanic { AnchorSamples = 3, AnchorForwardM2 = 30, AnchorSideM2 = 30 };
         Check.That(stable.AnchorStdDev < 3 && unstable.AnchorStdDev > 3, "anchor stability gate is incorrect");
@@ -518,6 +519,8 @@ static class ForetellCoreTests
         Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.CastStart, SourceKind.Unknown, 30, 456), "unknown actor became a mechanic source");
         Check.That(ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.CastStart, SourceKind.Enemy, 30, 456), "enemy cast was rejected");
         Check.That(ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.MapEffect, SourceKind.Environment, 0, 0), "arena map effect was rejected");
+        Check.That(ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.Icon, SourceKind.Environment, 0, 0, 99), "target-attached encounter marker was rejected");
+        Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.Icon, SourceKind.Environment, 0, 0), "unbound environment icon became a mechanic");
         Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.DirectorUpdate, SourceKind.Environment, 0, 0), "duty state became a mechanic");
         Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.EventObjectState, SourceKind.EventObject, 40, 789), "door/key state became a mechanic");
         Check.That(!ForetellInferenceCore.CanStartMechanicEpisode(ObservationKind.ActorControlRaw, SourceKind.Enemy, 30, 456), "raw actor control became a mechanic");
@@ -525,6 +528,12 @@ static class ForetellCoreTests
         Check.That(!ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.ActionResolved, SourceKind.Player), "player action became outcome evidence");
         Check.That(ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.Displacement, SourceKind.Player), "player displacement was lost as knockback evidence");
         Check.That(ForetellInferenceCore.IsMechanicOutcomeEvidence(ObservationKind.DeathChanged, SourceKind.Player), "player death was lost as lethal evidence");
+        Check.That(!ForetellInferenceCore.ShouldUseFastArenaBoundary(false), "out-of-combat radial walls replaced the terrain mesh");
+        Check.That(ForetellInferenceCore.ShouldUseFastArenaBoundary(true), "combat arena acceleration was disabled");
+        Check.That(!ForetellInferenceCore.ShouldReplaceTopologyAnalysis(120, 8, false), "tiny progressive rescan replaced a useful topology");
+        Check.That(ForetellInferenceCore.ShouldReplaceTopologyAnalysis(120, 132, false), "materially growing progressive topology was rejected");
+        Check.That(ForetellInferenceCore.ShouldReplaceTopologyAnalysis(120, 40, true), "completed structural shrink was rejected");
+        Check.That(!ForetellInferenceCore.ShouldReplaceTopologyAnalysis(120, 0, true), "empty completed scan erased a useful topology");
     }
 
     private static void RadarIsCameraRelative()

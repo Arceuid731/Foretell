@@ -10,7 +10,7 @@ public static class ForetellInferenceCore
 
     // Raw telemetry remains complete, but only sources that can plausibly own an encounter mechanic may create
     // learned episodes. Player/pet actions are observations and positional context, never mechanic sources.
-    public static bool CanStartMechanicEpisode(ObservationKind kind, SourceKind sourceKind, ulong actorID, uint actorOID)
+    public static bool CanStartMechanicEpisode(ObservationKind kind, SourceKind sourceKind, ulong actorID, uint actorOID, ulong targetID = 0)
     {
         if (sourceKind is SourceKind.Player or SourceKind.Pet)
             return false;
@@ -38,8 +38,8 @@ public static class ForetellInferenceCore
 
         // Actorless signals are admitted only for explicit encounter/environment channels. In particular, an
         // actorless CastStart must never turn a player action (player OIDs are zero) into an environment mechanic.
-        return sourceKind == SourceKind.Environment && kind is (ObservationKind.MapEffect or ObservationKind.LegacyMapEffect
-            or ObservationKind.ObjectEffect);
+        return sourceKind == SourceKind.Environment && (kind is ObservationKind.MapEffect or ObservationKind.LegacyMapEffect
+            or ObservationKind.ObjectEffect || kind == ObservationKind.Icon && targetID != 0);
     }
 
     public static bool IsMechanicOutcomeEvidence(ObservationKind kind, SourceKind sourceKind)
@@ -72,7 +72,8 @@ public static class ForetellInferenceCore
                 or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn,
             SourceKind.EventObject => kind is ObservationKind.Icon or ObservationKind.VFX or ObservationKind.TetherStart
                 or ObservationKind.NpcYell or ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn,
-            SourceKind.Environment => kind is ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.ObjectEffect,
+            SourceKind.Environment => kind is ObservationKind.MapEffect or ObservationKind.LegacyMapEffect or ObservationKind.ObjectEffect
+                || kind == ObservationKind.Icon && targetID != 0,
             _ => false
         };
     }
@@ -228,6 +229,16 @@ public static class ForetellInferenceCore
     public static bool ShouldSurfaceUnshapedCast(float remainingSeconds)
         => float.IsFinite(remainingSeconds) && remainingSeconds >= 2.5f;
 
+    // A fast radial wall sweep is useful for a sealed boss room, but produces convincing-looking false polygons
+    // in courtyards and corridors. The floor mesh remains active everywhere; this accelerator is combat-only.
+    public static bool ShouldUseFastArenaBoundary(bool inCombat) => inCombat;
+
+    // Progressive rescans grow outwards from the player. Keep a useful previous result until the replacement has
+    // caught up; a complete scan may legitimately shrink after a bridge/platform disappears.
+    public static bool ShouldReplaceTopologyAnalysis(int currentPassableCells, int candidatePassableCells, bool complete)
+        => currentPassableCells <= 0 || candidatePassableCells > 0 && (complete
+            || candidatePassableCells >= currentPassableCells + Math.Max(1, currentPassableCells / 10));
+
     // Action.VFX 25 is the client-data gaze marker used by the game's generic cast presentation. A gaze is a
     // semantic instruction, not a ground circle: retaining the EffectRange as an AVOID radius would invert the
     // mechanic for attacks such as Catastrophe's Demon Eye.
@@ -253,6 +264,7 @@ public static class ForetellInferenceCore
         MechanicKind.Raidwide or MechanicKind.Tankbuster => GuidanceKind.Raidwide,
         MechanicKind.Debuff => GuidanceKind.Cleanse,
         MechanicKind.Proximity or MechanicKind.Environment or MechanicKind.Transition => GuidanceKind.Move,
+        MechanicKind.Marker => GuidanceKind.Marker,
         _ => GuidanceKind.None
     };
 

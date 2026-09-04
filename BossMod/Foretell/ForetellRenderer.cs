@@ -152,6 +152,11 @@ public sealed partial class ForetellEngine
                 if (player != null)
                     cam.DrawWorldLine(origin, new(player.Position.X, player.PosRot.Y + .08f, player.Position.Z), color, thickness);
                 break;
+            case GuidanceKind.Marker:
+                const float markerHalfSize = 1.25f;
+                cam.DrawWorldLine(target + new Vector3(-markerHalfSize, 0, 0), target + new Vector3(markerHalfSize, 0, 0), color, thickness);
+                cam.DrawWorldLine(target + new Vector3(0, 0, -markerHalfSize), target + new Vector3(0, 0, markerHalfSize), color, thickness);
+                break;
         }
     }
 
@@ -290,6 +295,7 @@ public sealed partial class ForetellEngine
         GuidanceKind.Raidwide => "RAIDWIDE",
         GuidanceKind.Cleanse => "CLEANSE",
         GuidanceKind.Move => "MOVE",
+        GuidanceKind.Marker => "MARKER",
         _ when geometry != GeometryKind.Unknown || kind is MechanicKind.GroundAOE or MechanicKind.TargetedAOE => "AVOID",
         _ => "WATCH"
     };
@@ -312,6 +318,7 @@ public sealed partial class ForetellEngine
         MechanicKind.Proximity => "proximity damage",
         MechanicKind.Environment => "arena change",
         MechanicKind.Transition => "phase transition",
+        MechanicKind.Marker => "target marker",
         _ when geometry != GeometryKind.Unknown => $"{geometry.ToString().ToLowerInvariant()} area",
         _ => "learned mechanic"
     };
@@ -860,6 +867,12 @@ public sealed partial class ForetellEngine
                 break;
             case GuidanceKind.Move:
                 draw.AddText(center + new Vector2(-22, -18), color, "MOVE");
+                break;
+            case GuidanceKind.Marker:
+                var markerSize = Math.Max(4, 1.25f * scale);
+                draw.AddLine(target - new Vector2(markerSize, 0), target + new Vector2(markerSize, 0), color, thickness);
+                draw.AddLine(target - new Vector2(0, markerSize), target + new Vector2(0, markerSize), color, thickness);
+                draw.AddText(target + new Vector2(5, 5), color, "MARKER");
                 break;
         }
     }

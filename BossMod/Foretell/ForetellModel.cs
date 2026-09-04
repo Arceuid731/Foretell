@@ -4,12 +4,12 @@ using System.Numerics;
 namespace BossMod.Foretell;
 
 public enum GeometryKind { Unknown, Circle, Donut, Cone, Rectangle, Cross }
-public enum GuidanceKind { None, Avoid, Stack, Spread, Soak, LookAway, Knockback, Tether, Raidwide, Cleanse, Move }
+public enum GuidanceKind { None, Avoid, Stack, Spread, Soak, LookAway, Knockback, Tether, Raidwide, Cleanse, Move, Marker }
 public enum PredictionOriginKind { Source, Target }
 public enum MechanicKind
 {
     Unknown, GroundAOE, Raidwide, Tankbuster, Stack, Spread, Tower, Knockback, Gaze, Tether, Proximity,
-    Debuff, TargetedAOE, LineStack, ForcedMovement, Environment, Transition
+    Debuff, TargetedAOE, LineStack, ForcedMovement, Environment, Transition, Marker
 }
 
 public enum ObservationKind
