@@ -82,7 +82,6 @@ public sealed partial class ForetellEngine : IDisposable
     private string _lastPhaseBoundarySignal = "";
     private readonly Dictionary<ulong, DateTime> _untargetableSince = [];
     private readonly HashSet<string> _phaseBoundariesThisPull = [];
-    private string _phaseTopologyFingerprint = "";
     private readonly Dictionary<string, int> _signalOccurrencesThisPull = [];
     private readonly HashSet<string> _skippedTriggerContextsThisPull = [];
     private readonly List<SignalTriggerMemory> _triggerForecastCandidates = [];
@@ -410,7 +409,6 @@ public sealed partial class ForetellEngine : IDisposable
         _lastPhaseBoundarySignal = "";
         _untargetableSince.Clear();
         _phaseBoundariesThisPull.Clear();
-        _phaseTopologyFingerprint = "";
         _signalOccurrencesThisPull.Clear();
         _skippedTriggerContextsThisPull.Clear();
         _triggerForecastCandidates.Clear();
@@ -667,7 +665,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 22);
+        _store.Schema = Math.Max(_store.Schema, 23);
         _store.Mechanics ??= [];
         _store.Timeline ??= [];
         _store.Encounters ??= [];
@@ -759,6 +757,12 @@ public sealed partial class ForetellEngine : IDisposable
                     ResetPre20ForecastOutcomes(encounter);
                 if (loadedSchema < 21)
                     migratedUnsafeMetadata += MigratePre21ActionMetadata(encounter);
+                if (loadedSchema < 23)
+                    foreach (var mechanic in encounter.Mechanics.Values)
+                    {
+                        mechanic.Forecasts = mechanic.ForecastHits = mechanic.ForecastMisses = 0;
+                        mechanic.BrierScoreSum = 0;
+                    }
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
                 foreach (var trigger in encounter.TriggerContexts.Values) NormalizeSignalTriggerMemory(trigger);
@@ -869,6 +873,11 @@ public sealed partial class ForetellEngine : IDisposable
             // circle or whose ambient outcomes became CLEANSE/MOVE labels can therefore contaminate future duties.
             _store.ML = new();
             Service.Log($"[Foretell] Repaired {migratedUnsafeMetadata} unsafe pre-21 Action metadata models and reset contaminated derived ML state.");
+        }
+        if (loadedSchema < 23)
+        {
+            _store.ML = new();
+            Service.Log("[Foretell] Reset self-trained classifier weights and non-independent forecast scores; empirical samples and learned mechanics retained.");
         }
     }
 

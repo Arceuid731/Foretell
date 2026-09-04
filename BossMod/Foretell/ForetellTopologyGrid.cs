@@ -209,6 +209,8 @@ internal sealed class ForetellTopologyFrontier
     }
 }
 
+internal readonly record struct TopologyWall(Vector2 A, Vector2 B);
+
 internal sealed record TopologyAnalysis(
     string Fingerprint,
     byte[] ConnectedCells,
@@ -220,7 +222,8 @@ internal sealed record TopologyAnalysis(
     int PassableCells,
     int BlockedCells,
     int UnknownCells,
-    int Components);
+    int Components,
+    List<TopologyWall>? InteriorWalls = null);
 
 // Pure managed topology core. Native collision probing is isolated in ForetellTopology.cs; this class is deterministic
 // and can be exercised by the standalone core test harness without loading Dalamud or FFXIVClientStructs.
@@ -396,6 +399,50 @@ internal sealed class ForetellTopologyGrid
         return true;
     }
 
+    public bool CanTraverseSegment(Vector2 from, Vector2 to, byte[]? connected)
+    {
+        if (IsConnectedPassable(from, connected) != true || IsConnectedPassable(to, connected) != true)
+            return false;
+        var x = (int)((from.X - OriginX) / Resolution);
+        var z = (int)((from.Y - OriginZ) / Resolution);
+        var endX = (int)((to.X - OriginX) / Resolution);
+        var endZ = (int)((to.Y - OriginZ) / Resolution);
+        var delta = to - from;
+        var dx = Math.Sign(delta.X); var dz = Math.Sign(delta.Y);
+        var tx = dx == 0 ? float.PositiveInfinity : (OriginX + (x + (dx > 0 ? 1 : 0)) * Resolution - from.X) / delta.X;
+        var tz = dz == 0 ? float.PositiveInfinity : (OriginZ + (z + (dz > 0 ? 1 : 0)) * Resolution - from.Y) / delta.Y;
+        var stepX = dx == 0 ? float.PositiveInfinity : Resolution / Math.Abs(delta.X);
+        var stepZ = dz == 0 ? float.PositiveInfinity : Resolution / Math.Abs(delta.Y);
+        for (var guard = 0; guard <= Width + Height; ++guard)
+        {
+            if (x == endX && z == endZ) return true;
+            var current = z * Width + x;
+            if (Math.Abs(tx - tz) < 1e-6f)
+            {
+                // Supercover the corner: a diagonal may not cut across either adjoining wall or void.
+                var nextX = z * Width + x + dx;
+                var nextZ = (z + dz) * Width + x;
+                var diagonal = (z + dz) * Width + x + dx;
+                if (!Edge(current, nextX) || !Edge(current, nextZ) || !Edge(nextX, diagonal) || !Edge(nextZ, diagonal)) return false;
+                x += dx; z += dz; tx += stepX; tz += stepZ;
+            }
+            else if (tx < tz)
+            {
+                if (!Edge(current, current + dx)) return false;
+                x += dx; tx += stepX;
+            }
+            else
+            {
+                if (!Edge(current, current + dz * Width)) return false;
+                z += dz; tz += stepZ;
+            }
+        }
+        return false;
+
+        bool Edge(int a, int b) => (uint)b < (uint)CellCount && connected![b] == (byte)TopologyCell.Passable
+            && CanTraverse(a, b, requireKnownEdges: true);
+    }
+
     public TopologyAnalysis Analyze(Vector2 seedWorld, float maxStepHeight = 1.75f, bool requireKnownEdges = false)
     {
         var connected = new byte[CellCount];
@@ -425,7 +472,19 @@ internal sealed class ForetellTopologyGrid
 
         var contours = BuildContours(connected);
         var fingerprint = Fingerprint(connected, packedHeights, KnownEdges, BlockedEdges);
-        return new(fingerprint, connected, Cells.ToArray(), packedHeights, KnownEdges.ToArray(), BlockedEdges.ToArray(), contours, passable, blocked, unknown, components);
+        var walls = new List<TopologyWall>();
+        for (var cell = 0; cell < CellCount; ++cell)
+        {
+            if (connected[cell] != (byte)TopologyCell.Passable) continue;
+            var x = cell % Width; var z = cell / Width;
+            if (x + 1 < Width && connected[cell + 1] == (byte)TopologyCell.Passable && (BlockedEdges[cell] & (byte)TopologyEdge.East) != 0)
+                walls.Add(new(new(OriginX + (x + 1) * Resolution, OriginZ + z * Resolution),
+                    new(OriginX + (x + 1) * Resolution, OriginZ + (z + 1) * Resolution)));
+            if (z + 1 < Height && connected[cell + Width] == (byte)TopologyCell.Passable && (BlockedEdges[cell] & (byte)TopologyEdge.South) != 0)
+                walls.Add(new(new(OriginX + x * Resolution, OriginZ + (z + 1) * Resolution),
+                    new(OriginX + (x + 1) * Resolution, OriginZ + (z + 1) * Resolution)));
+        }
+        return new(fingerprint, connected, Cells.ToArray(), packedHeights, KnownEdges.ToArray(), BlockedEdges.ToArray(), contours, passable, blocked, unknown, components, walls);
     }
 
     private int FindNearestPassable(int sx, int sz)
@@ -668,9 +727,13 @@ internal sealed class ForetellTopologyGrid
                 && ((BlockedEdges[first] & (byte)firstBit) != 0) == ((BlockedEdges[second] & (byte)secondBit) != 0);
     }
 
-    private static string Fingerprint(byte[] connected, short[] heights, byte[] knownEdges, byte[] blockedEdges)
+    private string Fingerprint(byte[] connected, short[] heights, byte[] knownEdges, byte[] blockedEdges)
     {
         ulong hash = 14695981039346656037UL;
+        hash ^= BitConverter.SingleToUInt32Bits(OriginX); hash *= 1099511628211UL;
+        hash ^= BitConverter.SingleToUInt32Bits(OriginZ); hash *= 1099511628211UL;
+        hash ^= BitConverter.SingleToUInt32Bits(ReferenceY); hash *= 1099511628211UL;
+        hash ^= BitConverter.SingleToUInt32Bits(Resolution); hash *= 1099511628211UL;
         for (var i = 0; i < connected.Length; ++i)
         {
             hash ^= connected[i]; hash *= 1099511628211UL;

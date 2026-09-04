@@ -54,9 +54,10 @@ public sealed partial class ForetellEngine
         foreach (var target in ev.Targets)
         {
             // Do not allocate and flatten another effect dictionary after this frame's semantic budget is spent.
-            if (!SemanticBudgetAvailable())
+            if (!SemanticBudgetAvailable(ForetellInferenceCore.IsPrioritySemanticObservation(ObservationKind.AffectedTarget, resolved.SourceKind)))
             {
                 ++_semanticObservationsRejected;
+                NoteMissingOutcome(resolved);
                 break;
             }
             seen.Add(target.ID);

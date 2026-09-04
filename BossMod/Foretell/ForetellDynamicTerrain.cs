@@ -26,10 +26,9 @@ public sealed partial class ForetellEngine
             return;
         var now = ObservationNow();
         var signals = _dynamicTerrainWarnings.GetValueOrDefault(actor.InstanceID)?.Signals + 1 ?? 1;
-        // A second structural animation for the same radial tile confirms the transition; retain the forbidden
-        // sector until combat ends while the collision mesh independently observes the missing floor.
-        var inPull = _inPull || Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];
-        var expires = signals >= 2 ? inPull ? DateTime.MaxValue : now.AddMinutes(2) : now.AddSeconds(7);
+        // Repeated animations are still only a structural cue, not proof of a vanished platform. The live
+        // collision surface owns persistence; a cue expires even if the same object animated twice.
+        var expires = now.AddSeconds(7);
         _dynamicTerrainWarnings[actor.InstanceID] = new(actor.InstanceID, center, Vector2.Distance(center, points[^1]),
             points, actor.PosRot.Y + .08f, expires, signals);
     }
@@ -55,8 +54,8 @@ public sealed partial class ForetellEngine
 
     private void PromoteDynamicTerrainWarningsForPull()
     {
+        var now = ObservationNow();
         foreach (var (id, warning) in _dynamicTerrainWarnings.ToArray())
-            if (warning.Signals >= 2)
-                _dynamicTerrainWarnings[id] = warning with { Expires = DateTime.MaxValue };
+            if (warning.Expires <= now) _dynamicTerrainWarnings.Remove(id);
     }
 }

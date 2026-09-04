@@ -5,12 +5,16 @@ on:
     branches: [ main ]
     paths:
       - 'BossMod/**'
+      - 'ForetellCoreTests/**'
+      - 'global.json'
       - '.github/workflows/build.yml'
       - '.github/scripts/check_foretell_telemetry_contract.py'
   pull_request:
     branches: [ main ]
     paths:
       - 'BossMod/**'
+      - 'ForetellCoreTests/**'
+      - 'global.json'
       - '.github/workflows/build.yml'
       - '.github/scripts/check_foretell_telemetry_contract.py'
   workflow_dispatch:

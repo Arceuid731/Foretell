@@ -17,7 +17,8 @@ public sealed partial class ForetellEngine
     private readonly ForetellTopologyGrid _topology = new();
     private readonly ForetellTopologyFrontier _topologyFrontier = new();
     private sealed record TopologyAnalysisWork(long Generation, ForetellTopologyGrid Grid, Vector2 Player, bool Complete, TopologyAnalysis Analysis);
-    private sealed record CollisionRasterWork(long Generation, ForetellCollisionRasterResult Result);
+    private sealed record CollisionRasterWork(long Generation, ForetellCollisionSnapshot Snapshot, ForetellCollisionRasterResult Result);
+    private ForetellCollisionSnapshot? _lastCollisionSnapshot;
     private Task<TopologyAnalysisWork>? _topologyAnalysisTask;
     private Task<CollisionRasterWork>? _collisionRasterTask;
     private long _topologyGeneration;
@@ -86,6 +87,7 @@ public sealed partial class ForetellEngine
     private Vector2 _topologyPendingCenter;
     private float _topologyPendingRadius;
     private float _topologyPendingResolution;
+    private bool _topologyEvidenceInvalidated = true;
 
     internal TopologyAnalysis? CurrentTopology => _topologyAnalysis;
     internal bool TopologySuspended => DateTime.UtcNow < _topologySuspendedUntil;
@@ -94,6 +96,8 @@ public sealed partial class ForetellEngine
     {
         ++_topologyGeneration;
         _topologyAnalysis = null;
+        _lastCollisionSnapshot = null;
+        _topologyEvidenceInvalidated = true;
         _topologyFingerprint = "";
         _topology.Clear();
         _topologyConsecutiveOverruns = 0;
@@ -149,6 +153,7 @@ public sealed partial class ForetellEngine
             _topologyRefreshRequestedAt = DateTime.UtcNow;
         _topologySweepRequested = true;
         _topologyHardInvalidation |= hard;
+        _topologyEvidenceInvalidated |= hard;
         if (hard)
         {
             if (_collisionRasterTask != null)
@@ -212,14 +217,16 @@ public sealed partial class ForetellEngine
             RegisterCapability("native.topology.collision", typeof(BGCollisionModule), "RaycastMaterialFilter", false, false, "non-finite player position rejected before native call");
             return;
         }
-        if (_topology.CellCount == 0)
-            TryRestoreKnownTopology(player3);
+        // Persisted maps describe a past scene. Only a fresh capture may authorize movement in this session.
         var player2 = new Vector2(player3.X, player3.Z);
         var visibleCapacity = _cfg.RadarZoom == ForetellRadarZoom.Automatic ? _cfg.RadarAutoMaximumRadius : _cfg.RadarWorldRadius;
         var plan = ForetellTopologyWindow.Plan(player2, visibleCapacity);
         var fingerprintCenter = _topology.CellCount > 0 ? TopologyCenter() : plan.Center;
         SampleTopologySceneFingerprint(module, now, inCombat, fingerprintCenter, plan.SampleRadius + plan.Alignment);
-        var needsReplacement = ForetellTopologyWindow.NeedsReplacement(_topology, _topologySampleRadius, player3, plan);
+        var needsReplacement = ForetellTopologyWindow.NeedsReplacement(_topology, _topologySampleRadius, player3, plan)
+            || _topologyAnalysis != null && !_topology.TryConnectedHeight(player2, _topologyAnalysis.ConnectedCells, out var localHeight)
+            || _topologyAnalysis != null && _topology.TryConnectedHeight(player2, _topologyAnalysis.ConnectedCells, out localHeight)
+                && Math.Abs(player3.Y - localHeight) > 2.25f;
         if (!_topologySweepInProgress && !_topologySweepRequested && now >= _topologyRescanAfter)
         {
             _topologySweepRequested = true;
@@ -237,6 +244,7 @@ public sealed partial class ForetellEngine
             _topologyPendingResolution = plan.Resolution;
             _topologySweepRequested = true;
             _topologyHardInvalidation = true;
+            _topologyEvidenceInvalidated = true;
             if (_topologyRefreshRequestedAt == default)
                 _topologyRefreshRequestedAt = now;
             if (_collisionRasterTask != null && targetChanged)
@@ -415,7 +423,7 @@ public sealed partial class ForetellEngine
         ++_topologyMeshCaptures;
         RegisterCapability("native.topology.mesh", typeof(ColliderMesh), "MeshPCB", true, false,
             $"{snapshot.Triangles.Length:N0} local triangles copied in {snapshot.CaptureMilliseconds:F2} ms; managed raster queued");
-        _collisionRasterTask = Task.Run(() => new CollisionRasterWork(generation, ForetellCollisionRasterizer.Build(snapshot)));
+        _collisionRasterTask = Task.Run(() => new CollisionRasterWork(generation, snapshot, ForetellCollisionRasterizer.Build(snapshot)));
         return true;
     }
 
@@ -445,10 +453,13 @@ public sealed partial class ForetellEngine
             return;
 
         var result = work.Result;
+        _lastCollisionSnapshot = work.Snapshot;
         var rebuildImmediately = _topologyRescanAfterRaster;
         _topologyRescanAfterRaster = false;
         var hadUsefulMesh = _topologyAnalysis is { PassableCells: > 0 };
-        var candidateRadius = Math.Min(result.Grid.Width, result.Grid.Height) * result.Grid.Resolution * .5f;
+        // Preserve the requested radius. The enclosing grid includes a half-cell border; feeding that rounded
+        // extent into the next Reset adds a cell on every refresh (193 -> 195 -> 193 in recorded T138 maps).
+        var candidateRadius = result.SampleRadius;
         var livePlayer = _ws.Party[PartyState.PlayerSlot];
         var visibleCapacity = _cfg.RadarZoom == ForetellRadarZoom.Automatic ? _cfg.RadarAutoMaximumRadius : _cfg.RadarWorldRadius;
         if (hadUsefulMesh && livePlayer != null && !ForetellTopologyWindow.CoversVisible(
@@ -482,6 +493,7 @@ public sealed partial class ForetellEngine
             _topologySampleRadius = candidateRadius;
             ++_topologyAtomicSwaps;
             _topologyLastPublishedAt = DateTime.UtcNow;
+            _topologyEvidenceInvalidated = rebuildImmediately;
             if (_topologyRefreshRequestedAt != default)
             {
                 _topologyLastRefreshLatencyMilliseconds = Math.Max(0, (_topologyLastPublishedAt - _topologyRefreshRequestedAt).TotalMilliseconds);
@@ -499,6 +511,7 @@ public sealed partial class ForetellEngine
         else
         {
             ++_topologyMeshFallbacks;
+            _topologyEvidenceInvalidated = true;
             _topologyMeshRetryAfter = DateTime.UtcNow.AddMilliseconds(350);
             if (hadUsefulMesh)
             {
@@ -624,6 +637,11 @@ public sealed partial class ForetellEngine
             _topologyFirstSurfaceMilliseconds = Math.Max(0, (DateTime.UtcNow - _topologySweepStartedAt).TotalMilliseconds);
         _topologyAnalysis = analysis;
         _topologyAnalysisComplete = complete;
+        if (complete && !_topologyMeshPrimary)
+        {
+            _topologyEvidenceInvalidated = false;
+            _topologyLastPublishedAt = DateTime.UtcNow;
+        }
         // Frontier completion proves that every route from the seed ended at a wall, a void/drop or the local
         // survey radius. Unknown cells behind those boundaries are intentionally unsampled and are not a reason
         // to withhold a closed room or its bounded persistent snapshot.
@@ -687,42 +705,19 @@ public sealed partial class ForetellEngine
         ProcessObservation(obs, enriched: true);
     }
 
-    private bool TryRestoreKnownTopology(Vector3 player)
-    {
-        if (!_store.Encounters.TryGetValue(_territory, out var encounter))
-            return false;
-        var memory = encounter.Topologies.Values
-            .Where(item => Math.Abs(player.Y - item.ReferenceY) <= 6
-                && player.X >= item.OriginX && player.Z >= item.OriginZ
-                && player.X < item.OriginX + item.Width * item.Resolution
-                && player.Z < item.OriginZ + item.Height * item.Resolution)
-            .OrderByDescending(item => item.LastSeen)
-            .FirstOrDefault();
-        if (memory == null || !_topology.Restore(memory.OriginX, memory.OriginZ, memory.ReferenceY, memory.Resolution,
-            memory.Width, memory.Height, memory.Cells, memory.HeightCentimeters, memory.KnownEdges, memory.BlockedEdges))
-            return false;
-        _topologySampleRadius = Math.Min(memory.Width, memory.Height) * memory.Resolution * .5f;
-        _topologyFingerprint = memory.Fingerprint;
-        _topologyAnalysis = new(memory.Fingerprint, memory.Cells.ToArray(), memory.Cells.ToArray(), memory.HeightCentimeters.ToArray(),
-            memory.KnownEdges.ToArray(), memory.BlockedEdges.ToArray(),
-            memory.Contours.Select(contour => contour.Points.Select(point => new Vector2(point.X, point.Z)).ToList()).ToList(),
-            memory.PassableCells, memory.BlockedCells, memory.UnknownCells, memory.Components);
-        _topologyAnalysisComplete = true;
-        _topologyMeshPrimary = true;
-        _topologyPendingCenter = TopologyCenter();
-        _topologyPendingRadius = _topologySampleRadius;
-        _topologyPendingResolution = _topology.Resolution;
-        return true;
-    }
-
     internal bool? IsTopologyPassable(Vector2 world)
     {
+        if (!HasFreshTopologyEvidence)
+            return null;
         var mesh = _topology.IsConnectedPassable(world, _topologyAnalysis?.ConnectedCells);
         if (mesh == true && CurrentArenaBoundary is { ArenaLike: true } boundary
             && !ForetellArenaBoundaryCore.Contains(boundary.Points, world))
             return false;
         return mesh ?? IsArenaBoundaryPassable(world);
     }
+
+    private bool HasFreshTopologyEvidence => !_topologyEvidenceInvalidated && _topologyAnalysisComplete
+        && _topologyLastPublishedAt != default && (DateTime.UtcNow - _topologyLastPublishedAt).TotalSeconds <= 10;
 
     private static float SignedArea(IReadOnlyList<Vector2> points)
     {

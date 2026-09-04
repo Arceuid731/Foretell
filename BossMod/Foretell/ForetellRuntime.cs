@@ -27,6 +27,7 @@ internal sealed class MechanicEpisode
     public HashSet<string> BinaryKeys { get; } = [];
     public long BinaryBytes { get; private set; }
     public bool ResolutionObserved { get; set; }
+    public long OutcomeGapGeneration { get; init; }
     public GeometryKind ForecastGeometry { get; set; }
     public MechanicKind ForecastKind { get; set; }
     public float ForecastP1 { get; set; }

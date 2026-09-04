@@ -187,7 +187,6 @@ public sealed partial class ForetellEngine
         var liveLastPhaseBoundarySignal = _lastPhaseBoundarySignal;
         var liveUntargetableSince = _untargetableSince.ToArray();
         var livePhaseBoundariesThisPull = _phaseBoundariesThisPull.ToArray();
-        var livePhaseTopologyFingerprint = _phaseTopologyFingerprint;
         var liveEvidence = _lastEvidence;
         var liveLearning = _cfg.EnableLearning;
 
@@ -221,7 +220,6 @@ public sealed partial class ForetellEngine
             _lastPhaseBoundarySignal = "";
             _untargetableSince.Clear();
             _phaseBoundariesThisPull.Clear();
-            _phaseTopologyFingerprint = "";
             StartEncounterSession(_territory);
 
             var semanticObservations = 0;
@@ -253,7 +251,6 @@ public sealed partial class ForetellEngine
                     _lastPhaseBoundarySignal = "";
                     _untargetableSince.Clear();
                     _phaseBoundariesThisPull.Clear();
-                    _phaseTopologyFingerprint = "";
                     StartEncounterSession(_territory);
                 }
                 ProcessObservation(observation, replaying: true);
@@ -301,7 +298,6 @@ public sealed partial class ForetellEngine
                 _untargetableSince[actorID] = since;
             _phaseBoundariesThisPull.Clear();
             _phaseBoundariesThisPull.UnionWith(livePhaseBoundariesThisPull);
-            _phaseTopologyFingerprint = livePhaseTopologyFingerprint;
             _lastEvidence = liveEvidence;
         }
 

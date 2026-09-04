@@ -87,26 +87,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $notes = @"
-          Foretell $env:FORETELL_VERSION
-
-          Stable rolling top-down terrain radar from FFXIV's loaded collision meshes.
-
-          - Keeps a world-aligned collision window prefetched well beyond the visible radar and recentres before movement can expose an outer scan edge.
-          - Double buffers every reconstruction: the complete front map stays visible until its complete replacement is atomically ready.
-          - Never publishes ray-fallback progress, eliminating the delayed islands and changing chunks visible in earlier builds.
-          - Retries short native captures within hundreds of milliseconds under an adaptive 20 ms ceiling instead of entering a 15-second retry gap.
-          - Uses a lightweight bounded scene fingerprint plus combat and structural events to invalidate changed floors and barriers while the player is stationary.
-          - Renders stitched, simplified connected contours as continuous top-down wall and drop lines, clipped cleanly at the radar edge.
-          - Increases spatial resolution and preserves layered reachability for corridors, rooms, ramps, stairs and stacked floors.
-          - Exports capture retries, atomic swaps, retained front buffers, recentres, scene changes and refresh latency in Analysis ZIP and Replay Lab diagnostics.
-          - Adds deterministic prefetch, world-alignment and continuous-contour clipping regression tests.
-
-          Every change is generic: no territory, boss, action, icon, collider or event-object identifier was added.
-
-          CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
-          "@
-          gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes $notes
+          gh release create $env:FORETELL_TAG .\Foretell.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Foretell $env:FORETELL_TAG" --notes-file .\release-notes.md
 
       - name: Update Dalamud repository manifest
         shell: pwsh

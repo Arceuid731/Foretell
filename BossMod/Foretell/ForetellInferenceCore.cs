@@ -6,6 +6,23 @@ namespace BossMod.Foretell;
 // Confidence here means verified forecast reliability, not merely accumulated evidence.
 public static class ForetellInferenceCore
 {
+    public static bool CanTrainOutcome(MechanicKind observedKind)
+        => observedKind is not MechanicKind.Unknown and not MechanicKind.Marker
+            and not MechanicKind.Environment and not MechanicKind.Transition;
+
+    // Generic ActionEffect wire types, not action IDs. Heal/status/value records are not damage amounts.
+    public static bool IsDamageEffect(double type) => type is 3 or 5 or 6;
+
+    public static bool HasConfirmedHit(IReadOnlyDictionary<string, double> numeric)
+    {
+        foreach (var (key, value) in numeric)
+            if (key.StartsWith("actionEffect.", StringComparison.Ordinal) && key.EndsWith(".type", StringComparison.Ordinal)
+                && (IsDamageEffect(value) || value is 7 or 75)
+                && numeric.GetValueOrDefault(key[..^5] + ".atSource") == 0)
+                return true;
+        return false;
+    }
+
     public const int OutOfCombatHazardPhase = -1;
 
     // Raw telemetry remains complete, but only sources that can plausibly own an encounter mechanic may create
@@ -212,7 +229,7 @@ public static class ForetellInferenceCore
     {
         // Player rotations are the dominant CastStart/ActionResolved traffic in a 24-player duty. They remain
         // available through the ordinary budget, but must not consume the reserve intended for sparse boss casts.
-        if (kind is ObservationKind.CastStart or ObservationKind.ActionResolved)
+        if (kind is ObservationKind.CastStart or ObservationKind.ActionResolved or ObservationKind.AffectedTarget or ObservationKind.EffectResult)
             return sourceKind is SourceKind.Enemy or SourceKind.EventObject or SourceKind.Environment;
         // Some encounter statuses intentionally have no source actor (for example alliance eligibility/state
         // effects), so Unknown must remain eligible here. Self/party buffs still stay on the ordinary budget.
@@ -232,10 +249,6 @@ public static class ForetellInferenceCore
     // A fast radial wall sweep is useful for a sealed boss room, but produces convincing-looking false polygons
     // in courtyards and corridors. The floor mesh remains active everywhere; this accelerator is combat-only.
     public static bool ShouldUseFastArenaBoundary(bool inCombat) => inCombat;
-
-    // Topology may clip only confirmed unreachable space. Missing/streaming cells must never turn into a silent
-    // false negative for an otherwise valid warning.
-    public static bool ShouldPresentOnTopology(bool? passable) => passable != false;
 
     // Progressive rescans grow outwards from the player. Keep a useful previous result until the replacement has
     // caught up; a complete scan may legitimately shrink after a bridge/platform disappears.
@@ -265,8 +278,10 @@ public static class ForetellInferenceCore
         MechanicKind.Gaze => GuidanceKind.LookAway,
         MechanicKind.Knockback or MechanicKind.ForcedMovement => GuidanceKind.Knockback,
         MechanicKind.Tether => GuidanceKind.Tether,
-        MechanicKind.Raidwide or MechanicKind.Tankbuster => GuidanceKind.Raidwide,
-        MechanicKind.Debuff => GuidanceKind.Cleanse,
+        MechanicKind.Raidwide => GuidanceKind.Raidwide,
+        MechanicKind.Tankbuster => GuidanceKind.Tankbuster,
+        // A status gain alone does not establish that the status can or should be dispelled.
+        MechanicKind.Debuff => GuidanceKind.None,
         MechanicKind.Proximity or MechanicKind.Environment or MechanicKind.Transition => GuidanceKind.Move,
         MechanicKind.Marker => GuidanceKind.Marker,
         _ => GuidanceKind.None

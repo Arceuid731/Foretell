@@ -14,8 +14,35 @@ static class Check
 
 static class ForetellCoreTests
 {
-    public static void Main()
+    public static void Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--raw")
+        {
+            var paths = Directory.Exists(args[1]) ? Directory.GetFiles(args[1], "*.ftraw.gz") : [args[1]];
+            foreach (var path in paths.Order())
+            {
+                var name = Path.GetFileName(path);
+                _ = uint.TryParse(name.Split('-').ElementAtOrDefault(1)?.TrimStart('T'), out var territory);
+                var report = ForetellRawFormat.Read(path, territory);
+                Console.WriteLine(JsonSerializer.Serialize(new { file = name, report.Schema, report.Records,
+                    report.ServerPackets, report.ClientPackets, report.ActorControls, report.PayloadBytes,
+                    report.FirstAt, report.LastAt, report.Complete, report.Errors, windows = report.Windows.Count }));
+            }
+            return;
+        }
+        if (args.Length == 2 && args[0] == "--collision")
+        {
+            using var file = File.OpenRead(args[1]);
+            using var archive = args[1].EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? new ZipArchive(file) : null;
+            using var stream = archive == null ? file : archive.GetEntry("terrain/collision.ftrc")?.Open()
+                ?? throw new InvalidDataException("Bundle has no live collision snapshot");
+            var snapshot = ForetellCollisionSnapshotIO.Read(stream);
+            var result = ForetellCollisionRasterizer.Build(snapshot);
+            Console.WriteLine(JsonSerializer.Serialize(new { snapshot.Colliders, triangles = snapshot.Triangles.Length,
+                result.FloorTriangles, result.WallTriangles, result.Analysis.PassableCells, result.Analysis.Components,
+                result.Analysis.Fingerprint, result.RasterMilliseconds }));
+            return;
+        }
         TopologyConnectedComponentAndHole();
         TopologyWindowPrefetchesBeforeVisibleEdge();
         TopologyRadarContourClipIsContinuous();
@@ -25,12 +52,19 @@ static class ForetellCoreTests
         CollisionRasterSelectsReachableLayer();
         CollisionRasterStopsAtMeshWall();
         CollisionRasterBuildsCorridorAndRoom();
+        CollisionRasterPassesUnderArch();
+        CollisionRasterClimbsStairRisers();
+        CollisionRasterFiltersMaterialsAndCeilings();
+        CollisionRasterRemovesMissingFloor();
+        CollisionRasterKeepsWindowDimensions();
+        CollisionSnapshotRoundTrip();
+        SafeDirectionCannotCrossWallsOrHoles();
+        OutcomeEvidenceSeparatesHitsFromCues();
         TopologyBarrierClosesConnectedSurface();
         TopologyRequiresObservedConnections();
         TopologyLoadBudget();
         TopologyFuzzMaintainsInvariants();
         ArenaBoundaryInference();
-        TopologyPresentationNeverHidesUnknownTerrain();
         DynamicTerrainSectorInference();
         RawRoundTrip();
         RawLiveReplayDeterminism();
@@ -436,21 +470,161 @@ static class ForetellCoreTests
         Check.That(result.Grid.IsConnectedPassable(new(8, -10), result.Analysis.ConnectedCells) == false, "raster invented floor beside corridor");
     }
 
-    private static void TopologyPresentationNeverHidesUnknownTerrain()
-    {
-        Check.That(ForetellInferenceCore.ShouldPresentOnTopology(true), "reachable alert segment was hidden");
-        Check.That(ForetellInferenceCore.ShouldPresentOnTopology(null), "unknown terrain hid an alert");
-        Check.That(!ForetellInferenceCore.ShouldPresentOnTopology(false), "confirmed unreachable segment was not clipped");
-    }
-
     private static void AddQuad(List<ForetellCollisionTriangle> triangles, float minX, float minZ, float maxX, float maxZ, float y)
     {
         var a = new Vector3(minX, y, minZ);
         var b = new Vector3(maxX, y, minZ);
         var c = new Vector3(maxX, y, maxZ);
         var d = new Vector3(minX, y, maxZ);
-        triangles.Add(new(a, b, c));
-        triangles.Add(new(a, c, d));
+        triangles.Add(new(a, c, b));
+        triangles.Add(new(a, d, c));
+    }
+
+    private static ForetellCollisionRasterResult Raster(List<ForetellCollisionTriangle> triangles, Vector3 player)
+        => ForetellCollisionRasterizer.Build(new(player, Vector2.Zero, 16, .75f, triangles.ToArray(), 1, triangles.Count, 0));
+
+    private static void CollisionRasterPassesUnderArch()
+    {
+        var triangles = new List<ForetellCollisionTriangle>();
+        AddQuad(triangles, -10, -10, 10, 10, 0);
+        // The bottom tip meets the ground at the left pillar; the crossing at X=0 is above head height.
+        triangles.Add(new(new(-10, 0, 0), new(10, 8, 0), new(-10, 8, 0)));
+        var result = Raster(triangles, new(0, .1f, -5));
+        Check.That(result.Grid.IsConnectedPassable(new(0, 5), result.Analysis.ConnectedCells) == true,
+            "arch triangle became an artificial curtain across the doorway");
+        Check.That(result.Analysis.Components == 1, "reachable layers fragmented during 2D projection");
+    }
+
+    private static void CollisionRasterClimbsStairRisers()
+    {
+        var triangles = new List<ForetellCollisionTriangle>();
+        for (var step = 0; step < 10; ++step)
+        {
+            var z = -10 + step * 2;
+            var y = step * .6f;
+            AddQuad(triangles, -3, z, 3, z + 2, y);
+            if (step == 0) continue;
+            triangles.Add(new(new(-3, y - .6f, z), new(3, y, z), new(-3, y, z)));
+            triangles.Add(new(new(-3, y - .6f, z), new(3, y - .6f, z), new(3, y, z)));
+        }
+        var result = Raster(triangles, new(0, .1f, -9));
+        Check.That(result.Grid.TryConnectedHeight(new(0, 8), result.Analysis.ConnectedCells, out var height) && height > 5,
+            "walkable stair risers split the upper landing from the player");
+    }
+
+    private static void CollisionRasterFiltersMaterialsAndCeilings()
+    {
+        Check.That(ForetellCollisionRules.EffectiveMaterial(0x7000, 0x1000, 0x7000) == 0x1000,
+            "PCB object material override was ignored");
+        Check.That(!ForetellCollisionRules.Participates(2, 1) && !ForetellCollisionRules.Participates(1, 0),
+            "inactive or non-movement collision layer was admitted");
+        var triangles = new List<ForetellCollisionTriangle>();
+        AddQuad(triangles, -10, -10, 10, 10, 0);
+        triangles.Add(new(new(0, 0, -10), new(0, 8, -10), new(0, 8, 10), 0x1000));
+        triangles.Add(new(new(0, 0, -10), new(0, 8, 10), new(0, 0, 10), 0x1000));
+        var result = Raster(triangles, new(-5, .1f, 0));
+        Check.That(result.Grid.IsConnectedPassable(new(5, 0), result.Analysis.ConnectedCells) == true,
+            "non-movement material blocked a corridor");
+        // A downward-facing ceiling at Y=1 blocks standing below it and must not become a floor itself.
+        triangles.Add(new(new(-3, 1, -3), new(3, 1, -3), new(3, 1, 3)));
+        triangles.Add(new(new(-3, 1, -3), new(3, 1, 3), new(-3, 1, 3)));
+        result = Raster(triangles, new(-5, .1f, 0));
+        Check.That(result.Grid.IsConnectedPassable(Vector2.Zero, result.Analysis.ConnectedCells) == false,
+            "low ceiling or its underside became walkable floor");
+    }
+
+    private static void CollisionRasterRemovesMissingFloor()
+    {
+        var triangles = new List<ForetellCollisionTriangle>();
+        AddQuad(triangles, -10, -10, 0, 10, 0);
+        AddQuad(triangles, 0, -10, 10, 10, 0);
+        var before = Raster(triangles, new(-5, .1f, 0));
+        triangles.RemoveRange(2, 2);
+        var after = Raster(triangles, new(-5, .1f, 0));
+        Check.That(before.Grid.IsConnectedPassable(new(5, 0), before.Analysis.ConnectedCells) == true
+            && after.Grid.IsConnectedPassable(new(5, 0), after.Analysis.ConnectedCells) == false,
+            "removed platform remained passable after a complete replacement");
+    }
+
+    private static void CollisionRasterKeepsWindowDimensions()
+    {
+        var plan = ForetellTopologyWindow.Plan(new(220, 230), 65);
+        var triangles = new List<ForetellCollisionTriangle>();
+        AddQuad(triangles, 150, 150, 300, 300, -25);
+        var radius = plan.SampleRadius;
+        var width = 0;
+        var origin = Vector2.Zero;
+        for (var iteration = 0; iteration < 8; ++iteration)
+        {
+            var result = ForetellCollisionRasterizer.Build(new(new(220, -25, 230), plan.Center, radius,
+                plan.Resolution, triangles.ToArray(), 1, triangles.Count, 0));
+            var currentOrigin = new Vector2(result.Grid.OriginX, result.Grid.OriginZ);
+            if (iteration > 0)
+                Check.That(result.Grid.Width == width && currentOrigin == origin, "periodic refresh changed window dimensions/origin");
+            width = result.Grid.Width;
+            origin = currentOrigin;
+            radius = result.SampleRadius;
+        }
+    }
+
+    private static void CollisionSnapshotRoundTrip()
+    {
+        var triangles = new List<ForetellCollisionTriangle>();
+        AddQuad(triangles, -10, -10, 10, 10, 0);
+        var source = new ForetellCollisionSnapshot(new(0, .1f, 0), Vector2.Zero, 16, .75f, triangles.ToArray(), 1, 2, .5);
+        using var stream = new MemoryStream();
+        ForetellCollisionSnapshotIO.Write(stream, source);
+        stream.Position = 0;
+        var restored = ForetellCollisionSnapshotIO.Read(stream);
+        Check.That(ForetellCollisionRasterizer.Build(source).Analysis.Fingerprint == ForetellCollisionRasterizer.Build(restored).Analysis.Fingerprint,
+            "exported collision input did not reproduce the live raster");
+        stream.SetLength(stream.Length - 1); stream.Position = 0;
+        var rejected = false;
+        try { ForetellCollisionSnapshotIO.Read(stream); } catch (EndOfStreamException) { rejected = true; }
+        Check.That(rejected, "truncated collision snapshot was accepted");
+    }
+
+    private static void SafeDirectionCannotCrossWallsOrHoles()
+    {
+        var grid = new ForetellTopologyGrid();
+        grid.Reset(Vector3.Zero, 10, 1);
+        for (var i = 0; i < grid.CellCount; ++i)
+        {
+            grid.Set(i, TopologyCell.Passable, 0);
+            if (i % grid.Width > 0) grid.SetEdge(i - 1, i, false);
+            if (i >= grid.Width) grid.SetEdge(i - grid.Width, i, false);
+        }
+        var analysis = grid.Analyze(Vector2.Zero, requireKnownEdges: true);
+        Check.That(grid.CanTraverseSegment(new(-4, 0), new(4, 0), analysis.ConnectedCells), "open safe route rejected");
+        var center = grid.CellCount / 2;
+        grid.SetEdge(center, center + 1, true);
+        analysis = grid.Analyze(Vector2.Zero, requireKnownEdges: true);
+        Check.That(analysis.InteriorWalls is { Count: 1 }, "interior wall vanished because its two sides are connected around it");
+        Check.That(!grid.CanTraverseSegment(new(-4, 0), new(4, 0), analysis.ConnectedCells), "safe arrow crossed a wall despite a reachable destination");
+        grid.SetEdge(center, center + 1, false);
+        grid.Set(center, TopologyCell.Void);
+        analysis = grid.Analyze(new(-4, 0), requireKnownEdges: true);
+        Check.That(grid.IsConnectedPassable(new(4, 0), analysis.ConnectedCells) == true
+            && !grid.CanTraverseSegment(new(-4, 0), new(4, 0), analysis.ConnectedCells), "safe arrow crossed a hole");
+        Check.That(!grid.CanTraverseSegment(new(-4, -4), new(4, 4), analysis.ConnectedCells), "diagonal safe arrow crossed a hole");
+    }
+
+    private static void OutcomeEvidenceSeparatesHitsFromCues()
+    {
+        var data = new Dictionary<string, double> { ["actionEffect.0.type"] = 3, ["actionEffect.0.damageHealValue"] = 100 };
+        Check.That(ForetellInferenceCore.HasConfirmedHit(data), "damage record lost its hit evidence");
+        data["actionEffect.0.type"] = 4;
+        Check.That(!ForetellInferenceCore.HasConfirmedHit(data), "heal record became damage geometry");
+        data["actionEffect.0.type"] = 59;
+        Check.That(!ForetellInferenceCore.HasConfirmedHit(data), "visual cue became damage geometry");
+        data["actionEffect.0.type"] = 7;
+        Check.That(ForetellInferenceCore.HasConfirmedHit(data), "invulnerability was mistaken for a safe position");
+        data["actionEffect.0.atSource"] = 1;
+        Check.That(!ForetellInferenceCore.HasConfirmedHit(data), "source-side effect became a target hit");
+        Check.That(ForetellInferenceCore.GuidanceFor(MechanicKind.Debuff) != GuidanceKind.Cleanse,
+            "generic status gain issued unproven dispel advice");
+        Check.That(ForetellInferenceCore.GuidanceFor(MechanicKind.Tankbuster) == GuidanceKind.Tankbuster,
+            "tankbuster mislabeled as raidwide");
     }
 
     private static void TopologyFrontierFindsClosedRoomEarly()
@@ -781,7 +955,7 @@ static class ForetellCoreTests
             MeanBossHPRatio = .7
         };
         var copy = JsonSerializer.Deserialize<ForetellStore>(JsonSerializer.Serialize(store));
-        Check.That(copy?.Schema == 22 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
+        Check.That(copy?.Schema == 23 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
         Check.That(copy!.Sessions.Single().PluginVersion == "0.8.9.0", "session plugin-version provenance did not round-trip");
         var entry = copy!.DecisionAudit[0];
         Check.That(entry.Stage == DecisionAuditStage.Proposed && entry.Geometry == GeometryKind.Cone

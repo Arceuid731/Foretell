@@ -210,9 +210,8 @@ public sealed partial class ForetellEngine
         for (var step = 1; step <= steps; ++step)
         {
             var current = Vector3.Lerp(from, to, step / (float)steps);
-            var midpoint = (previous + current) * .5f;
-            if (TopologyAllowsPresentation(new(midpoint.X, midpoint.Z)))
-                camera.DrawWorldLine(ProjectWorldAlertToTopology(previous), ProjectWorldAlertToTopology(current), color, thickness);
+            // Walkability cannot establish attack occlusion. Preserve the complete danger outline.
+            camera.DrawWorldLine(ProjectWorldAlertToTopology(previous), ProjectWorldAlertToTopology(current), color, thickness);
             previous = current;
         }
     }
@@ -271,7 +270,9 @@ public sealed partial class ForetellEngine
 
             var active = _predictions.Values.Where(p => ValidPrediction(p) && p.Confidence >= _cfg.VisualConfidence / 100f)
                 .OrderBy(p => p.Activation).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
-            var hasActive = active.Length != 0;
+            var terrainCue = _ws.Party[PartyState.PlayerSlot] is { } localPlayer
+                && ActiveDynamicTerrainWarnings().Any(w => ForetellArenaBoundaryCore.Contains(w.Points, V(localPlayer.Position)));
+            var hasActive = active.Length != 0 || terrainCue;
             for (var i = 0; i < active.Length; ++i)
             {
                 var prediction = active[i];
@@ -280,6 +281,8 @@ public sealed partial class ForetellEngine
                 ImGui.TextColored(ConfidenceTextColor(prediction.Confidence), $"{GuidanceInstruction(prediction.Guidance, prediction.Kind, prediction.Geometry)} — {UserFacingPredictionLabel(prediction)}");
                 ImGui.TextDisabled($"{remain:F1}s · confidence {prediction.Confidence:P0}{(prediction.Anticipated ? " · predicted ahead" : "")}");
             }
+            if (terrainCue)
+                ImGui.TextColored(new Vector4(.28f, .75f, 1, 1), "WATCH TERRAIN — possible floor change");
             var next = PredictNextContextual();
             if (next != null)
             {
@@ -326,6 +329,7 @@ public sealed partial class ForetellEngine
         GuidanceKind.Knockback => "KNOCKBACK",
         GuidanceKind.Tether => "CHECK TETHER",
         GuidanceKind.Raidwide => "RAIDWIDE",
+        GuidanceKind.Tankbuster => "TANKBUSTER",
         GuidanceKind.Cleanse => "CLEANSE",
         GuidanceKind.Move => "MOVE",
         GuidanceKind.Marker => "MARKER",
@@ -402,7 +406,7 @@ public sealed partial class ForetellEngine
         var playerPos = V(player.Position);
         if (!FiniteVector(playerPos)) return;
         var cameraAzimuth = float.IsFinite(_ws.Client.CameraAzimuth.Rad) ? _ws.Client.CameraAzimuth.Rad : 0;
-        var windowSize = new Vector2(size + 24, size + 62);
+        var windowSize = new Vector2(size + 24, size + ImGui.GetFontSize() * 3 + 48);
         var defaultPosition = viewportOrigin + new Vector2(Math.Max(8, viewport.X - windowSize.X - 22), 22);
         var savedPosition = _cfg.RadarPositionX >= 0 && _cfg.RadarPositionY >= 0
             ? viewportOrigin + new Vector2(_cfg.RadarPositionX * viewport.X, _cfg.RadarPositionY * viewport.Y)
@@ -460,12 +464,11 @@ public sealed partial class ForetellEngine
         var arenaBoundary = !topologyAvailable && _cfg.RadarShape == ForetellRadarShape.Auto ? CurrentArenaBoundary : null;
         var shape = _cfg.RadarShape == ForetellRadarShape.Auto ? ForetellRadarShape.Circle : _cfg.RadarShape;
         var shapeLabel = _cfg.RadarShape == ForetellRadarShape.Auto
-            ? topologyAvailable ? "auto / local collision mesh" : arenaBoundary != null ? "auto / learned boundary" : "auto / circle fallback"
+            ? topologyAvailable ? HasFreshTopologyEvidence ? "terrain" : "refreshing" : arenaBoundary != null ? "boundary" : "surveying"
             : shape.ToString().ToLowerInvariant();
         var worldRadius = EffectiveRadarWorldRadius(playerPos);
-        var zoomLabel = _cfg.RadarZoom == ForetellRadarZoom.Automatic ? "auto" : "manual";
-        draw.AddText(canvas + new Vector2(4, 1), 0xFFE0E0E0u,
-            _cfg.RadarUnlocked ? "Unlocked - drag the title bar, then lock in Settings" : $"Foretell radar · {shapeLabel} · {zoomLabel} {worldRadius:F0}y");
+        DrawRadarCaption(draw, canvas + new Vector2(4, 1), size, 0xFFE0E0E0u,
+            $"Foretell · {shapeLabel} · {worldRadius:F0}y");
         var scale = radius / MathF.Max(1, worldRadius);
         if (arenaBoundary != null)
             DrawArenaBoundaryRadarFrame(draw, center, radius, playerPos, cameraAzimuth, scale, arenaBoundary);
@@ -498,9 +501,12 @@ public sealed partial class ForetellEngine
         var legendY = center.Y + radius + 4;
         if (showPredictions)
         {
-            draw.AddText(new(center.X - radius, legendY), ConfidenceColor(_cfg.VisualConfidence / 100f), $"{_cfg.VisualConfidence:F0}% learn");
-            draw.AddText(new(center.X - 22, legendY), ConfidenceColor(_cfg.WarningConfidence / 100f), $"{_cfg.WarningConfidence:F0}% high");
-            draw.AddText(new(center.X + radius - 58, legendY), ConfidenceColor(_cfg.SafeConfidence / 100f), $"{_cfg.SafeConfidence:F0}% safe");
+            var column = size / 3;
+            DrawRadarCaption(draw, new(center.X - radius, legendY), column, ConfidenceColor(_cfg.VisualConfidence / 100f), $"{_cfg.VisualConfidence:F0}%");
+            DrawRadarCaption(draw, new(center.X - radius + column, legendY), column, ConfidenceColor(_cfg.WarningConfidence / 100f), $"{_cfg.WarningConfidence:F0}%");
+            DrawRadarCaption(draw, new(center.X - radius + 2 * column, legendY), column, ConfidenceColor(_cfg.SafeConfidence / 100f), $"{_cfg.SafeConfidence:F0}%");
+            DrawRadarCaption(draw, new(center.X - radius, legendY + ImGui.GetFontSize()), size,
+                Pack(165, 180, 195, 180), "prediction confidence");
         }
         else
             draw.AddText(new(center.X - radius, legendY), Pack(165, 180, 195, 180), "terrain only · guidance silent");
@@ -509,6 +515,13 @@ public sealed partial class ForetellEngine
         {
             ImGui.End();
         }
+    }
+
+    private static void DrawRadarCaption(ImDrawListPtr draw, Vector2 position, float width, uint color, string text)
+    {
+        var measured = ImGui.CalcTextSize(text).X;
+        var fontSize = ImGui.GetFontSize() * Math.Min(1, Math.Max(1, width - 4) / Math.Max(1, measured));
+        draw.AddText(ImGui.GetFont(), fontSize, position, color, text);
     }
 
     private static void DrawRadarFrame(ImDrawListPtr draw, Vector2 center, float radius, ForetellRadarShape shape)
@@ -643,7 +656,8 @@ public sealed partial class ForetellEngine
                 var worldRadius = radius / Math.Max(.01f, scale);
                 var visibleRadiusSq = MathF.Max(0, worldRadius - _topology.Resolution * .75f);
                 visibleRadiusSq *= visibleRadiusSq;
-                var fill = RadarTerrainFillColor();
+                var freshness = HasFreshTopologyEvidence ? 1f : .45f;
+                var fill = RadarTerrainColor(.32f * freshness);
                 if (_cfg.RadarTerrainStyle == ForetellRadarTerrainStyle.Filled)
                 for (var z = 0; z < _topology.Height; ++z)
                 {
@@ -663,7 +677,7 @@ public sealed partial class ForetellEngine
                     }
                 }
 
-                var outline = RadarTerrainColor();
+                var outline = RadarTerrainColor(freshness);
                 foreach (var contour in topology.Contours)
                     for (var i = 0; i < contour.Count; ++i)
                     {
@@ -675,6 +689,12 @@ public sealed partial class ForetellEngine
                         draw.AddLine(RadarPoint(clippedA, player, cameraAzimuth, center, scale),
                             RadarPoint(clippedB, player, cameraAzimuth, center, scale), outline, 2.1f);
                     }
+                // A short wall can have reachable floor on both sides because a route goes around its end.
+                // Such walls are interior edges and never appear in the outer component contour.
+                foreach (var wall in topology.InteriorWalls ?? [])
+                    if (ForetellTopologyWindow.TryClipSegmentToCircle(wall.A, wall.B, player, worldRadius, out var a, out var b))
+                        draw.AddLine(RadarPoint(a, player, cameraAzimuth, center, scale),
+                            RadarPoint(b, player, cameraAzimuth, center, scale), outline, 2.1f);
 
                 bool VisiblePassable(int x, int z)
                 {
@@ -730,8 +750,6 @@ public sealed partial class ForetellEngine
             target = _cfg.RadarAutoMinimumRadius;
             if (CurrentArenaBoundary is { ArenaLike: true } boundary && boundary.Points.Count >= 3)
                 target = boundary.Points.Max(point => Vector2.Distance(point, player)) + 3;
-            else if (ActiveDynamicTerrainWarnings().OrderByDescending(warning => warning.OuterRadius).FirstOrDefault() is { } dynamicArena)
-                target = Vector2.Distance(player, dynamicArena.Center) + dynamicArena.OuterRadius + 3;
             else if (TryClosedTopologyRadius(player, out var topologyRadius))
                 target = topologyRadius + 3;
             target = Math.Clamp(target, _cfg.RadarAutoMinimumRadius, _cfg.RadarAutoMaximumRadius);
@@ -797,8 +815,8 @@ public sealed partial class ForetellEngine
 
     private void DrawDynamicTerrainRadar(ImDrawListPtr draw, Vector2 player, float cameraAzimuth, Vector2 center, float scale)
     {
-        var color = Pack(255, 95, 55, 245);
-        var fill = Pack(255, 70, 35, 62);
+        var color = Pack(70, 190, 255, 210);
+        var fill = Pack(70, 190, 255, 40);
         foreach (var warning in ActiveDynamicTerrainWarnings())
         {
             var arenaCenter = RadarPoint(warning.Center, player, cameraAzimuth, center, scale);
@@ -817,7 +835,7 @@ public sealed partial class ForetellEngine
     {
         var camera = Camera.Instance;
         if (camera == null) return;
-        var color = Pack(255, 80, 45, 245);
+        var color = Pack(70, 190, 255, 210);
         foreach (var warning in ActiveDynamicTerrainWarnings())
         {
             camera.DrawWorldCircle(new(warning.Center.X, warning.ReferenceY, warning.Center.Y), warning.OuterRadius,
@@ -925,20 +943,12 @@ public sealed partial class ForetellEngine
     private void DrawRadarLineClipped(ImDrawListPtr draw, Vector2 from, Vector2 to, Vector2 player,
         float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
     {
-        var steps = Math.Clamp((int)MathF.Ceiling(Vector2.Distance(from, to) / 2.5f), 1, 96);
-        var previous = from;
-        for (var step = 1; step <= steps; ++step)
-        {
-            var current = Vector2.Lerp(from, to, step / (float)steps);
-            if (TopologyAllowsPresentation((previous + current) * .5f))
-                draw.AddLine(RadarPoint(previous, player, cameraAzimuth, center, scale),
-                    RadarPoint(current, player, cameraAzimuth, center, scale), color, thickness);
-            previous = current;
-        }
+        // Clip to the viewport only; collision walls do not prove that an AOE stops at them.
+        var radius = _cfg.RadarSize * .5f / Math.Max(.01f, scale);
+        if (ForetellTopologyWindow.TryClipSegmentToCircle(from, to, player, radius, out var a, out var b))
+            draw.AddLine(RadarPoint(a, player, cameraAzimuth, center, scale),
+                RadarPoint(b, player, cameraAzimuth, center, scale), color, thickness);
     }
-
-    private bool TopologyAllowsPresentation(Vector2 world)
-        => ForetellInferenceCore.ShouldPresentOnTopology(IsTopologyPassable(world));
 
     private void DrawSafeSuggestion()
     {
@@ -951,7 +961,7 @@ public sealed partial class ForetellEngine
         if (!FiniteVector(pp)) return;
         bool Unsafe(Vector2 q) => dangers.Any(p => Contains(p, q));
         if (!Unsafe(pp)) return;
-        var hasObservedSurface = _topologyAnalysis is { PassableCells: > 0 } || CurrentArenaBoundary is { ArenaLike: true };
+        if (!HasFreshTopologyEvidence) return;
         Vector2? best = null;
         var bestD = float.MaxValue;
         for (var ring = 2f; ring <= 25f; ring += 2f)
@@ -960,15 +970,18 @@ public sealed partial class ForetellEngine
                 var a = MathF.Tau * i / 48;
                 var q = pp + new Vector2(MathF.Sin(a), MathF.Cos(a)) * ring;
                 var topology = IsTopologyPassable(q);
-                if (!Unsafe(q) && (topology == true || !hasObservedSurface && topology != false) && ring < bestD) { best = q; bestD = ring; }
+                if (!Unsafe(q) && topology == true && ring < bestD
+                    && _topology.CanTraverseSegment(pp, q, _topologyAnalysis?.ConnectedCells)
+                    && !ActiveDynamicTerrainWarnings().Any(w => ForetellArenaBoundaryCore.Contains(w.Points, q)))
+                { best = q; bestD = ring; }
             }
         if (best is not Vector2 b) return;
         var cam = Camera.Instance;
         if (cam == null) return;
         var y = player.PosRot.Y + .1f;
         if (!float.IsFinite(y)) return;
-        cam.DrawWorldLine(new(pp.X, y, pp.Y), new(b.X, y, b.Y), 0xFF40FF40u, 4f);
-        cam.DrawWorldCircle(new(b.X, y, b.Y), 1f, 0xFF40FF40u, 3f);
+        DrawWorldLineClipped(cam, new(pp.X, y, pp.Y), new(b.X, y, b.Y), 0xFF40FF40u, 4f);
+        cam.DrawWorldCircle(ProjectWorldAlertToTopology(new(b.X, y, b.Y)), 1f, 0xFF40FF40u, 3f);
     }
 
     private static bool ValidPrediction(ActivePrediction prediction)

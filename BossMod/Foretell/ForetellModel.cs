@@ -4,7 +4,7 @@ using System.Numerics;
 namespace BossMod.Foretell;
 
 public enum GeometryKind { Unknown, Circle, Donut, Cone, Rectangle, Cross }
-public enum GuidanceKind { None, Avoid, Stack, Spread, Soak, LookAway, Knockback, Tether, Raidwide, Cleanse, Move, Marker }
+public enum GuidanceKind { None, Avoid, Stack, Spread, Soak, LookAway, Knockback, Tether, Raidwide, Cleanse, Move, Marker, Tankbuster }
 public enum PredictionOriginKind { Source, Target }
 public enum MechanicKind
 {
@@ -492,7 +492,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 22;
+    public int Schema { get; set; } = 23;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];

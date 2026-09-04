@@ -8,7 +8,7 @@ public sealed partial class ForetellEngine
 {
     private sealed record AnalysisBundleWork(string OutputPath, byte[] Analysis, string[] RawPaths,
         string? ReplayPath, string[] Warnings, uint TerritoryID, string Content, string SessionID,
-        string SessionPluginVersion, string ExporterPluginVersion);
+        string SessionPluginVersion, string ExporterPluginVersion, ForetellCollisionSnapshot? Collision);
     private sealed record AnalysisBundleResult(string Path, int RawFiles, bool ReadableReplay, int Decisions,
         string[] Warnings, string Error = "");
 
@@ -203,7 +203,8 @@ public sealed partial class ForetellEngine
         var analysisBytes = JsonSerializer.SerializeToUtf8Bytes(analysis, _diagnosticJson);
         var outputPath = Path.Combine(_replayDir, $"foretell-analysis-T{encounter.TerritoryID}-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
         var work = new AnalysisBundleWork(outputPath, analysisBytes, rawPaths, replayPath, warnings.ToArray(),
-            encounter.TerritoryID, EncounterDisplayName(encounter), sessionID, sessionPluginVersion, exporterPluginVersion);
+            encounter.TerritoryID, EncounterDisplayName(encounter), sessionID, sessionPluginVersion, exporterPluginVersion,
+            liveSelected ? _lastCollisionSnapshot : null);
         _analysisBundleStatus = $"Packaging {rawPaths.Length} sealed raw journal(s) in the background...";
         _analysisBundleTask = Task.Run(() => CreateAnalysisBundle(work, decisions.Length));
     }
@@ -280,8 +281,10 @@ public sealed partial class ForetellEngine
                     {
                         analysis = "foretell-analysis.json",
                         rawJournals = work.RawPaths.Select(path => $"raw/{Path.GetFileName(path)}").ToArray(),
-                        readableReplay = work.ReplayPath == null ? null : $"replay/{Path.GetFileName(work.ReplayPath)}"
+                        readableReplay = work.ReplayPath == null ? null : $"replay/{Path.GetFileName(work.ReplayPath)}",
+                        collisionSnapshot = work.Collision == null ? null : "terrain/collision.ftrc"
                     },
+                    collisionSnapshotMeaning = "Latest completed local capture for the selected live session at export; not the historical terrain of a completed run. Replay with ForetellCoreTests --collision <analysis.zip>.",
                     semantics = "Raw journals contain exact transport/ActorControl input. foretell-analysis.json contains the learned encounter snapshot and the bounded Detected/Proposed/Classified/Verified decision trail.",
                     displayEligibleMeaning = "The confidence/mode/settings gate passed when the decision was made; it does not prove a pixel was rendered if the draw surface later failed.",
                     warnings = work.Warnings
@@ -291,6 +294,11 @@ public sealed partial class ForetellEngine
                     CopyBundleFile(archive, raw, $"raw/{Path.GetFileName(raw)}", CompressionLevel.NoCompression);
                 if (work.ReplayPath != null)
                     CopyBundleFile(archive, work.ReplayPath, $"replay/{Path.GetFileName(work.ReplayPath)}", CompressionLevel.Fastest);
+                if (work.Collision != null)
+                {
+                    using var output = archive.CreateEntry("terrain/collision.ftrc", CompressionLevel.Fastest).Open();
+                    ForetellCollisionSnapshotIO.Write(output, work.Collision);
+                }
             }
             File.Move(temporary, work.OutputPath, true);
             return new(work.OutputPath, work.RawPaths.Length, work.ReplayPath != null, decisions, work.Warnings);
