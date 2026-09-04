@@ -98,7 +98,7 @@ jobs:
           - Extends generic radial enclosure probes for a quicker complete boss-arena outline while the denser floor/barrier mesh progressively catches up.
           - Adds bounded automatic zoom: closed rooms and arenas are fitted, while open terrain and unfinished corridors remain at a readable local radius.
           - Adds manual zoom, separate on-screen sizing, outline-only or filled terrain styles, and a configurable terrain colour with opacity.
-          - Reconstructs radial destructible-platform sectors from live event-object peers and animation signals, drawing the warned sector on the radar and in 3D without encounter IDs or authored mechanic tables.
+          - Reconstructs radial destructible-platform sectors and their enclosing arena from live event-object peers and animation signals, drawing both on the radar and in 3D without encounter IDs or authored mechanic tables.
           - Ends open-world pulls on the real combat-condition falling edge so stale text, radar and 3D predictions disappear after the enemy dies.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.

@@ -2,7 +2,8 @@ using System.Numerics;
 
 namespace BossMod.Foretell;
 
-internal sealed record DynamicTerrainWarning(ulong ActorID, List<Vector2> Points, float ReferenceY, DateTime Expires, int Signals);
+internal sealed record DynamicTerrainWarning(ulong ActorID, Vector2 Center, float OuterRadius, List<Vector2> Points,
+    float ReferenceY, DateTime Expires, int Signals);
 
 public sealed partial class ForetellEngine
 {
@@ -29,7 +30,8 @@ public sealed partial class ForetellEngine
         // A second structural animation for the same radial tile confirms the transition; retain the forbidden
         // sector until combat ends while the collision mesh independently observes the missing floor.
         var expires = signals >= 2 ? DateTime.MaxValue : now.AddSeconds(7);
-        _dynamicTerrainWarnings[actor.InstanceID] = new(actor.InstanceID, points, actor.PosRot.Y + .08f, expires, signals);
+        _dynamicTerrainWarnings[actor.InstanceID] = new(actor.InstanceID, center, Vector2.Distance(center, points[^1]),
+            points, actor.PosRot.Y + .08f, expires, signals);
     }
 
     private bool TryDynamicTerrainCenter(Vector2 eventObject, out Vector2 center)

@@ -718,6 +718,8 @@ public sealed partial class ForetellEngine
             target = _cfg.RadarAutoMinimumRadius;
             if (CurrentArenaBoundary is { ArenaLike: true } boundary && boundary.Points.Count >= 3)
                 target = boundary.Points.Max(point => Vector2.Distance(point, player)) + 3;
+            else if (ActiveDynamicTerrainWarnings().OrderByDescending(warning => warning.OuterRadius).FirstOrDefault() is { } dynamicArena)
+                target = Vector2.Distance(player, dynamicArena.Center) + dynamicArena.OuterRadius + 3;
             else if (TryClosedTopologyRadius(player, out var topologyRadius))
                 target = topologyRadius + 3;
             target = Math.Clamp(target, _cfg.RadarAutoMinimumRadius, _cfg.RadarAutoMaximumRadius);
@@ -787,6 +789,8 @@ public sealed partial class ForetellEngine
         var fill = Pack(255, 70, 35, 62);
         foreach (var warning in ActiveDynamicTerrainWarnings())
         {
+            var arenaCenter = RadarPoint(warning.Center, player, cameraAzimuth, center, scale);
+            draw.AddCircle(arenaCenter, warning.OuterRadius * scale, RadarTerrainColor(), 64, 2f);
             for (var i = 1; i + 1 < warning.Points.Count; ++i)
                 draw.AddTriangleFilled(RadarPoint(warning.Points[0], player, cameraAzimuth, center, scale),
                     RadarPoint(warning.Points[i], player, cameraAzimuth, center, scale),
@@ -803,12 +807,16 @@ public sealed partial class ForetellEngine
         if (camera == null) return;
         var color = Pack(255, 80, 45, 245);
         foreach (var warning in ActiveDynamicTerrainWarnings())
+        {
+            camera.DrawWorldCircle(new(warning.Center.X, warning.ReferenceY, warning.Center.Y), warning.OuterRadius,
+                RadarTerrainColor(), 2f);
             for (var i = 0; i < warning.Points.Count; ++i)
             {
                 var a = warning.Points[i];
                 var b = warning.Points[(i + 1) % warning.Points.Count];
                 camera.DrawWorldLine(new(a.X, warning.ReferenceY, a.Y), new(b.X, warning.ReferenceY, b.Y), color, 3f);
             }
+        }
     }
 
     private void DrawRadarGuidance(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
