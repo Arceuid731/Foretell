@@ -90,17 +90,19 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Faster generic terrain reconstruction and complete target-marker ingestion.
+          Real-time generic terrain reconstruction from FFXIV's loaded collision meshes.
 
-          - Keeps the bounded collision mapper active under its own frame watchdog even while optional semantic drains are adaptively throttled during combat bursts.
-          - Interleaves floor and barrier probes, publishes progress twice as often and retains a useful prior component while a structural rescan grows outward.
-          - Restricts fast radial wall polygons to active combat with a credible boss candidate, preventing courtyards, corridors and stairs from becoming false cyan arenas.
-          - Accepts destructible-platform animation before the game raises its combat flag, then retains confirmed sectors through the pull and clears them on all duty/combat endings.
-          - Normalizes player-attached target icons as encounter signals and displays new ambiguous symbols as MARKER without inventing stack, spread or danger geometry.
-          - Promotes complete dynamic-line metadata to display-grade confidence while keeping it below safe-guidance thresholds until observed outcomes validate it.
-          - Adds detailed topology, boundary and dynamic-terrain counters to analysis bundles for conclusive post-run diagnosis.
+          - Copies a bounded local snapshot of loaded PCB collision triangles on the framework thread, then performs heightfield rasterization and reachability analysis on a managed worker.
+          - Projects walkable faces into per-cell height layers so corridors, rooms, ramps and stairs are reconstructed without leaking onto unrelated stacked floors.
+          - Converts steep triangle faces into traversal walls and includes live box, cylinder and plane colliders for generic invisible barriers and changing arena geometry.
+          - Keeps the sampled grid local to the player and clips rendering to the selected radar range, avoiding a persistent full-zone reveal.
+          - Retains the bounded near-first raycast frontier as a compatibility fallback when PCB collision data is unavailable or still streaming.
+          - Uses the separately capped combat radial scan as a live overlay for barriers that appear at pull start, and applies that boundary to safe-position checks.
+          - Reuses topology for attack presentation: known-unreachable 2D/3D outline segments are clipped and world overlays follow reconstructed floor height, while unknown terrain never hides an alert.
+          - Exports mesh/fallback mode, collider and triangle counts, capture cost and worker-raster cost in Analysis ZIP and Replay Lab diagnostics.
+          - Adds deterministic layered-floor, mesh-wall and corridor-to-room raster regression tests alongside the existing ray-frontier suite.
 
-          Every change is generic: no territory, boss, action, icon or event-object identifier was added.
+          Every change is generic: no territory, boss, action, icon, collider or event-object identifier was added.
 
           CI enforces the zero-knowledge boundary and runs the deterministic core suite plus the complete Windows plugin build before publishing.
           "@

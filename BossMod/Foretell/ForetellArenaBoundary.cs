@@ -62,8 +62,8 @@ public sealed partial class ForetellEngine
         _arenaBoundaryRescanAfter = immediate ? default : DateTime.UtcNow.AddMilliseconds(150);
     }
 
-    // Returns true when the fast wall scan consumed this frame's collision budget. The slower floor grid waits so
-    // both native surfaces can never stack their budgets in one frame.
+    // Returns true when this independent, tightly bounded accelerator consumed work in the current frame.
+    // The authoritative reachable floor frontier may still advance under its own watchdog.
     private unsafe bool SampleNativeArenaBoundary(BGCollisionModule* collision, Vector3 player, DateTime now)
     {
         var inCombat = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];

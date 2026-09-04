@@ -4,6 +4,22 @@ namespace BossMod.Foretell;
 
 internal enum TopologyCell : byte { Unknown, Passable, Blocked, Void }
 
+internal enum TopologyProbeKind : byte { Floor, Edge }
+
+internal readonly record struct TopologyProbe(TopologyProbeKind Kind, int From, int To);
+
+internal static class ForetellTopologyProbeRules
+{
+    public static float FloorReferenceY(float parentHeight, float playerY)
+        => float.IsFinite(parentHeight) ? parentHeight : playerY;
+
+    public static bool IsFloorHit(float normalY, float hitY, float referenceY)
+    {
+        var delta = hitY - referenceY;
+        return float.IsFinite(normalY) && float.IsFinite(delta) && normalY >= .35f && delta is >= -6f and <= 2.25f;
+    }
+}
+
 [Flags]
 internal enum TopologyEdge : byte
 {
@@ -12,6 +28,185 @@ internal enum TopologyEdge : byte
     East = 1 << 1,
     South = 1 << 2,
     West = 1 << 3
+}
+
+// Incremental collision-survey scheduler. Unlike a raster sweep of the complete enclosing disc, this grows from
+// the player's floor component and stops at the first observed void, excessive step or blocking wall. This makes
+// a closed room proportional to its reachable surface while keeping open-world work local and strictly bounded.
+// The class owns no native pointers and is deterministic, so its latency/work invariants are covered by core tests.
+internal sealed class ForetellTopologyFrontier
+{
+    private readonly PriorityQueue<TopologyProbe, long> _pending = new();
+    private readonly HashSet<long> _queuedEdges = [];
+    private bool[] _floorQueued = [];
+    private bool[] _sampled = [];
+    private bool[] _reachable = [];
+    private bool[] _expanded = [];
+    private Vector2 _seed;
+    private Vector2 _center;
+    private float _radius;
+    private int _root = -1;
+
+    public int Pending => _pending.Count;
+    public int Sampled { get; private set; }
+    public int Reachable { get; private set; }
+    public bool Complete => _pending.Count == 0;
+
+    public void Clear()
+    {
+        _pending.Clear();
+        _queuedEdges.Clear();
+        _floorQueued = _sampled = _reachable = _expanded = [];
+        _seed = _center = default;
+        _radius = 0;
+        _root = -1;
+        Sampled = Reachable = 0;
+    }
+
+    public void Start(ForetellTopologyGrid grid, Vector2 seed, Vector2 center, float radius)
+    {
+        Clear();
+        _seed = seed;
+        _center = center;
+        _radius = radius;
+        _floorQueued = new bool[grid.CellCount];
+        _sampled = new bool[grid.CellCount];
+        _reachable = new bool[grid.CellCount];
+        _expanded = new bool[grid.CellCount];
+
+        var seedX = Math.Clamp((int)((seed.X - grid.OriginX) / grid.Resolution), 0, grid.Width - 1);
+        var seedZ = Math.Clamp((int)((seed.Y - grid.OriginZ) / grid.Resolution), 0, grid.Height - 1);
+        // Cell centres can straddle a narrow path even while the actor itself is on valid floor. A tiny local
+        // seed patch finds the nearest floor without allowing the survey to jump across distant geometry.
+        for (var z = Math.Max(0, seedZ - 1); z <= Math.Min(grid.Height - 1, seedZ + 1); ++z)
+            for (var x = Math.Max(0, seedX - 1); x <= Math.Min(grid.Width - 1, seedX + 1); ++x)
+                QueueFloor(grid, z * grid.Width + x, -1);
+    }
+
+    public bool TryDequeue(ForetellTopologyGrid grid, out TopologyProbe probe)
+    {
+        // A cell can become reachable through one of several queued edges. Retire only a bounded number of the
+        // now-stale alternatives per call so queue cleanup itself can never create a main-thread latency spike.
+        var retired = 0;
+        while (retired++ < 32 && _pending.TryDequeue(out probe, out _))
+        {
+            if (probe.Kind == TopologyProbeKind.Floor)
+            {
+                _floorQueued[probe.To] = false;
+                if (!_sampled[probe.To])
+                    return true;
+            }
+            else
+            {
+                _queuedEdges.Remove(EdgeKey(probe.From, probe.To));
+                if (_reachable[probe.From] && !_reachable[probe.To]
+                    && _sampled[probe.From] && _sampled[probe.To]
+                    && grid.Cells[probe.From] == (byte)TopologyCell.Passable
+                    && grid.Cells[probe.To] == (byte)TopologyCell.Passable
+                    && !grid.IsEdgeKnown(probe.From, probe.To))
+                    return true;
+            }
+        }
+        probe = default;
+        return false;
+    }
+
+    public void CommitFloor(ForetellTopologyGrid grid, int index)
+    {
+        if (_sampled[index]) return;
+        _sampled[index] = true;
+        ++Sampled;
+        if (grid.Cells[index] != (byte)TopologyCell.Passable)
+            return;
+
+        if (_root < 0)
+        {
+            _root = index;
+            MarkReachable(grid, index);
+            return;
+        }
+
+        VisitNeighbors(grid, index, neighbor =>
+        {
+            if (_reachable[neighbor]) QueueEdge(grid, neighbor, index);
+        });
+    }
+
+    public void CommitEdge(ForetellTopologyGrid grid, int from, int to, bool blocked)
+    {
+        grid.SetEdge(from, to, blocked);
+        if (blocked) return;
+        if (_reachable[from] && !_reachable[to]) MarkReachable(grid, to);
+        else if (_reachable[to] && !_reachable[from]) MarkReachable(grid, from);
+    }
+
+    public bool WasSampled(int index) => (uint)index < (uint)_sampled.Length && _sampled[index];
+    public bool IsReachable(int index) => (uint)index < (uint)_reachable.Length && _reachable[index];
+
+    private void MarkReachable(ForetellTopologyGrid grid, int index)
+    {
+        if (_reachable[index]) return;
+        _reachable[index] = true;
+        ++Reachable;
+        Expand(grid, index);
+    }
+
+    private void Expand(ForetellTopologyGrid grid, int index)
+    {
+        if (_expanded[index]) return;
+        _expanded[index] = true;
+        VisitNeighbors(grid, index, neighbor =>
+        {
+            if (!_sampled[neighbor]) QueueFloor(grid, neighbor, index);
+            else if (!_reachable[neighbor] && grid.Cells[neighbor] == (byte)TopologyCell.Passable)
+                QueueEdge(grid, index, neighbor);
+        });
+    }
+
+    private void QueueFloor(ForetellTopologyGrid grid, int index, int from)
+    {
+        if (_sampled[index] || _floorQueued[index] || !InsideSurvey(grid, index)) return;
+        _floorQueued[index] = true;
+        _pending.Enqueue(new(TopologyProbeKind.Floor, from, index), Priority(grid, index, 0));
+    }
+
+    private void QueueEdge(ForetellTopologyGrid grid, int from, int to)
+    {
+        if (_reachable[to] || grid.IsEdgeKnown(from, to)) return;
+        var key = EdgeKey(from, to);
+        if (!_queuedEdges.Add(key)) return;
+        _pending.Enqueue(new(TopologyProbeKind.Edge, from, to), Priority(grid, to, 1));
+    }
+
+    private void VisitNeighbors(ForetellTopologyGrid grid, int index, Action<int> visitor)
+    {
+        var x = index % grid.Width;
+        var z = index / grid.Width;
+        if (x > 0) visitor(index - 1);
+        if (x + 1 < grid.Width) visitor(index + 1);
+        if (z > 0) visitor(index - grid.Width);
+        if (z + 1 < grid.Height) visitor(index + grid.Width);
+    }
+
+    private bool InsideSurvey(ForetellTopologyGrid grid, int index)
+    {
+        var allowance = _radius + grid.Resolution * .35f;
+        return Vector2.DistanceSquared(grid.CellCenter(index), _center) <= allowance * allowance;
+    }
+
+    private long Priority(ForetellTopologyGrid grid, int index, int kind)
+    {
+        var delta = grid.CellCenter(index) - _seed;
+        // Integer quantization gives deterministic near-first rings while reserving the low bit for floor-before-edge.
+        return (long)MathF.Round(delta.LengthSquared() * 1024) * 2 + kind;
+    }
+
+    private static long EdgeKey(int a, int b)
+    {
+        var lower = Math.Min(a, b);
+        var upper = Math.Max(a, b);
+        return ((long)lower << 32) | (uint)upper;
+    }
 }
 
 internal sealed record TopologyAnalysis(
@@ -85,6 +280,21 @@ internal sealed class ForetellTopologyGrid
             KnownEdges = KnownEdges.ToArray(),
             BlockedEdges = BlockedEdges.ToArray()
         };
+
+    public void ReplaceWith(ForetellTopologyGrid source)
+    {
+        OriginX = source.OriginX;
+        OriginZ = source.OriginZ;
+        ReferenceY = source.ReferenceY;
+        Resolution = source.Resolution;
+        Width = source.Width;
+        Height = source.Height;
+        Cursor = source.Cursor;
+        Cells = source.Cells.ToArray();
+        Heights = source.Heights.ToArray();
+        KnownEdges = source.KnownEdges.ToArray();
+        BlockedEdges = source.BlockedEdges.ToArray();
+    }
 
     public bool Restore(float originX, float originZ, float referenceY, float resolution, int width, int height,
         byte[] connectedCells, short[] heightCentimeters, byte[] knownEdges, byte[] blockedEdges)
@@ -168,6 +378,20 @@ internal sealed class ForetellTopologyGrid
         var z = Math.Clamp((int)((world.Y - OriginZ) / Resolution), 0, Height - 1);
         var value = connected[z * Width + x];
         return value == (byte)TopologyCell.Unknown ? null : value == (byte)TopologyCell.Passable;
+    }
+
+    public bool TryConnectedHeight(Vector2 world, byte[]? connected, out float height)
+    {
+        height = 0;
+        if (!Contains(world) || connected == null || connected.Length != CellCount)
+            return false;
+        var x = Math.Clamp((int)((world.X - OriginX) / Resolution), 0, Width - 1);
+        var z = Math.Clamp((int)((world.Y - OriginZ) / Resolution), 0, Height - 1);
+        var index = z * Width + x;
+        if (connected[index] != (byte)TopologyCell.Passable || !float.IsFinite(Heights[index]))
+            return false;
+        height = Heights[index];
+        return true;
     }
 
     public TopologyAnalysis Analyze(Vector2 seedWorld, float maxStepHeight = 1.75f, bool requireKnownEdges = false)

@@ -187,6 +187,10 @@ requirements = {
         "DrawDynamicTerrainRadar",
         "DrawDynamicTerrainWorld",
         "EffectiveRadarWorldRadius",
+        "DrawWorldLineClipped",
+        "DrawRadarLineClipped",
+        "TopologyAllowsPresentation",
+        "ProjectWorldAlertToTopology",
         "↑ camera",
     ],
     "BossMod/Foretell/ForetellInspector.cs": [
@@ -347,18 +351,40 @@ requirements = {
         'obs.Numeric[$"raw.window.binaryBucket[{i}]"]',
     ],
     "BossMod/Foretell/ForetellTopology.cs": [
+        "PollCompletedCollisionRaster",
         "PollCompletedTopologyAnalysis",
         "Task.Run",
         "RaycastMaterialFilter",
         "MaxTopologyRaysPerFrame",
-        "MaxTopologyMillisecondsPerFrame",
+        "TopologyBurstMillisecondsPerFrame",
+        "TopologySteadyMillisecondsPerFrame",
         "RequestTopologyAnalysis",
         "SuspendTopology",
         "++_topologyInvalidations",
         "non-finite player position rejected before native call",
         "SampleNativeArenaBoundary",
-        "QueueTopologyEdges",
+        "ForetellTopologyFrontier",
         "ProbeTopologyEdge",
+    ],
+    "BossMod/Foretell/ForetellCollisionMeshSource.cs": [
+        "ForetellCollisionMeshSource",
+        "MaximumCaptureMilliseconds",
+        "VisibilityFlags & 1",
+        "ColliderType.Streamed",
+        "ColliderType.Mesh",
+        "ColliderType.Box",
+        "ColliderType.Cylinder",
+        "TryCapture",
+        "triangles.ToArray",
+    ],
+    "BossMod/Foretell/ForetellCollisionRasterizer.cs": [
+        "ForetellCollisionRasterizer",
+        "ForetellCollisionSnapshot",
+        "MinimumFloorNormalY",
+        "MaximumLayersPerCell",
+        "ReachableLayers",
+        "IsWallBlocked",
+        "ForetellCollisionRasterResult Build",
     ],
     "BossMod/Foretell/ForetellArenaBoundary.cs": [
         "ArenaBoundaryRayCount = 96",
@@ -399,6 +425,7 @@ requirements = {
         "BuildContours",
         "Fingerprint",
         "IsConnectedPassable",
+        "TryConnectedHeight",
     ],
     "BossMod/Foretell/ForetellTypedSnapshots.cs": [
         "StoreTypedWorldSnapshot",
@@ -590,9 +617,9 @@ for start, end, name in [
         errors.append(f"Foretell {name} detour does not enqueue its primitive capture")
 
 topology = read("BossMod/Foretell/ForetellTopology.cs")
-if "ConditionFlag.InCombat" not in topology or "Task.Run" not in topology:
-    errors.append("Foretell automatic arena topology escaped its combat/native-thread safety policy")
-invalidate = topology[topology.find("private void InvalidateTopology()") : topology.find("// Collision pointers")]
+if "ConditionFlag.InCombat" not in topology or "Task.Run" not in topology or "ForetellCollisionMeshSource.TryCapture" not in topology:
+    errors.append("Foretell automatic topology escaped its native-snapshot/managed-worker safety policy")
+invalidate = topology[topology.find("private void InvalidateTopology(") : topology.find("// Primary path")]
 if "_topology.Cursor = 0" in invalidate:
     errors.append("Frequent topology invalidations can restart and starve the bounded sweep")
 

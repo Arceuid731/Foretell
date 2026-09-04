@@ -12,14 +12,15 @@ public sealed partial class ForetellEngine
     private const float MaximumTopologyStepHeight = 1.5f;
     private const float TopologyWallProbeHeight = .75f;
     private const int TargetTopologyHalfCells = 40;
-    private const int MaxTopologyRaysPerFrame = 24;
-    private const double MaxTopologyMillisecondsPerFrame = .35;
+    private const int MaxTopologyRaysPerFrame = 64;
+    private const double TopologyBurstMillisecondsPerFrame = .80;
+    private const double TopologySteadyMillisecondsPerFrame = .30;
     private readonly ForetellTopologyGrid _topology = new();
-    private readonly List<int> _topologyProbeOrder = [];
-    private readonly Queue<(int From, int To)> _topologyPendingEdges = [];
-    private readonly HashSet<long> _topologyQueuedEdges = [];
+    private readonly ForetellTopologyFrontier _topologyFrontier = new();
     private sealed record TopologyAnalysisWork(long Generation, ForetellTopologyGrid Grid, Vector2 Player, bool Complete, TopologyAnalysis Analysis);
+    private sealed record CollisionRasterWork(long Generation, ForetellCollisionRasterResult Result);
     private Task<TopologyAnalysisWork>? _topologyAnalysisTask;
+    private Task<CollisionRasterWork>? _collisionRasterTask;
     private long _topologyGeneration;
     private TopologyAnalysis? _topologyAnalysis;
     private string _topologyFingerprint = "";
@@ -35,6 +36,7 @@ public sealed partial class ForetellEngine
     private long _topologyInvalidations;
     private bool _topologySweepRequested = true;
     private bool _topologySweepInProgress;
+    private bool _topologyAnalysisComplete;
     private bool _topologyHardInvalidation = true;
     private bool _topologyPublishProgress;
     private DateTime _topologyRescanAfter;
@@ -43,11 +45,29 @@ public sealed partial class ForetellEngine
     private bool _topologyAnalysisQueued;
     private bool _topologyAnalysisQueuedComplete;
     private float _topologySampleRadius;
-    private int _topologyProbeCursor;
+    private DateTime _topologySweepStartedAt;
+    private DateTime _topologyBurstUntil;
+    private double _topologyLastSweepMilliseconds;
+    private double _topologyPeakSweepMilliseconds;
+    private double _topologyFirstSurfaceMilliseconds;
     private int _topologyFloorSamples;
     private int _topologyEdgeSamples;
     private bool _topologyCombatStateKnown;
     private bool _topologyLastCombatState;
+    private bool _topologyMeshPrimary;
+    private bool _topologyRescanAfterRaster;
+    private DateTime _topologyMeshRetryAfter;
+    private long _topologyMeshCaptures;
+    private long _topologyMeshFallbacks;
+    private int _topologyMeshTriangles;
+    private int _topologyMeshColliders;
+    private int _topologyMeshFloorTriangles;
+    private int _topologyMeshWallTriangles;
+    private int _topologyMeshCandidateSamples;
+    private double _topologyMeshCaptureMilliseconds;
+    private double _topologyMeshRasterMilliseconds;
+    private double _topologyMeshPeakCaptureMilliseconds;
+    private double _topologyMeshPeakRasterMilliseconds;
 
     internal TopologyAnalysis? CurrentTopology => _topologyAnalysis;
     internal bool TopologySuspended => DateTime.UtcNow < _topologySuspendedUntil;
@@ -62,6 +82,7 @@ public sealed partial class ForetellEngine
         _topologySuspendedUntil = default;
         _topologySweepRequested = true;
         _topologySweepInProgress = false;
+        _topologyAnalysisComplete = false;
         _topologyHardInvalidation = true;
         _topologyPublishProgress = false;
         _topologyRescanAfter = default;
@@ -69,12 +90,24 @@ public sealed partial class ForetellEngine
         _topologyAnalysisQueued = false;
         _topologyAnalysisQueuedComplete = false;
         _topologySampleRadius = 0;
-        _topologyProbeCursor = 0;
+        _topologySweepStartedAt = default;
+        _topologyBurstUntil = default;
+        _topologyLastSweepMilliseconds = 0;
+        _topologyPeakSweepMilliseconds = 0;
+        _topologyFirstSurfaceMilliseconds = 0;
         _topologyCombatStateKnown = false;
         _topologyLastCombatState = false;
-        _topologyProbeOrder.Clear();
-        _topologyPendingEdges.Clear();
-        _topologyQueuedEdges.Clear();
+        _topologyMeshPrimary = false;
+        _topologyRescanAfterRaster = false;
+        _topologyMeshRetryAfter = default;
+        _topologyMeshTriangles = 0;
+        _topologyMeshColliders = 0;
+        _topologyMeshFloorTriangles = 0;
+        _topologyMeshWallTriangles = 0;
+        _topologyMeshCandidateSamples = 0;
+        _topologyMeshCaptureMilliseconds = 0;
+        _topologyMeshRasterMilliseconds = 0;
+        _topologyFrontier.Clear();
         ResetArenaBoundary();
     }
 
@@ -85,23 +118,27 @@ public sealed partial class ForetellEngine
         _topologyHardInvalidation |= hard;
         if (hard)
         {
-            ++_topologyGeneration;
+            if (_collisionRasterTask != null)
+                _topologyRescanAfterRaster = true;
+            else
+                ++_topologyGeneration;
             _topologySweepInProgress = false;
+            _topologyAnalysisComplete = false;
             _topologyAnalysisQueued = false;
             _topologyAnalysisQueuedComplete = false;
-            _topologyPendingEdges.Clear();
-            _topologyQueuedEdges.Clear();
+            _topologyFrontier.Clear();
         }
         _topologyRescanAfter = immediate ? default : DateTime.UtcNow.AddMilliseconds(150);
         InvalidateArenaBoundary(immediate);
     }
 
-    // Collision pointers never cross threads. Bounded ray slices run on the framework thread in and out of combat;
-    // only copied primitive arrays cross to the managed flood/contour worker. The grid is local, player-centred and
-    // resolution-adaptive, so travelling through a territory never turns the radar into a full-map reveal.
+    // Primary path: copy the already loaded local PCB triangles on the framework thread, then rasterize their
+    // layered heightfield on a worker. The bounded ray frontier remains a compatibility fallback for scenes whose
+    // PCB data is unavailable. In both cases the grid is local and resolution-adaptive, never a full-map reveal.
     private unsafe void SampleNativeTopology()
     {
         var now = DateTime.UtcNow;
+        PollCompletedCollisionRaster();
         PollCompletedTopologyAnalysis();
         if (now < _topologySuspendedUntil)
             return;
@@ -150,66 +187,77 @@ public sealed partial class ForetellEngine
         {
             ResetLocalTopologyGrid(player3, desiredRadius, desiredResolution);
             _topologyAnalysis = null;
+            _topologyAnalysisComplete = false;
             _topologyFingerprint = "";
             _topologySweepRequested = true;
             _topologyHardInvalidation = true;
             _topologySweepInProgress = false;
+            _topologyMeshPrimary = false;
         }
+        // The combat-only radial accelerator is an independent live overlay for pull barriers and dynamic walls.
+        SampleNativeArenaBoundary(module, player3, now);
+
+        if (_collisionRasterTask == null && !_topologySweepInProgress && _topologySweepRequested
+            && now >= _topologyRescanAfter && now >= _topologyMeshRetryAfter)
+        {
+            if (TryStartCollisionRaster(module, player3, desiredRadius, desiredResolution, now))
+                return;
+            ++_topologyMeshFallbacks;
+            _topologyMeshRetryAfter = now.AddSeconds(15);
+            if (_topologyMeshPrimary && _topologyAnalysis is { PassableCells: > 0 })
+            {
+                // A transient streaming/capture miss must not replace a useful mesh with a growing one-cell scan.
+                _topologySweepRequested = false;
+                _topologyRescanAfter = _topologyMeshRetryAfter;
+                return;
+            }
+        }
+        if (_collisionRasterTask != null)
+            return;
         if (!_topologySweepInProgress && _topologySweepRequested && now >= _topologyRescanAfter)
             StartTopologySweep(new(player3.X, player3.Z));
-        if (SampleNativeArenaBoundary(module, player3, now))
-            return;
         if (!_topologySweepInProgress)
             return;
 
         var started = Stopwatch.GetTimestamp();
+        var frameBudget = now < _topologyBurstUntil ? TopologyBurstMillisecondsPerFrame : TopologySteadyMillisecondsPerFrame;
         var sampled = 0;
-        var edgeSamples = 0;
         try
         {
-            while (sampled < MaxTopologyRaysPerFrame && Stopwatch.GetElapsedTime(started).TotalMilliseconds < MaxTopologyMillisecondsPerFrame)
+            while (sampled < MaxTopologyRaysPerFrame && Stopwatch.GetElapsedTime(started).TotalMilliseconds < frameBudget
+                && _topologyFrontier.TryDequeue(_topology, out var probe))
             {
-                // Interleave surface and barrier probes. Draining every newly queued edge first made the visible
-                // surface expand far too slowly even though the per-frame native-call budget was respected.
-                var probeEdge = _topologyPendingEdges.Count > 0
-                    && (edgeSamples < MaxTopologyRaysPerFrame / 2 || _topologyProbeCursor >= _topologyProbeOrder.Count);
-                if (probeEdge && _topologyPendingEdges.TryDequeue(out var edge))
+                if (probe.Kind == TopologyProbeKind.Edge)
                 {
-                    _topologyQueuedEdges.Remove(EdgeKey(edge.From, edge.To));
-                    if (_topology.IsEdgeKnown(edge.From, edge.To)
-                        || _topology.Cells[edge.From] != (byte)TopologyCell.Passable
-                        || _topology.Cells[edge.To] != (byte)TopologyCell.Passable)
+                    var heightBlocked = Math.Abs(_topology.Heights[probe.From] - _topology.Heights[probe.To]) > MaximumTopologyStepHeight;
+                    var blocked = heightBlocked || ProbeTopologyEdge(probe.From, probe.To);
+                    _topologyFrontier.CommitEdge(_topology, probe.From, probe.To, blocked);
+                    if (heightBlocked)
                         continue;
-                    if (Math.Abs(_topology.Heights[edge.From] - _topology.Heights[edge.To]) > MaximumTopologyStepHeight)
-                    {
-                        _topology.SetEdge(edge.From, edge.To, true);
-                        continue;
-                    }
-                    ProbeTopologyEdge(edge.From, edge.To);
                     ++sampled;
                     ++_topologyRays;
                     ++_topologyEdgeSamples;
-                    ++edgeSamples;
                     continue;
                 }
 
-                if (_topologyProbeCursor >= _topologyProbeOrder.Count)
-                    break;
-                var index = _topologyProbeOrder[_topologyProbeCursor++];
-                _topology.Cursor = _topologyProbeCursor;
-                var point = _topology.CellCenter(index);
-                var origin = new Vector3(point.X, player3.Y + 3.5f, point.Y);
+                var point = _topology.CellCenter(probe.To);
+                // Follow the already reached surface rather than the actor's initial elevation. This lets the
+                // survey climb ordinary stairs and ramps before the actor has traversed them, while the step and
+                // edge checks still prevent it from leaking onto unrelated stacked floors.
+                var referenceY = ForetellTopologyProbeRules.FloorReferenceY(
+                    probe.From >= 0 ? _topology.Heights[probe.From] : float.NaN, player3.Y);
+                var origin = new Vector3(point.X, referenceY + 3.5f, point.Y);
                 if (!BGCollisionModule.RaycastMaterialFilter(origin, -Vector3.UnitY, out var hit, 12f))
                 {
-                    _topology.Set(index, TopologyCell.Void);
+                    _topology.Set(probe.To, TopologyCell.Void);
                 }
                 else
                 {
-                    var delta = hit.Point.Y - player3.Y;
-                    var floorLike = hit.Normal.Y >= .35f && delta is >= -6f and <= 2.25f;
-                    _topology.Set(index, floorLike ? TopologyCell.Passable : TopologyCell.Blocked, hit.Point.Y);
+                    var floorLike = ForetellTopologyProbeRules.IsFloorHit(hit.Normal.Y, hit.Point.Y, referenceY);
+                    _topology.Set(probe.To, floorLike ? TopologyCell.Passable : TopologyCell.Blocked, hit.Point.Y);
                 }
-                QueueTopologyEdges(index);
+                _topologyFrontier.CommitFloor(_topology, probe.To);
+                _topology.Cursor = _topologyFrontier.Sampled;
                 ++sampled;
                 ++_topologyRays;
                 ++_topologyFloorSamples;
@@ -223,14 +271,16 @@ public sealed partial class ForetellEngine
         }
 
         var player2 = new Vector2(player3.X, player3.Z);
-        if (_topologySweepInProgress && _topologyProbeCursor >= _topologyProbeOrder.Count && _topologyPendingEdges.Count == 0)
+        if (_topologySweepInProgress && _topologyFrontier.Complete)
         {
             _topologySweepInProgress = false;
             ++_topologySweeps;
+            _topologyLastSweepMilliseconds = Math.Max(0, (now - _topologySweepStartedAt).TotalMilliseconds);
+            _topologyPeakSweepMilliseconds = Math.Max(_topologyPeakSweepMilliseconds, _topologyLastSweepMilliseconds);
             _topologyRescanAfter = now.AddSeconds(inCombat ? 6 : 12);
             RequestTopologyAnalysis(player2, complete: true);
         }
-        else if (_topologyPublishProgress && sampled != 0 && (now - _topologyLastAnalysisAt).TotalMilliseconds >= 125)
+        else if (_topologyPublishProgress && sampled != 0 && (now - _topologyLastAnalysisAt).TotalMilliseconds >= 75)
         {
             RequestTopologyAnalysis(player2, complete: false);
         }
@@ -246,7 +296,106 @@ public sealed partial class ForetellEngine
         else
         {
             _topologyConsecutiveOverruns = 0;
-            RegisterCapability("native.topology.collision", typeof(BGCollisionModule), "RaycastMaterialFilter", true, false, "bounded local walkable-surface and barrier probes");
+            RegisterCapability("native.topology.collision", typeof(BGCollisionModule), "RaycastMaterialFilter", true, false, "bounded reachable-frontier floor and barrier probes");
+        }
+    }
+
+    private unsafe bool TryStartCollisionRaster(BGCollisionModule* module, Vector3 player, float radius, float resolution, DateTime now)
+    {
+        if (!ForetellCollisionMeshSource.TryCapture(module, player, radius, resolution, out var snapshot, out var reason)
+            || snapshot == null)
+        {
+            RegisterCapability("native.topology.mesh", typeof(ColliderMesh), "MeshPCB", false, false, reason);
+            return false;
+        }
+
+        ++_topologyGeneration;
+        var generation = _topologyGeneration;
+        _topologySweepRequested = false;
+        _topologySweepInProgress = false;
+        _topologyHardInvalidation = false;
+        _topologyFrontier.Clear();
+        _topologySweepStartedAt = now;
+        _topologyMeshCaptureMilliseconds = snapshot.CaptureMilliseconds;
+        _topologyMeshPeakCaptureMilliseconds = Math.Max(_topologyMeshPeakCaptureMilliseconds, snapshot.CaptureMilliseconds);
+        _topologyMeshTriangles = snapshot.Triangles.Length;
+        _topologyMeshColliders = snapshot.Colliders;
+        ++_topologyMeshCaptures;
+        RegisterCapability("native.topology.mesh", typeof(ColliderMesh), "MeshPCB", true, false,
+            $"{snapshot.Triangles.Length:N0} local triangles copied in {snapshot.CaptureMilliseconds:F2} ms; managed raster queued");
+        _collisionRasterTask = Task.Run(() => new CollisionRasterWork(generation, ForetellCollisionRasterizer.Build(snapshot)));
+        return true;
+    }
+
+    private void PollCompletedCollisionRaster()
+    {
+        var task = _collisionRasterTask;
+        if (task == null || !task.IsCompleted)
+            return;
+        _collisionRasterTask = null;
+        CollisionRasterWork work;
+        try
+        {
+            work = task.GetAwaiter().GetResult();
+        }
+        catch (Exception e)
+        {
+            ++_topologyFailures;
+            ++_topologyMeshFallbacks;
+            _topologyMeshPrimary = false;
+            _topologySweepRequested = true;
+            _topologyRescanAfter = default;
+            RegisterCapability("native.topology.raster", typeof(ForetellCollisionRasterizer), "Build", false, false,
+                $"managed raster rejected safely: {e.GetType().Name}");
+            return;
+        }
+        if (work.Generation != _topologyGeneration)
+            return;
+
+        var result = work.Result;
+        var rebuildImmediately = _topologyRescanAfterRaster;
+        _topologyRescanAfterRaster = false;
+        var hadUsefulMesh = _topologyMeshPrimary && _topologyAnalysis is { PassableCells: > 0 };
+        _topologyMeshPrimary = result.Analysis.PassableCells > 0;
+        _topologyMeshFloorTriangles = result.FloorTriangles;
+        _topologyMeshWallTriangles = result.WallTriangles;
+        _topologyMeshCandidateSamples = result.CandidateSamples;
+        _topologyMeshRasterMilliseconds = result.RasterMilliseconds;
+        _topologyMeshPeakRasterMilliseconds = Math.Max(_topologyMeshPeakRasterMilliseconds, result.RasterMilliseconds);
+        _topologyLastSweepMilliseconds = _topologyMeshCaptureMilliseconds + result.RasterMilliseconds;
+        _topologyPeakSweepMilliseconds = Math.Max(_topologyPeakSweepMilliseconds, _topologyLastSweepMilliseconds);
+        _topologySweepInProgress = false;
+        _topologySweepRequested = !_topologyMeshPrimary || rebuildImmediately;
+        ++_topologySweeps;
+        var inCombat = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];
+        _topologyRescanAfter = rebuildImmediately ? default : DateTime.UtcNow.AddSeconds(inCombat ? 6 : 12);
+        if (_topologyMeshPrimary)
+        {
+            _topology.ReplaceWith(result.Grid);
+            _topologySampleRadius = Math.Min(result.Grid.Width, result.Grid.Height) * result.Grid.Resolution * .5f;
+            _topologyFirstSurfaceMilliseconds = _topologySweepStartedAt == default
+                ? 0
+                : Math.Max(0, (DateTime.UtcNow - _topologySweepStartedAt).TotalMilliseconds);
+            _topologyAnalysisComplete = true;
+            ApplyTopologyAnalysis(result.Grid, result.Analysis, complete: true);
+            RegisterCapability("native.topology.raster", typeof(ForetellCollisionRasterizer), "Build", true, false,
+                $"{result.Analysis.PassableCells:N0} reachable cells from {result.FloorTriangles:N0} floor and {result.WallTriangles:N0} wall triangles in {result.RasterMilliseconds:F2} ms worker time");
+        }
+        else
+        {
+            ++_topologyMeshFallbacks;
+            _topologyMeshRetryAfter = DateTime.UtcNow.AddSeconds(15);
+            if (hadUsefulMesh)
+            {
+                _topologyMeshPrimary = true;
+                _topologySweepRequested = false;
+                _topologyRescanAfter = _topologyMeshRetryAfter;
+                _topologyAnalysisComplete = true;
+            }
+            RegisterCapability("native.topology.raster", typeof(ForetellCollisionRasterizer), "Build", false, false,
+                hadUsefulMesh
+                    ? "replacement PCB raster found no connected surface; previous useful mesh retained"
+                    : "PCB raster found no surface connected to the actor; ray frontier fallback enabled");
         }
     }
 
@@ -278,9 +427,7 @@ public sealed partial class ForetellEngine
         for (var i = 0; i < _topology.CellCount; ++i)
             if (Vector2.Distance(_topology.CellCenter(i), center) > limit)
                 _topology.Set(i, TopologyCell.Void);
-        _topologyPendingEdges.Clear();
-        _topologyQueuedEdges.Clear();
-        _topologyProbeCursor = 0;
+        _topologyFrontier.Clear();
         _topology.Cursor = 0;
     }
 
@@ -288,85 +435,25 @@ public sealed partial class ForetellEngine
     {
         ++_topologyGeneration;
         _topology.ClearEdges();
-        BuildTopologyProbeOrder(player);
-        _topologyPendingEdges.Clear();
-        _topologyQueuedEdges.Clear();
-        _topologyProbeCursor = 0;
+        _topologyFrontier.Start(_topology, player, TopologyCenter(), _topologySampleRadius);
         _topology.Cursor = 0;
         _topologySweepInProgress = true;
         _topologySweepRequested = false;
         _topologyPublishProgress = _topologyHardInvalidation || _topologyAnalysis == null;
+        if (_topologyAnalysis == null)
+            _topologyAnalysisComplete = false;
         _topologyHardInvalidation = false;
+        _topologySweepStartedAt = DateTime.UtcNow;
+        _topologyBurstUntil = _topologySweepStartedAt.AddSeconds(_topologyPublishProgress ? 2 : .5);
+        if (_topologyAnalysis == null)
+            _topologyFirstSurfaceMilliseconds = 0;
         // An arena barrier can appear exactly at pull start. Keep an already useful published component until the
         // outward rescan has caught up instead of replacing it immediately with a one-cell island.
         if (_topologyPublishProgress && _topologyAnalysis == null)
             RequestTopologyAnalysis(player, complete: false);
     }
 
-    private void BuildTopologyProbeOrder(Vector2 origin)
-    {
-        _topologyProbeOrder.Clear();
-        var included = new bool[_topology.CellCount];
-        var limitSq = (_topologySampleRadius + _topology.Resolution * .35f) * (_topologySampleRadius + _topology.Resolution * .35f);
-        var center = TopologyCenter();
-        var seedX = Math.Clamp((int)((origin.X - _topology.OriginX) / _topology.Resolution), 0, _topology.Width - 1);
-        var seedZ = Math.Clamp((int)((origin.Y - _topology.OriginZ) / _topology.Resolution), 0, _topology.Height - 1);
-        var maxRing = Math.Max(_topology.Width, _topology.Height);
-        for (var ring = 0; ring < maxRing; ++ring)
-        {
-            var minX = Math.Max(0, seedX - ring);
-            var maxX = Math.Min(_topology.Width - 1, seedX + ring);
-            var minZ = Math.Max(0, seedZ - ring);
-            var maxZ = Math.Min(_topology.Height - 1, seedZ + ring);
-            for (var x = minX; x <= maxX; ++x)
-            {
-                Add(x, minZ);
-                if (maxZ != minZ) Add(x, maxZ);
-            }
-            for (var z = minZ + 1; z < maxZ; ++z)
-            {
-                Add(minX, z);
-                if (maxX != minX) Add(maxX, z);
-            }
-            if (minX == 0 && maxX == _topology.Width - 1 && minZ == 0 && maxZ == _topology.Height - 1)
-                break;
-        }
-
-        void Add(int x, int z)
-        {
-            var index = z * _topology.Width + x;
-            if (included[index]) return;
-            included[index] = true;
-            if (_topology.Cells[index] == (byte)TopologyCell.Unknown || Vector2.DistanceSquared(_topology.CellCenter(index), center) <= limitSq)
-                _topologyProbeOrder.Add(index);
-        }
-    }
-
-    private void QueueTopologyEdges(int index)
-    {
-        if (_topology.Cells[index] != (byte)TopologyCell.Passable)
-            return;
-        var x = index % _topology.Width;
-        var z = index / _topology.Width;
-        Queue(x - 1, z);
-        Queue(x + 1, z);
-        Queue(x, z - 1);
-        Queue(x, z + 1);
-
-        void Queue(int neighborX, int neighborZ)
-        {
-            if ((uint)neighborX >= (uint)_topology.Width || (uint)neighborZ >= (uint)_topology.Height)
-                return;
-            var neighbor = neighborZ * _topology.Width + neighborX;
-            if (_topology.Cells[neighbor] != (byte)TopologyCell.Passable || _topology.IsEdgeKnown(index, neighbor))
-                return;
-            var key = EdgeKey(index, neighbor);
-            if (_topologyQueuedEdges.Add(key))
-                _topologyPendingEdges.Enqueue((index, neighbor));
-        }
-    }
-
-    private unsafe void ProbeTopologyEdge(int from, int to)
+    private unsafe bool ProbeTopologyEdge(int from, int to)
     {
         var a = _topology.CellCenter(from);
         var b = _topology.CellCenter(to);
@@ -374,16 +461,8 @@ public sealed partial class ForetellEngine
         var end = new Vector3(b.X, _topology.Heights[to] + TopologyWallProbeHeight, b.Y);
         var delta = end - start;
         var distance = delta.Length();
-        var blocked = !float.IsFinite(distance) || distance <= .05f
+        return !float.IsFinite(distance) || distance <= .05f
             || BGCollisionModule.RaycastMaterialFilter(start, delta / Math.Max(.05f, distance), out _, distance - .05f);
-        _topology.SetEdge(from, to, blocked);
-    }
-
-    private static long EdgeKey(int a, int b)
-    {
-        var lower = Math.Min(a, b);
-        var upper = Math.Max(a, b);
-        return ((long)lower << 32) | (uint)upper;
     }
 
     private Vector2 TopologyCenter()
@@ -450,8 +529,14 @@ public sealed partial class ForetellEngine
     {
         if (!ForetellInferenceCore.ShouldReplaceTopologyAnalysis(_topologyAnalysis?.PassableCells ?? 0, analysis.PassableCells, complete))
             return;
+        if (_topologyAnalysis == null && analysis.PassableCells > 0 && _topologySweepStartedAt != default)
+            _topologyFirstSurfaceMilliseconds = Math.Max(0, (DateTime.UtcNow - _topologySweepStartedAt).TotalMilliseconds);
         _topologyAnalysis = analysis;
-        if (!complete || analysis.UnknownCells != 0 || analysis.PassableCells == 0 || analysis.Fingerprint == _topologyFingerprint)
+        _topologyAnalysisComplete = complete;
+        // Frontier completion proves that every route from the seed ended at a wall, a void/drop or the local
+        // survey radius. Unknown cells behind those boundaries are intentionally unsampled and are not a reason
+        // to withhold a closed room or its bounded persistent snapshot.
+        if (!complete || analysis.PassableCells == 0 || analysis.Fingerprint == _topologyFingerprint)
             return;
 
         ++_topologyChanges;
@@ -531,11 +616,18 @@ public sealed partial class ForetellEngine
             memory.KnownEdges.ToArray(), memory.BlockedEdges.ToArray(),
             memory.Contours.Select(contour => contour.Points.Select(point => new Vector2(point.X, point.Z)).ToList()).ToList(),
             memory.PassableCells, memory.BlockedCells, memory.UnknownCells, memory.Components);
+        _topologyAnalysisComplete = true;
         return true;
     }
 
     internal bool? IsTopologyPassable(Vector2 world)
-        => _topology.IsConnectedPassable(world, _topologyAnalysis?.ConnectedCells) ?? IsArenaBoundaryPassable(world);
+    {
+        var mesh = _topology.IsConnectedPassable(world, _topologyAnalysis?.ConnectedCells);
+        if (mesh == true && CurrentArenaBoundary is { ArenaLike: true } boundary
+            && !ForetellArenaBoundaryCore.Contains(boundary.Points, world))
+            return false;
+        return mesh ?? IsArenaBoundaryPassable(world);
+    }
 
     private static float SignedArea(IReadOnlyList<Vector2> points)
     {

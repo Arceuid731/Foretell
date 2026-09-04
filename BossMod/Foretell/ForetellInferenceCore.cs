@@ -233,6 +233,10 @@ public static class ForetellInferenceCore
     // in courtyards and corridors. The floor mesh remains active everywhere; this accelerator is combat-only.
     public static bool ShouldUseFastArenaBoundary(bool inCombat) => inCombat;
 
+    // Topology may clip only confirmed unreachable space. Missing/streaming cells must never turn into a silent
+    // false negative for an otherwise valid warning.
+    public static bool ShouldPresentOnTopology(bool? passable) => passable != false;
+
     // Progressive rescans grow outwards from the player. Keep a useful previous result until the replacement has
     // caught up; a complete scan may legitimately shrink after a bridge/platform disappears.
     public static bool ShouldReplaceTopologyAnalysis(int currentPassableCells, int candidatePassableCells, bool complete)

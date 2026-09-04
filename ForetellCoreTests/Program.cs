@@ -17,11 +17,17 @@ static class ForetellCoreTests
     public static void Main()
     {
         TopologyConnectedComponentAndHole();
+        TopologyFrontierFindsClosedRoomEarly();
+        TopologyProbeFollowsReachedElevation();
+        CollisionRasterSelectsReachableLayer();
+        CollisionRasterStopsAtMeshWall();
+        CollisionRasterBuildsCorridorAndRoom();
         TopologyBarrierClosesConnectedSurface();
         TopologyRequiresObservedConnections();
         TopologyLoadBudget();
         TopologyFuzzMaintainsInvariants();
         ArenaBoundaryInference();
+        TopologyPresentationNeverHidesUnknownTerrain();
         DynamicTerrainSectorInference();
         RawRoundTrip();
         RawLiveReplayDeterminism();
@@ -337,6 +343,110 @@ static class ForetellCoreTests
         var b = new SignalTimelineEdge { From = "A", To = "C", Phase = 1, Count = 3 };
         Check.That(Math.Abs(ForetellInferenceCore.TimelineProbability(a, [a, b]) - .7f) < .0001f, "timeline branch probability is incorrect");
         Check.That(ForetellInferenceCore.WilsonLowerBound(10, 10) > ForetellInferenceCore.WilsonLowerBound(5, 10), "reliability ordering regressed");
+    }
+
+    private static void CollisionRasterSelectsReachableLayer()
+    {
+        var triangles = new List<ForetellCollisionTriangle>();
+        AddQuad(triangles, -6, -6, 6, 6, 0);
+        AddQuad(triangles, -6, -6, 6, 6, 7);
+        var snapshot = new ForetellCollisionSnapshot(new(0, .1f, 0), 7, 1, triangles.ToArray(), 1, triangles.Count, 0);
+        var result = ForetellCollisionRasterizer.Build(snapshot);
+        Check.That(result.Analysis.PassableCells > 100, "collision raster did not reconstruct the nearby floor");
+        Check.That(result.Grid.TryConnectedHeight(Vector2.Zero, result.Analysis.ConnectedCells, out var floorHeight)
+            && Math.Abs(floorHeight) < .25f, "connected floor height is not reusable by 3D overlays");
+        for (var i = 0; i < result.Grid.CellCount; ++i)
+            if (result.Analysis.ConnectedCells[i] == (byte)TopologyCell.Passable)
+                Check.That(Math.Abs(result.Grid.Heights[i]) < .25f, "collision raster leaked onto a stacked floor");
+    }
+
+    private static void CollisionRasterStopsAtMeshWall()
+    {
+        var triangles = new List<ForetellCollisionTriangle>();
+        AddQuad(triangles, -7, -7, 7, 7, 0);
+        triangles.Add(new(new(0, 0, -7), new(0, 3, -7), new(0, 3, 7)));
+        triangles.Add(new(new(0, 0, -7), new(0, 3, 7), new(0, 0, 7)));
+        var snapshot = new ForetellCollisionSnapshot(new(-3, .1f, 0), 8, 1, triangles.ToArray(), 1, triangles.Count, 0);
+        var result = ForetellCollisionRasterizer.Build(snapshot);
+        Check.That(result.Analysis.PassableCells > 40, "wall test produced no reachable floor");
+        Check.That(result.Grid.IsConnectedPassable(new(-2, 0), result.Analysis.ConnectedCells) == true, "seed side was rejected");
+        Check.That(result.Grid.IsConnectedPassable(new(2, 0), result.Analysis.ConnectedCells) == false, "vertical mesh wall was crossed");
+    }
+
+    private static void CollisionRasterBuildsCorridorAndRoom()
+    {
+        var triangles = new List<ForetellCollisionTriangle>();
+        AddQuad(triangles, -3, -18, 3, 2, 0);
+        AddQuad(triangles, -10, 2, 10, 16, 0);
+        var snapshot = new ForetellCollisionSnapshot(new(0, .1f, -12), 24, 1, triangles.ToArray(), 1, triangles.Count, 0);
+        var result = ForetellCollisionRasterizer.Build(snapshot);
+        Check.That(result.Grid.IsConnectedPassable(new(0, -10), result.Analysis.ConnectedCells) == true, "corridor missing");
+        Check.That(result.Grid.IsConnectedPassable(new(8, 10), result.Analysis.ConnectedCells) == true, "room widening missing");
+        Check.That(result.Grid.IsConnectedPassable(new(8, -10), result.Analysis.ConnectedCells) == false, "raster invented floor beside corridor");
+    }
+
+    private static void TopologyPresentationNeverHidesUnknownTerrain()
+    {
+        Check.That(ForetellInferenceCore.ShouldPresentOnTopology(true), "reachable alert segment was hidden");
+        Check.That(ForetellInferenceCore.ShouldPresentOnTopology(null), "unknown terrain hid an alert");
+        Check.That(!ForetellInferenceCore.ShouldPresentOnTopology(false), "confirmed unreachable segment was not clipped");
+    }
+
+    private static void AddQuad(List<ForetellCollisionTriangle> triangles, float minX, float minZ, float maxX, float maxZ, float y)
+    {
+        var a = new Vector3(minX, y, minZ);
+        var b = new Vector3(maxX, y, minZ);
+        var c = new Vector3(maxX, y, maxZ);
+        var d = new Vector3(minX, y, maxZ);
+        triangles.Add(new(a, b, c));
+        triangles.Add(new(a, c, d));
+    }
+
+    private static void TopologyFrontierFindsClosedRoomEarly()
+    {
+        var grid = new ForetellTopologyGrid();
+        grid.Reset(Vector3.Zero, 30, 1);
+        var frontier = new ForetellTopologyFrontier();
+        frontier.Start(grid, Vector2.Zero, Vector2.Zero, 30);
+        var probes = 0;
+        while (frontier.TryDequeue(grid, out var probe))
+        {
+            if (probe.Kind == TopologyProbeKind.Floor)
+            {
+                // Both sides of the synthetic room wall contain valid floor: only the horizontal collision edge
+                // can stop the scanner, which models a corridor wall or pull barrier rather than a simple drop.
+                grid.Set(probe.To, TopologyCell.Passable, 0);
+                frontier.CommitFloor(grid, probe.To);
+            }
+            else
+            {
+                var insideFrom = InsideRoom(grid.CellCenter(probe.From));
+                var insideTo = InsideRoom(grid.CellCenter(probe.To));
+                frontier.CommitEdge(grid, probe.From, probe.To, insideFrom != insideTo);
+            }
+            ++probes;
+            if (probes == 64)
+                Check.That(frontier.Reachable >= 20, $"frontier did not publish a useful nearby surface early: {frontier.Reachable}");
+            Check.That(probes < 1_000, "closed-room frontier regressed toward an exhaustive enclosing-disc scan");
+        }
+
+        var analysis = grid.Analyze(Vector2.Zero, requireKnownEdges: true);
+        Check.That(frontier.Complete, "closed-room frontier did not terminate");
+        Check.That(frontier.Reachable == analysis.PassableCells && analysis.PassableCells > 150,
+            $"frontier/analysis component mismatch: {frontier.Reachable}/{analysis.PassableCells}");
+        Check.That(frontier.Sampled < grid.CellCount / 4,
+            $"closed room sampled too much unreachable terrain: {frontier.Sampled}/{grid.CellCount}");
+
+        static bool InsideRoom(Vector2 point) => Math.Abs(point.X) < 10 && Math.Abs(point.Y) < 6;
+    }
+
+    private static void TopologyProbeFollowsReachedElevation()
+    {
+        var reference = ForetellTopologyProbeRules.FloorReferenceY(100, 0);
+        Check.That(reference == 100, "frontier floor probe fell back to the actor's old elevation");
+        Check.That(ForetellTopologyProbeRules.IsFloorHit(.9f, 101.2f, reference), "ordinary ascending terrain was rejected ahead of the actor");
+        Check.That(!ForetellTopologyProbeRules.IsFloorHit(.9f, 103f, reference), "an excessive upward step was accepted");
+        Check.That(!ForetellTopologyProbeRules.IsFloorHit(.2f, 100, reference), "a wall-like collision normal became walkable floor");
     }
 
     private static void DynamicTerrainSectorInference()

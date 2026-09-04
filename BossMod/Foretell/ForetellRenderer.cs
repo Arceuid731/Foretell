@@ -100,11 +100,11 @@ public sealed partial class ForetellEngine
         switch (p.Geometry)
         {
             case GeometryKind.Circle:
-                cam.DrawWorldCircle(o, p.P1, color, thickness);
+                DrawWorldCircleClipped(cam, o, p.P1, color, thickness);
                 break;
             case GeometryKind.Donut:
-                cam.DrawWorldCircle(o, p.P1, color, thickness);
-                cam.DrawWorldCircle(o, p.P2, color, thickness);
+                DrawWorldCircleClipped(cam, o, p.P1, color, thickness);
+                DrawWorldCircleClipped(cam, o, p.P2, color, thickness);
                 break;
             case GeometryKind.Cone:
                 DrawCone(cam, o, p.Rotation, p.P1, p.P2, color, thickness);
@@ -160,7 +160,7 @@ public sealed partial class ForetellEngine
         }
     }
 
-    private static void DrawCone(Camera cam, Vector3 o, float rot, float range, float half, uint color, float thickness)
+    private void DrawCone(Camera cam, Vector3 o, float rot, float range, float half, uint color, float thickness)
     {
         const int n = 32;
         var prev = o;
@@ -168,14 +168,14 @@ public sealed partial class ForetellEngine
         {
             var a = rot - half + 2 * half * i / n;
             var q = o + new Vector3(MathF.Sin(a) * range, 0, MathF.Cos(a) * range);
-            if (i == 0) cam.DrawWorldLine(o, q, color, thickness);
-            else cam.DrawWorldLine(prev, q, color, thickness);
-            if (i == n) cam.DrawWorldLine(q, o, color, thickness);
+            if (i == 0) DrawWorldLineClipped(cam, o, q, color, thickness);
+            else DrawWorldLineClipped(cam, prev, q, color, thickness);
+            if (i == n) DrawWorldLineClipped(cam, q, o, color, thickness);
             prev = q;
         }
     }
 
-    private static void DrawRect(Camera cam, Vector3 o, float rot, float length, float halfWidth, uint color, float thickness)
+    private void DrawRect(Camera cam, Vector3 o, float rot, float length, float halfWidth, uint color, float thickness)
     {
         var f = new Vector3(MathF.Sin(rot), 0, MathF.Cos(rot));
         var r = new Vector3(MathF.Cos(rot), 0, -MathF.Sin(rot));
@@ -183,11 +183,44 @@ public sealed partial class ForetellEngine
         var b = o - r * halfWidth;
         var c = b + f * length;
         var d = a + f * length;
-        cam.DrawWorldLine(a, b, color, thickness);
-        cam.DrawWorldLine(b, c, color, thickness);
-        cam.DrawWorldLine(c, d, color, thickness);
-        cam.DrawWorldLine(d, a, color, thickness);
+        DrawWorldLineClipped(cam, a, b, color, thickness);
+        DrawWorldLineClipped(cam, b, c, color, thickness);
+        DrawWorldLineClipped(cam, c, d, color, thickness);
+        DrawWorldLineClipped(cam, d, a, color, thickness);
     }
+
+    private void DrawWorldCircleClipped(Camera camera, Vector3 origin, float radius, uint color, float thickness)
+    {
+        const int segments = 48;
+        var previous = origin + new Vector3(0, 0, radius);
+        for (var i = 1; i <= segments; ++i)
+        {
+            var angle = MathF.Tau * i / segments;
+            var current = origin + new Vector3(MathF.Sin(angle) * radius, 0, MathF.Cos(angle) * radius);
+            DrawWorldLineClipped(camera, previous, current, color, thickness);
+            previous = current;
+        }
+    }
+
+    private void DrawWorldLineClipped(Camera camera, Vector3 from, Vector3 to, uint color, float thickness)
+    {
+        var horizontal = new Vector2(to.X - from.X, to.Z - from.Z).Length();
+        var steps = Math.Clamp((int)MathF.Ceiling(horizontal / 2.5f), 1, 96);
+        var previous = from;
+        for (var step = 1; step <= steps; ++step)
+        {
+            var current = Vector3.Lerp(from, to, step / (float)steps);
+            var midpoint = (previous + current) * .5f;
+            if (TopologyAllowsPresentation(new(midpoint.X, midpoint.Z)))
+                camera.DrawWorldLine(ProjectWorldAlertToTopology(previous), ProjectWorldAlertToTopology(current), color, thickness);
+            previous = current;
+        }
+    }
+
+    private Vector3 ProjectWorldAlertToTopology(Vector3 point)
+        => _topology.TryConnectedHeight(new(point.X, point.Z), _topologyAnalysis?.ConnectedCells, out var height)
+            ? new(point.X, height + .05f, point.Z)
+            : point;
 
     private void DrawTextHints()
     {
@@ -690,17 +723,16 @@ public sealed partial class ForetellEngine
     private static Vector2 RadarPoint(Vector2 world, Vector2 player, float cameraAzimuth, Vector2 center, float scale)
         => center + ForetellInferenceCore.CameraRelativeRadarOffset(world - player, cameraAzimuth) * scale;
 
-    private static void DrawRadarGeometry(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
+    private void DrawRadarGeometry(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
     {
-        var o = RadarPoint(p.Origin, player, cameraAzimuth, center, scale);
         switch (p.Geometry)
         {
             case GeometryKind.Circle:
-                draw.AddCircle(o, p.P1 * scale, color, 48, thickness);
+                DrawRadarCircleClipped(draw, p.Origin, p.P1, player, cameraAzimuth, center, scale, color, thickness);
                 break;
             case GeometryKind.Donut:
-                draw.AddCircle(o, p.P1 * scale, color, 48, thickness);
-                draw.AddCircle(o, p.P2 * scale, color, 48, thickness);
+                DrawRadarCircleClipped(draw, p.Origin, p.P1, player, cameraAzimuth, center, scale, color, thickness);
+                DrawRadarCircleClipped(draw, p.Origin, p.P2, player, cameraAzimuth, center, scale, color, thickness);
                 break;
             case GeometryKind.Cone:
                 DrawRadarCone(draw, p, player, cameraAzimuth, center, scale, color, thickness);
@@ -749,7 +781,7 @@ public sealed partial class ForetellEngine
     private bool TryClosedTopologyRadius(Vector2 player, out float radius)
     {
         radius = 0;
-        if (_topologyAnalysis is not { UnknownCells: 0, PassableCells: > 0 } topology
+        if (!_topologyAnalysisComplete || _topologyAnalysis is not { PassableCells: > 0 } topology
             || topology.ConnectedCells.Length != _topology.CellCount || _topologySampleRadius <= 0)
             return false;
         for (var index = 0; index < topology.ConnectedCells.Length; ++index)
@@ -877,37 +909,63 @@ public sealed partial class ForetellEngine
         }
     }
 
-    private static void DrawRadarCone(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
+    private void DrawRadarCone(ImDrawListPtr draw, ActivePrediction p, Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
     {
         const int n = 24;
-        var o = RadarPoint(p.Origin, player, cameraAzimuth, center, scale);
-        Vector2 prev = default;
+        var previousWorld = p.Origin;
         for (var i = 0; i <= n; ++i)
         {
             var a = p.Rotation - p.P2 + 2 * p.P2 * i / n;
             var world = p.Origin + new Vector2(MathF.Sin(a), MathF.Cos(a)) * p.P1;
-            var q = RadarPoint(world, player, cameraAzimuth, center, scale);
-            if (i == 0) draw.AddLine(o, q, color, thickness);
-            else draw.AddLine(prev, q, color, thickness);
-            if (i == n) draw.AddLine(q, o, color, thickness);
-            prev = q;
+            if (i == 0) DrawRadarLineClipped(draw, p.Origin, world, player, cameraAzimuth, center, scale, color, thickness);
+            else DrawRadarLineClipped(draw, previousWorld, world, player, cameraAzimuth, center, scale, color, thickness);
+            if (i == n) DrawRadarLineClipped(draw, world, p.Origin, player, cameraAzimuth, center, scale, color, thickness);
+            previousWorld = world;
         }
     }
 
-    private static void DrawRadarRect(ImDrawListPtr draw, Vector2 origin, float rot, float length, float halfWidth,
+    private void DrawRadarRect(ImDrawListPtr draw, Vector2 origin, float rot, float length, float halfWidth,
         Vector2 player, float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
     {
         var f = new Vector2(MathF.Sin(rot), MathF.Cos(rot));
         var r = new Vector2(MathF.Cos(rot), -MathF.Sin(rot));
-        var a = RadarPoint(origin + r * halfWidth, player, cameraAzimuth, center, scale);
-        var b = RadarPoint(origin - r * halfWidth, player, cameraAzimuth, center, scale);
-        var c = RadarPoint(origin - r * halfWidth + f * length, player, cameraAzimuth, center, scale);
-        var d = RadarPoint(origin + r * halfWidth + f * length, player, cameraAzimuth, center, scale);
-        draw.AddLine(a, b, color, thickness);
-        draw.AddLine(b, c, color, thickness);
-        draw.AddLine(c, d, color, thickness);
-        draw.AddLine(d, a, color, thickness);
+        DrawRadarLineClipped(draw, origin + r * halfWidth, origin - r * halfWidth, player, cameraAzimuth, center, scale, color, thickness);
+        DrawRadarLineClipped(draw, origin - r * halfWidth, origin - r * halfWidth + f * length, player, cameraAzimuth, center, scale, color, thickness);
+        DrawRadarLineClipped(draw, origin - r * halfWidth + f * length, origin + r * halfWidth + f * length, player, cameraAzimuth, center, scale, color, thickness);
+        DrawRadarLineClipped(draw, origin + r * halfWidth + f * length, origin + r * halfWidth, player, cameraAzimuth, center, scale, color, thickness);
     }
+
+    private void DrawRadarCircleClipped(ImDrawListPtr draw, Vector2 origin, float radius, Vector2 player,
+        float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
+    {
+        const int segments = 48;
+        var previous = origin + new Vector2(0, radius);
+        for (var i = 1; i <= segments; ++i)
+        {
+            var angle = MathF.Tau * i / segments;
+            var current = origin + new Vector2(MathF.Sin(angle), MathF.Cos(angle)) * radius;
+            DrawRadarLineClipped(draw, previous, current, player, cameraAzimuth, center, scale, color, thickness);
+            previous = current;
+        }
+    }
+
+    private void DrawRadarLineClipped(ImDrawListPtr draw, Vector2 from, Vector2 to, Vector2 player,
+        float cameraAzimuth, Vector2 center, float scale, uint color, float thickness)
+    {
+        var steps = Math.Clamp((int)MathF.Ceiling(Vector2.Distance(from, to) / 2.5f), 1, 96);
+        var previous = from;
+        for (var step = 1; step <= steps; ++step)
+        {
+            var current = Vector2.Lerp(from, to, step / (float)steps);
+            if (TopologyAllowsPresentation((previous + current) * .5f))
+                draw.AddLine(RadarPoint(previous, player, cameraAzimuth, center, scale),
+                    RadarPoint(current, player, cameraAzimuth, center, scale), color, thickness);
+            previous = current;
+        }
+    }
+
+    private bool TopologyAllowsPresentation(Vector2 world)
+        => ForetellInferenceCore.ShouldPresentOnTopology(IsTopologyPassable(world));
 
     private void DrawSafeSuggestion()
     {
