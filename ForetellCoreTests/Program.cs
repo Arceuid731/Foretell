@@ -17,6 +17,9 @@ static class ForetellCoreTests
     public static void Main()
     {
         TopologyConnectedComponentAndHole();
+        TopologyWindowPrefetchesBeforeVisibleEdge();
+        TopologyRadarContourClipIsContinuous();
+        TopologyContoursAreStitchedAndSimplified();
         TopologyFrontierFindsClosedRoomEarly();
         TopologyProbeFollowsReachedElevation();
         CollisionRasterSelectsReachableLayer();
@@ -350,7 +353,7 @@ static class ForetellCoreTests
         var triangles = new List<ForetellCollisionTriangle>();
         AddQuad(triangles, -6, -6, 6, 6, 0);
         AddQuad(triangles, -6, -6, 6, 6, 7);
-        var snapshot = new ForetellCollisionSnapshot(new(0, .1f, 0), 7, 1, triangles.ToArray(), 1, triangles.Count, 0);
+        var snapshot = new ForetellCollisionSnapshot(new(0, .1f, 0), Vector2.Zero, 7, 1, triangles.ToArray(), 1, triangles.Count, 0);
         var result = ForetellCollisionRasterizer.Build(snapshot);
         Check.That(result.Analysis.PassableCells > 100, "collision raster did not reconstruct the nearby floor");
         Check.That(result.Grid.TryConnectedHeight(Vector2.Zero, result.Analysis.ConnectedCells, out var floorHeight)
@@ -360,13 +363,61 @@ static class ForetellCoreTests
                 Check.That(Math.Abs(result.Grid.Heights[i]) < .25f, "collision raster leaked onto a stacked floor");
     }
 
+    private static void TopologyWindowPrefetchesBeforeVisibleEdge()
+    {
+        var player = new Vector2(137.4f, -82.1f);
+        var plan = ForetellTopologyWindow.Plan(player, 65);
+        Check.That(plan.SampleRadius >= plan.VisibleRadius + 35, "rolling topology lost its hidden prefetch margin");
+        Check.That(Math.Abs(plan.Center.X / plan.Alignment - MathF.Round(plan.Center.X / plan.Alignment)) < .001f
+            && Math.Abs(plan.Center.Y / plan.Alignment - MathF.Round(plan.Center.Y / plan.Alignment)) < .001f,
+            "rolling topology window is not world aligned");
+        var grid = new ForetellTopologyGrid();
+        grid.Reset(new(plan.Center.X, 12, plan.Center.Y), plan.SampleRadius, plan.Resolution);
+        Check.That(!ForetellTopologyWindow.NeedsReplacement(grid, plan.SampleRadius,
+            new(plan.Center.X, 12, plan.Center.Y), plan), "fresh rolling window immediately requested replacement");
+        var triggerPlayer = plan.Center + new Vector2(plan.RecenterDistance + .1f, 0);
+        Check.That(ForetellTopologyWindow.CoversVisible(plan.Center, plan.SampleRadius, triggerPlayer,
+            plan.VisibleRadius, plan.Resolution * 3), "recenter starts after the visible radar can expose an old edge");
+        Check.That(ForetellTopologyWindow.NeedsReplacement(grid, plan.SampleRadius,
+            new(triggerPlayer.X, 12, triggerPlayer.Y), plan), "movement did not schedule the hidden back buffer");
+    }
+
+    private static void TopologyRadarContourClipIsContinuous()
+    {
+        Check.That(ForetellTopologyWindow.TryClipSegmentToCircle(new(-20, 0), new(20, 0), Vector2.Zero, 10,
+                out var a, out var b)
+            && Vector2.Distance(a, new(-10, 0)) < .001f && Vector2.Distance(b, new(10, 0)) < .001f,
+            "radar contour was not clipped continuously at both circle edges");
+        Check.That(ForetellTopologyWindow.TryClipSegmentToCircle(new(-2, 3), new(4, 3), Vector2.Zero, 10,
+                out a, out b)
+            && Vector2.Distance(a, new(-2, 3)) < .001f && Vector2.Distance(b, new(4, 3)) < .001f,
+            "inside radar contour was modified");
+        Check.That(!ForetellTopologyWindow.TryClipSegmentToCircle(new(20, 20), new(30, 30), Vector2.Zero, 10,
+            out _, out _), "off-radar contour leaked into the visible map");
+    }
+
+    private static void TopologyContoursAreStitchedAndSimplified()
+    {
+        var grid = new ForetellTopologyGrid();
+        grid.Reset(Vector3.Zero, 20, 1);
+        // Synthetic diagonal room edge creates a long one-cell raster staircase before contour simplification.
+        for (var z = 5; z <= 34; ++z)
+            for (var x = 5; x <= Math.Min(34, z); ++x)
+                grid.Set(z * grid.Width + x, TopologyCell.Passable, 0);
+        var result = grid.Analyze(new(-10, -10));
+        Check.That(result.Contours.Count == 1, $"connected raster room produced {result.Contours.Count} contour fragments");
+        Check.That(result.Contours[0].Count <= 8, $"raster staircase remained visible as {result.Contours[0].Count} contour vertices");
+        Check.That(result.Contours[0].Distinct().Count() == result.Contours[0].Count,
+            "stitched contour contains duplicate discontinuity vertices");
+    }
+
     private static void CollisionRasterStopsAtMeshWall()
     {
         var triangles = new List<ForetellCollisionTriangle>();
         AddQuad(triangles, -7, -7, 7, 7, 0);
         triangles.Add(new(new(0, 0, -7), new(0, 3, -7), new(0, 3, 7)));
         triangles.Add(new(new(0, 0, -7), new(0, 3, 7), new(0, 0, 7)));
-        var snapshot = new ForetellCollisionSnapshot(new(-3, .1f, 0), 8, 1, triangles.ToArray(), 1, triangles.Count, 0);
+        var snapshot = new ForetellCollisionSnapshot(new(-3, .1f, 0), Vector2.Zero, 8, 1, triangles.ToArray(), 1, triangles.Count, 0);
         var result = ForetellCollisionRasterizer.Build(snapshot);
         Check.That(result.Analysis.PassableCells > 40, "wall test produced no reachable floor");
         Check.That(result.Grid.IsConnectedPassable(new(-2, 0), result.Analysis.ConnectedCells) == true, "seed side was rejected");
@@ -378,7 +429,7 @@ static class ForetellCoreTests
         var triangles = new List<ForetellCollisionTriangle>();
         AddQuad(triangles, -3, -18, 3, 2, 0);
         AddQuad(triangles, -10, 2, 10, 16, 0);
-        var snapshot = new ForetellCollisionSnapshot(new(0, .1f, -12), 24, 1, triangles.ToArray(), 1, triangles.Count, 0);
+        var snapshot = new ForetellCollisionSnapshot(new(0, .1f, -12), Vector2.Zero, 24, 1, triangles.ToArray(), 1, triangles.Count, 0);
         var result = ForetellCollisionRasterizer.Build(snapshot);
         Check.That(result.Grid.IsConnectedPassable(new(0, -10), result.Analysis.ConnectedCells) == true, "corridor missing");
         Check.That(result.Grid.IsConnectedPassable(new(8, 10), result.Analysis.ConnectedCells) == true, "room widening missing");

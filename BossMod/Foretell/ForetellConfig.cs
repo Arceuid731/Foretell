@@ -80,7 +80,7 @@ public sealed class ForetellConfig : ConfigNode
     public float RadarPositionX = -1;
     public float RadarPositionY = -1;
 
-    [PropertyDisplay("Radar arena frame", tooltip: "Auto continuously rasterizes nearby collision floors and barriers into a local walkable mesh, including barriers that close at pull start. The computation is player-centred, bounded by the visible radius and independent from authored BMR arena data. Circle and Square force the presentation frame without changing learned mechanics.")]
+    [PropertyDisplay("Radar arena frame", tooltip: "Auto keeps a world-aligned, double-buffered collision map prefetched beyond the visible radar, including barriers that close at pull start. Complete contours swap atomically so movement never exposes scan chunks. The map is local and independent from authored BMR arena data. Circle and Square force the presentation frame without changing learned mechanics.")]
     public ForetellRadarShape RadarShape = ForetellRadarShape.Auto;
 
     [PropertyDisplay("Radar zoom mode", tooltip: "Automatic fits a detected closed room or arena, but stays within the configured readable limits in open areas and corridors. Manual always uses the selected visible radius.")]

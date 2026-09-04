@@ -90,17 +90,17 @@ jobs:
           $notes = @"
           Foretell $env:FORETELL_VERSION
 
-          Real-time generic terrain reconstruction from FFXIV's loaded collision meshes.
+          Stable rolling top-down terrain radar from FFXIV's loaded collision meshes.
 
-          - Copies a bounded local snapshot of loaded PCB collision triangles on the framework thread, then performs heightfield rasterization and reachability analysis on a managed worker.
-          - Projects walkable faces into per-cell height layers so corridors, rooms, ramps and stairs are reconstructed without leaking onto unrelated stacked floors.
-          - Converts steep triangle faces into traversal walls and includes live box, cylinder and plane colliders for generic invisible barriers and changing arena geometry.
-          - Keeps the sampled grid local to the player and clips rendering to the selected radar range, avoiding a persistent full-zone reveal.
-          - Retains the bounded near-first raycast frontier as a compatibility fallback when PCB collision data is unavailable or still streaming.
-          - Uses the separately capped combat radial scan as a live overlay for barriers that appear at pull start, and applies that boundary to safe-position checks.
-          - Reuses topology for attack presentation: known-unreachable 2D/3D outline segments are clipped and world overlays follow reconstructed floor height, while unknown terrain never hides an alert.
-          - Exports mesh/fallback mode, collider and triangle counts, capture cost and worker-raster cost in Analysis ZIP and Replay Lab diagnostics.
-          - Adds deterministic layered-floor, mesh-wall and corridor-to-room raster regression tests alongside the existing ray-frontier suite.
+          - Keeps a world-aligned collision window prefetched well beyond the visible radar and recentres before movement can expose an outer scan edge.
+          - Double buffers every reconstruction: the complete front map stays visible until its complete replacement is atomically ready.
+          - Never publishes ray-fallback progress, eliminating the delayed islands and changing chunks visible in earlier builds.
+          - Retries short native captures within hundreds of milliseconds under an adaptive 20 ms ceiling instead of entering a 15-second retry gap.
+          - Uses a lightweight bounded scene fingerprint plus combat and structural events to invalidate changed floors and barriers while the player is stationary.
+          - Renders stitched, simplified connected contours as continuous top-down wall and drop lines, clipped cleanly at the radar edge.
+          - Increases spatial resolution and preserves layered reachability for corridors, rooms, ramps, stairs and stacked floors.
+          - Exports capture retries, atomic swaps, retained front buffers, recentres, scene changes and refresh latency in Analysis ZIP and Replay Lab diagnostics.
+          - Adds deterministic prefetch, world-alignment and continuous-contour clipping regression tests.
 
           Every change is generic: no territory, boss, action, icon, collider or event-object identifier was added.
 

@@ -8,17 +8,87 @@ internal static unsafe class ForetellCollisionMeshSource
 {
     private const int MaximumSnapshotTriangles = 750_000;
     private const int MaximumNodePrimitives = 1_000_000;
-    private const double MaximumCaptureMilliseconds = 8;
+    private const double MaximumCaptureMilliseconds = 20;
+    private const double MaximumFingerprintMilliseconds = 2;
+
+    public static bool TrySceneFingerprint(BGCollisionModule* module, Vector2 center, float radius,
+        out ulong fingerprint, out int colliders)
+    {
+        fingerprint = 0;
+        colliders = 0;
+        if (module == null || module->ShuttingDown || module->SceneManager == null || module->LoadInProgressCounter > 0)
+            return false;
+        var started = Stopwatch.GetTimestamp();
+        var hash = 14695981039346656037UL;
+        var inspected = 0;
+        try
+        {
+            foreach (var sceneRef in module->SceneManager->Scenes)
+            {
+                var scene = sceneRef->Scene;
+                if (scene == null)
+                    continue;
+                foreach (var collider in scene->Colliders)
+                {
+                    if (collider == null)
+                        continue;
+                    if ((inspected++ & 0x3F) == 0 && Stopwatch.GetElapsedTime(started).TotalMilliseconds > MaximumFingerprintMilliseconds)
+                        return false;
+                    var bounds = collider->WorldBoundingBox;
+                    if (!RectangleIntersectsCircle(bounds.Min.X, bounds.Min.Z, bounds.Max.X, bounds.Max.Z, center, radius))
+                        continue;
+                    ++colliders;
+                    Mix((ulong)(nuint)collider);
+                    Mix((ulong)collider->GetColliderType());
+                    Mix((ulong)(uint)collider->VisibilityFlags);
+                    Mix(BitConverter.SingleToUInt32Bits(bounds.Min.X));
+                    Mix(BitConverter.SingleToUInt32Bits(bounds.Min.Y));
+                    Mix(BitConverter.SingleToUInt32Bits(bounds.Min.Z));
+                    Mix(BitConverter.SingleToUInt32Bits(bounds.Max.X));
+                    Mix(BitConverter.SingleToUInt32Bits(bounds.Max.Y));
+                    Mix(BitConverter.SingleToUInt32Bits(bounds.Max.Z));
+                    switch (collider->GetColliderType())
+                    {
+                        case ColliderType.Mesh:
+                            Mix(((ColliderMesh*)collider)->Loaded ? 1UL : 0UL);
+                            break;
+                        case ColliderType.Streamed:
+                            var streamed = (ColliderStreamed*)collider;
+                            Mix((ulong)(uint)streamed->NumMeshesLoading);
+                            Mix(streamed->Header == null ? 0UL : (ulong)(uint)streamed->Header->NumMeshes);
+                            break;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            return false;
+        }
+        if (colliders == 0)
+            return false;
+        fingerprint = hash;
+        return true;
+
+        void Mix(ulong value)
+        {
+            hash ^= value;
+            hash = unchecked(hash * 1099511628211UL);
+        }
+    }
 
     // The scene is native mutable memory and must only be visited on the framework thread. We copy a bounded local
     // triangle soup in one guarded pass; the expensive heightfield/raster work then runs entirely on managed data.
-    public static bool TryCapture(BGCollisionModule* module, Vector3 player, float radius, float resolution,
-        out ForetellCollisionSnapshot? snapshot, out string reason)
+    public static bool TryCapture(BGCollisionModule* module, Vector3 player, Vector2 center, float radius, float resolution,
+        double budgetMilliseconds, out ForetellCollisionSnapshot? snapshot, out string reason, out bool timedOut)
     {
         snapshot = null;
         reason = "collision scene unavailable";
+        timedOut = false;
         if (module == null || module->ShuttingDown || module->SceneManager == null || module->LoadInProgressCounter > 0)
             return false;
+
+        var maximumMilliseconds = Math.Clamp(budgetMilliseconds, 2, MaximumCaptureMilliseconds);
 
         var started = Stopwatch.GetTimestamp();
         var triangles = new List<ForetellCollisionTriangle>(16_384);
@@ -26,7 +96,6 @@ internal static unsafe class ForetellCollisionMeshSource
         var colliders = 0;
         var nativePrimitives = 0;
         var complete = true;
-        var center = new Vector2(player.X, player.Z);
         try
         {
             foreach (var sceneRef in module->SceneManager->Scenes)
@@ -67,7 +136,7 @@ internal static unsafe class ForetellCollisionMeshSource
                             complete &= CapturePlane((ColliderPlane*)collider);
                             break;
                     }
-                    if (!complete || Stopwatch.GetElapsedTime(started).TotalMilliseconds > MaximumCaptureMilliseconds)
+                    if (!complete || Stopwatch.GetElapsedTime(started).TotalMilliseconds > maximumMilliseconds)
                     {
                         complete = false;
                         break;
@@ -86,8 +155,9 @@ internal static unsafe class ForetellCollisionMeshSource
         var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         if (!complete)
         {
-            reason = elapsed > MaximumCaptureMilliseconds
-                ? $"native mesh snapshot exceeded {MaximumCaptureMilliseconds:F0} ms ceiling"
+            timedOut = elapsed > maximumMilliseconds;
+            reason = timedOut
+                ? $"native mesh snapshot exceeded {maximumMilliseconds:F0} ms attempt budget"
                 : "native mesh snapshot exceeded structural safety bounds";
             return false;
         }
@@ -96,7 +166,7 @@ internal static unsafe class ForetellCollisionMeshSource
             reason = "no loaded PCB collision triangles in local radius";
             return false;
         }
-        snapshot = new(player, radius, resolution, triangles.ToArray(), colliders, nativePrimitives, elapsed);
+        snapshot = new(player, center, radius, resolution, triangles.ToArray(), colliders, nativePrimitives, elapsed);
         reason = $"copied {triangles.Count:N0} local PCB triangles";
         return true;
 
@@ -118,7 +188,7 @@ internal static unsafe class ForetellCollisionMeshSource
         {
             if (node == null)
                 return true;
-            if (Stopwatch.GetElapsedTime(started).TotalMilliseconds > MaximumCaptureMilliseconds)
+            if (Stopwatch.GetElapsedTime(started).TotalMilliseconds > maximumMilliseconds)
                 return false;
             if (!NodeIntersectsCircle(node->LocalBounds, ref world, center, radius))
                 return true;
@@ -130,7 +200,7 @@ internal static unsafe class ForetellCollisionMeshSource
             nativePrimitives += primitives;
             for (var i = 0; i < primitives; ++i)
             {
-                if ((i & 0x7FF) == 0 && Stopwatch.GetElapsedTime(started).TotalMilliseconds > MaximumCaptureMilliseconds)
+                if ((i & 0x7FF) == 0 && Stopwatch.GetElapsedTime(started).TotalMilliseconds > maximumMilliseconds)
                     return false;
                 var primitive = node->Primitives[i];
                 if (primitive.V1 >= vertices || primitive.V2 >= vertices || primitive.V3 >= vertices)

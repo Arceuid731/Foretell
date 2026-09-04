@@ -191,6 +191,8 @@ requirements = {
         "DrawRadarLineClipped",
         "TopologyAllowsPresentation",
         "ProjectWorldAlertToTopology",
+        "topology.Contours",
+        "TryClipSegmentToCircle",
         "↑ camera",
     ],
     "BossMod/Foretell/ForetellInspector.cs": [
@@ -365,6 +367,18 @@ requirements = {
         "SampleNativeArenaBoundary",
         "ForetellTopologyFrontier",
         "ProbeTopologyEdge",
+        "ForetellTopologyWindow.Plan",
+        "_topologyAtomicSwaps",
+        "_topologyRetainedRebuilds",
+        "SampleTopologySceneFingerprint",
+    ],
+    "BossMod/Foretell/ForetellTopologyWindow.cs": [
+        "ForetellTopologyWindowPlan",
+        "MinimumPrefetchMargin",
+        "AlignmentCells",
+        "NeedsReplacement",
+        "CoversVisible",
+        "TryClipSegmentToCircle",
     ],
     "BossMod/Foretell/ForetellCollisionMeshSource.cs": [
         "ForetellCollisionMeshSource",
@@ -375,6 +389,8 @@ requirements = {
         "ColliderType.Box",
         "ColliderType.Cylinder",
         "TryCapture",
+        "TrySceneFingerprint",
+        "MaximumFingerprintMilliseconds",
         "triangles.ToArray",
     ],
     "BossMod/Foretell/ForetellCollisionRasterizer.cs": [
@@ -622,6 +638,12 @@ if "ConditionFlag.InCombat" not in topology or "Task.Run" not in topology or "Fo
 invalidate = topology[topology.find("private void InvalidateTopology(") : topology.find("// Primary path")]
 if "_topology.Cursor = 0" in invalidate:
     errors.append("Frequent topology invalidations can restart and starve the bounded sweep")
+if "RequestTopologyAnalysis(player2, complete: false)" in topology:
+    errors.append("Foretell rolling topology exposes progressive fallback chunks to the radar")
+if "_topology.ReplaceWith(result.Grid)" not in topology or "_topologyRetainedRebuilds" not in topology:
+    errors.append("Foretell rolling topology lost its complete-front/atomic-back-buffer publication policy")
+if "AddSeconds(15)" in topology:
+    errors.append("Foretell collision capture regressed to a user-visible 15-second retry gap")
 
 foretell_sources = "\n".join(
     path.read_text(encoding="utf-8-sig")

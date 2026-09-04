@@ -244,8 +244,10 @@ internal sealed class ForetellTopologyGrid
         Resolution = Math.Clamp(resolution, .5f, 4f);
         var halfCells = Math.Max(4, (int)MathF.Ceiling(radius / Resolution));
         Width = Height = halfCells * 2 + 1;
-        OriginX = MathF.Round(center.X / Resolution) * Resolution - halfCells * Resolution;
-        OriginZ = MathF.Round(center.Z / Resolution) * Resolution - halfCells * Resolution;
+        // Origin is the lower cell boundary. Offset by half a cell so the middle cell centre is exactly the
+        // requested world-aligned window centre; this prevents every refresh from drifting by half a sample.
+        OriginX = MathF.Round(center.X / Resolution) * Resolution - (halfCells + .5f) * Resolution;
+        OriginZ = MathF.Round(center.Z / Resolution) * Resolution - (halfCells + .5f) * Resolution;
         ReferenceY = center.Y;
         Cells = new byte[CellCount];
         Heights = new float[CellCount];
@@ -533,7 +535,7 @@ internal sealed class ForetellTopologyGrid
                 if (candidates.Count == 0) next.Remove(loop.Count == 1 ? start : FromWorld(loop[^1]));
             } while (current != start && ++guard <= CellCount * 4);
             if (current == start && loop.Count >= 4)
-                loops.Add(SimplifyClosed(loop));
+                loops.Add(SimplifyClosed(loop, Resolution * .80f));
         }
         return loops;
 
@@ -541,10 +543,10 @@ internal sealed class ForetellTopologyGrid
         (int X, int Z) FromWorld(Vector2 p) => ((int)MathF.Round((p.X - OriginX) / Resolution), (int)MathF.Round((p.Y - OriginZ) / Resolution));
     }
 
-    private static List<Vector2> SimplifyClosed(List<Vector2> source)
+    private static List<Vector2> SimplifyClosed(List<Vector2> source, float tolerance)
     {
         if (source.Count < 5) return source;
-        var result = new List<Vector2>(source.Count);
+        var corners = new List<Vector2>(source.Count);
         for (var i = 0; i < source.Count; ++i)
         {
             var a = source[(i + source.Count - 1) % source.Count];
@@ -553,9 +555,74 @@ internal sealed class ForetellTopologyGrid
             var ab = b - a;
             var bc = c - b;
             if (Math.Abs(ab.X * bc.Y - ab.Y * bc.X) > .0001f)
-                result.Add(b);
+                corners.Add(b);
         }
-        return result.Count >= 3 ? result : source;
+        if (corners.Count < 5)
+            return corners.Count >= 3 ? corners : source;
+
+        // Split the ring across a long chord and run Ramer-Douglas-Peucker on both sides. This removes the visible
+        // one-cell staircase produced by rasterization while retaining real corridor corners and narrow obstacles.
+        var split = 1;
+        var farthest = 0f;
+        for (var i = 1; i < corners.Count; ++i)
+        {
+            var distance = Vector2.DistanceSquared(corners[0], corners[i]);
+            if (distance <= farthest) continue;
+            farthest = distance;
+            split = i;
+        }
+        if (split <= 1 || split >= corners.Count - 1)
+            return corners;
+
+        var first = SimplifyOpen(corners.GetRange(0, split + 1), tolerance);
+        var secondSource = corners.GetRange(split, corners.Count - split);
+        secondSource.Add(corners[0]);
+        var second = SimplifyOpen(secondSource, tolerance);
+        var result = new List<Vector2>(first.Count + second.Count - 2);
+        result.AddRange(first.Take(first.Count - 1));
+        result.AddRange(second.Take(second.Count - 1));
+        return result.Count >= 3 ? result : corners;
+    }
+
+    private static List<Vector2> SimplifyOpen(List<Vector2> source, float tolerance)
+    {
+        if (source.Count <= 2)
+            return source;
+        var keep = new bool[source.Count];
+        keep[0] = keep[^1] = true;
+        var pending = new Stack<(int First, int Last)>();
+        pending.Push((0, source.Count - 1));
+        var toleranceSquared = tolerance * tolerance;
+        while (pending.TryPop(out var range))
+        {
+            var farthest = toleranceSquared;
+            var selected = -1;
+            for (var i = range.First + 1; i < range.Last; ++i)
+            {
+                var distance = DistanceSquaredToSegment(source[i], source[range.First], source[range.Last]);
+                if (distance <= farthest) continue;
+                farthest = distance;
+                selected = i;
+            }
+            if (selected < 0) continue;
+            keep[selected] = true;
+            pending.Push((range.First, selected));
+            pending.Push((selected, range.Last));
+        }
+        var result = new List<Vector2>();
+        for (var i = 0; i < source.Count; ++i)
+            if (keep[i]) result.Add(source[i]);
+        return result;
+    }
+
+    private static float DistanceSquaredToSegment(Vector2 point, Vector2 a, Vector2 b)
+    {
+        var delta = b - a;
+        var lengthSquared = delta.LengthSquared();
+        if (lengthSquared <= 1e-8f)
+            return Vector2.DistanceSquared(point, a);
+        var t = Math.Clamp(Vector2.Dot(point - a, delta) / lengthSquared, 0, 1);
+        return Vector2.DistanceSquared(point, a + delta * t);
     }
 
     private bool CanTraverse(int from, int to, bool requireKnownEdges)

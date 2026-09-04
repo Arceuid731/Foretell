@@ -9,6 +9,7 @@ internal readonly record struct ForetellCollisionTriangle(Vector3 A, Vector3 B, 
 
 internal sealed record ForetellCollisionSnapshot(
     Vector3 Player,
+    Vector2 Center,
     float Radius,
     float Resolution,
     ForetellCollisionTriangle[] Triangles,
@@ -41,7 +42,7 @@ internal static class ForetellCollisionRasterizer
     {
         var started = Stopwatch.GetTimestamp();
         var grid = new ForetellTopologyGrid();
-        grid.Reset(snapshot.Player, snapshot.Radius, snapshot.Resolution);
+        grid.Reset(new(snapshot.Center.X, snapshot.Player.Y, snapshot.Center.Y), snapshot.Radius, snapshot.Resolution);
         var layers = new List<float>?[grid.CellCount];
         var walls = new List<WallSegment>();
         var floorTriangles = 0;

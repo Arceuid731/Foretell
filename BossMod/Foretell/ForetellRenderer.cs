@@ -663,17 +663,17 @@ public sealed partial class ForetellEngine
                     }
                 }
 
-                var wall = RadarTerrainColor();
-                var drop = RadarTerrainColor(.72f);
-                for (var z = 0; z < _topology.Height; ++z)
-                    for (var x = 0; x < _topology.Width; ++x)
+                var outline = RadarTerrainColor();
+                foreach (var contour in topology.Contours)
+                    for (var i = 0; i < contour.Count; ++i)
                     {
-                        var index = z * _topology.Width + x;
-                        if (!VisiblePassable(x, z)) continue;
-                        DrawEdge(x, z, index, x + 1, z, TopologyEdge.East, vertical: true);
-                        DrawEdge(x, z, index, x - 1, z, TopologyEdge.West, vertical: true);
-                        DrawEdge(x, z, index, x, z + 1, TopologyEdge.South, vertical: false);
-                        DrawEdge(x, z, index, x, z - 1, TopologyEdge.North, vertical: false);
+                        var a = contour[i];
+                        var b = contour[(i + 1) % contour.Count];
+                        if (!ForetellTopologyWindow.TryClipSegmentToCircle(a, b, player, worldRadius,
+                                out var clippedA, out var clippedB))
+                            continue;
+                        draw.AddLine(RadarPoint(clippedA, player, cameraAzimuth, center, scale),
+                            RadarPoint(clippedB, player, cameraAzimuth, center, scale), outline, 2.1f);
                     }
 
                 bool VisiblePassable(int x, int z)
@@ -683,33 +683,6 @@ public sealed partial class ForetellEngine
                         && Vector2.DistanceSquared(_topology.CellCenter(index), player) <= visibleRadiusSq;
                 }
 
-                void DrawEdge(int x, int z, int index, int neighborX, int neighborZ, TopologyEdge direction, bool vertical)
-                {
-                    var neighborInGrid = (uint)neighborX < (uint)_topology.Width && (uint)neighborZ < (uint)_topology.Height;
-                    var blockedWall = (topology.KnownEdges[index] & (byte)direction) != 0
-                        && (topology.BlockedEdges[index] & (byte)direction) != 0;
-                    var sampledDrop = neighborInGrid
-                        && topology.SampledCells[neighborZ * _topology.Width + neighborX] is (byte)TopologyCell.Blocked or (byte)TopologyCell.Void;
-                    if (!blockedWall && !sampledDrop) return;
-                    var wx = _topology.OriginX + (vertical && neighborX > x ? x + 1 : x) * _topology.Resolution;
-                    var wz = _topology.OriginZ + (!vertical && neighborZ > z ? z + 1 : z) * _topology.Resolution;
-                    Vector2 firstWorld;
-                    Vector2 secondWorld;
-                    if (vertical)
-                    {
-                        firstWorld = new(wx, _topology.OriginZ + z * _topology.Resolution);
-                        secondWorld = new(wx, _topology.OriginZ + (z + 1) * _topology.Resolution);
-                    }
-                    else
-                    {
-                        firstWorld = new(_topology.OriginX + x * _topology.Resolution, wz);
-                        secondWorld = new(_topology.OriginX + (x + 1) * _topology.Resolution, wz);
-                    }
-                    if (Vector2.DistanceSquared((firstWorld + secondWorld) * .5f, player) > worldRadius * worldRadius)
-                        return;
-                    draw.AddLine(RadarPoint(firstWorld, player, cameraAzimuth, center, scale),
-                        RadarPoint(secondWorld, player, cameraAzimuth, center, scale), blockedWall ? wall : drop, blockedWall ? 2.2f : 1.4f);
-                }
             }
         }
         finally { draw.PopClipRect(); }
