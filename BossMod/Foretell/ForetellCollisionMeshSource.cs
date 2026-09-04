@@ -34,20 +34,40 @@ internal static unsafe class ForetellCollisionMeshSource
                         continue;
                     if ((inspected++ & 0x3F) == 0 && Stopwatch.GetElapsedTime(started).TotalMilliseconds > MaximumFingerprintMilliseconds)
                         return false;
-                    var bounds = collider->WorldBoundingBox;
-                    if (!RectangleIntersectsCircle(bounds.Min.X, bounds.Min.Z, bounds.Max.X, bounds.Max.Z, center, radius))
-                        continue;
+                    var type = collider->GetColliderType();
+                    switch (type)
+                    {
+                        case ColliderType.Mesh:
+                        {
+                            var bounds = ((ColliderMesh*)collider)->WorldBoundingBox;
+                            if (!RectangleIntersectsCircle(bounds.Min.X, bounds.Min.Z, bounds.Max.X, bounds.Max.Z, center, radius))
+                                continue;
+                            Mix(BitConverter.SingleToUInt32Bits(bounds.Min.X));
+                            Mix(BitConverter.SingleToUInt32Bits(bounds.Min.Y));
+                            Mix(BitConverter.SingleToUInt32Bits(bounds.Min.Z));
+                            Mix(BitConverter.SingleToUInt32Bits(bounds.Max.X));
+                            Mix(BitConverter.SingleToUInt32Bits(bounds.Max.Y));
+                            Mix(BitConverter.SingleToUInt32Bits(bounds.Max.Z));
+                            break;
+                        }
+                        case ColliderType.Streamed:
+                        {
+                            var streamed = (ColliderStreamed*)collider;
+                            if (!RectangleIntersectsCircle(streamed->StreamedMinX, streamed->StreamedMinZ,
+                                    streamed->StreamedMaxX, streamed->StreamedMaxZ, center, radius))
+                                continue;
+                            Mix(BitConverter.SingleToUInt32Bits(streamed->StreamedMinX));
+                            Mix(BitConverter.SingleToUInt32Bits(streamed->StreamedMinZ));
+                            Mix(BitConverter.SingleToUInt32Bits(streamed->StreamedMaxX));
+                            Mix(BitConverter.SingleToUInt32Bits(streamed->StreamedMaxZ));
+                            break;
+                        }
+                    }
                     ++colliders;
                     Mix((ulong)(nuint)collider);
-                    Mix((ulong)collider->GetColliderType());
+                    Mix((ulong)type);
                     Mix((ulong)(uint)collider->VisibilityFlags);
-                    Mix(BitConverter.SingleToUInt32Bits(bounds.Min.X));
-                    Mix(BitConverter.SingleToUInt32Bits(bounds.Min.Y));
-                    Mix(BitConverter.SingleToUInt32Bits(bounds.Min.Z));
-                    Mix(BitConverter.SingleToUInt32Bits(bounds.Max.X));
-                    Mix(BitConverter.SingleToUInt32Bits(bounds.Max.Y));
-                    Mix(BitConverter.SingleToUInt32Bits(bounds.Max.Z));
-                    switch (collider->GetColliderType())
+                    switch (type)
                     {
                         case ColliderType.Mesh:
                             Mix(((ColliderMesh*)collider)->Loaded ? 1UL : 0UL);
@@ -117,11 +137,6 @@ internal static unsafe class ForetellCollisionMeshSource
                             if (streamed->Header == null || streamed->Elements == null || streamed->NumMeshesLoading > 0)
                                 continue;
                             var count = streamed->Header->NumMeshes;
-                            if (count is < 0 or > 1_000_000)
-                            {
-                                complete = false;
-                                continue;
-                            }
                             for (var i = 0; i < count && complete; ++i)
                                 complete &= CaptureMesh(streamed->Elements[i].Mesh);
                             break;
