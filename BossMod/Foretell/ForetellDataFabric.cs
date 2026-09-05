@@ -37,6 +37,7 @@ public sealed partial class ForetellEngine
     private readonly HashSet<ulong> _nativeActorPrioritySet = [];
     private readonly Dictionary<string, int> _fabricCollectionOffsets = [];
     private readonly Dictionary<Type, PropertyInfo[]> _fabricPropertyCache = [];
+    private readonly Dictionary<(Type, uint), ForetellObservation> _sheetFeatures = [];
     private readonly Dictionary<Type, FieldInfo[]> _fabricFieldCache = [];
     private long _fabricDeferredTraversals;
     private long _fabricRejectedGetters;
@@ -64,6 +65,7 @@ public sealed partial class ForetellEngine
         _nativeActorPriorities.Clear();
         _nativeActorPrioritySet.Clear();
         _fabricCollectionOffsets.Clear();
+        _sheetFeatures.Clear();
         _runtimeRootCursor = 0;
         _actorFabricCursor = 0;
         _nativeActorCursor = 0;
@@ -615,8 +617,19 @@ public sealed partial class ForetellEngine
                 RegisterCapability($"{prefix}.__sheet", typeof(T), "sheet", false, true, "sheet unavailable");
                 return;
             }
-            object row = sheet.GetRow(rowID);
-            FlattenRoot(row, prefix, observation, 5);
+            var key = (typeof(T), rowID);
+            if (!_sheetFeatures.TryGetValue(key, out var fields))
+            {
+                fields = new();
+                object row = sheet.GetRow(rowID);
+                var deferredBefore = _fabricDeferredTraversals;
+                FlattenRoot(row, prefix, fields, 3);
+                if (_sheetFeatures.Count >= 2048) _sheetFeatures.Clear();
+                if (_fabricDeferredTraversals == deferredBefore) _sheetFeatures[key] = fields;
+            }
+            foreach (var pair in fields.Numeric) observation.Numeric[pair.Key] = pair.Value;
+            foreach (var pair in fields.Text) observation.Text[pair.Key] = pair.Value;
+            foreach (var pair in fields.Binary) observation.Binary[pair.Key] = pair.Value;
         }
         catch (Exception e)
         {
@@ -742,6 +755,11 @@ public sealed partial class ForetellEngine
                 RegisterCapability(memberPath, type, p.Name, false, true, "not readable instance data");
                 continue;
             }
+            if (ForetellFabricPolicy.IsSheetStorageMember(type, p.PropertyType, p.Name))
+            {
+                RegisterCapability(memberPath, type, p.Name, false, true, "sheet storage/backing data; row fields and referenced row IDs are recorded separately");
+                continue;
+            }
             if (RejectNonBoxableMember(p.PropertyType, memberPath, type, p.Name))
                 continue;
 
@@ -778,6 +796,11 @@ public sealed partial class ForetellEngine
             if (f.IsStatic)
                 continue;
             var memberPath = $"{path}.{f.Name}";
+            if (ForetellFabricPolicy.IsSheetStorageMember(type, f.FieldType, f.Name))
+            {
+                RegisterCapability(memberPath, type, f.Name, false, true, "sheet storage/backing data; not independent gameplay evidence");
+                continue;
+            }
             if (RejectNonBoxableMember(f.FieldType, memberPath, type, f.Name))
                 continue;
             try

@@ -266,6 +266,21 @@ public static class ForetellInferenceCore
     public static bool IsAmbiguousLargeCircleAction(int castType, int effectRange, bool targetArea, uint omenID)
         => castType is 2 or 5 && effectRange >= 30 && !targetArea && omenID == 0;
 
+    // A radius establishes reach, not whether the party should separate, stack or be knocked back.
+    // These guards depend on client field semantics and asset names, never territory/action IDs.
+    public static ActionGeometryPrior NormalizeActionPrior(ActionGeometryPrior prior)
+    {
+        if ((prior.Omen ?? "").Contains("nockback", StringComparison.OrdinalIgnoreCase))
+            return prior.Kind == MechanicKind.Knockback && prior.Geometry == GeometryKind.Unknown ? prior : prior with
+            { Kind = MechanicKind.Knockback, Geometry = GeometryKind.Unknown, P1 = 0, P2 = 0, Confidence = .94f,
+                Evidence = prior.Evidence + "; client knockback Omen identifies the instruction, not distance or landing point" };
+        if (prior.CastType is 2 or 5 && !prior.TargetArea && prior.OmenID == 0 && prior.Kind != MechanicKind.Gaze)
+            return prior.Kind == MechanicKind.Unknown && prior.Geometry == GeometryKind.Unknown ? prior : prior with
+            { Kind = MechanicKind.Unknown, Geometry = GeometryKind.Unknown, Confidence = .72f,
+                Evidence = prior.Evidence + "; unmarked circle: radius cannot distinguish avoid, stack, spread or other targeting rules" };
+        return prior;
+    }
+
     public static bool IsReliableSpatialActionPrior(MechanicKind kind, GeometryKind geometry, float confidence, float p1, float p2)
         => kind == MechanicKind.GroundAOE && confidence >= .9f && GeometryParametersComplete(geometry, p1, p2);
 

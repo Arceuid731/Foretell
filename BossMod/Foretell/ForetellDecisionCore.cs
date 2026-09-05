@@ -31,6 +31,28 @@ public sealed record RouteAssessment(bool Eligible, Vector2 Destination, float T
 
 public static class ForetellDecisionCore
 {
+    // A mechanic can have many simultaneous casters. Apply the configured clutter budget to groups, then
+    // preserve every footprint in the selected group (up to the independent 64-shape rendering safety bound).
+    public static ActivePrediction[] SelectForDisplay(DecisionFrame frame, float threshold, int maxGroups)
+    {
+        var groups = new List<(string Key, uint Action, DateTime At)>();
+        var result = new List<ActivePrediction>();
+        foreach (var p in frame.Hazards.Select(h => h.Prediction).OrderBy(p => p.Activation))
+        {
+            if (!Valid(p) || p.Geometry == GeometryKind.Unknown && p.Guidance == GuidanceKind.None
+                || p.Confidence < threshold && p.Provenance != "Terrain cue") continue;
+            var known = groups.Any(g => g.Key == p.SignalKey && g.Action == p.ActionID && Math.Abs((g.At - p.Activation).TotalSeconds) <= .75);
+            if (!known)
+            {
+                if (groups.Count >= Math.Max(1, maxGroups)) continue;
+                groups.Add((p.SignalKey, p.ActionID, p.Activation));
+            }
+            if (result.Count == 64) break;
+            result.Add(p);
+        }
+        return result.ToArray();
+    }
+
     public static bool Valid(ActivePrediction p)
         => Enum.IsDefined(p.Geometry) && Enum.IsDefined(p.Kind) && Enum.IsDefined(p.Guidance) && Enum.IsDefined(p.Binding)
             && (p.Geometry is GeometryKind.Unknown or GeometryKind.Polygon || ForetellInferenceCore.GeometryParametersComplete(p.Geometry, p.P1, p.P2))

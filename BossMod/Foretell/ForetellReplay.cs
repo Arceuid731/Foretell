@@ -211,11 +211,13 @@ public sealed partial class ForetellEngine
             runtime = new
             {
                 updateFailures = _updateFailures,
+                lastUpdateFailure = _lastUpdateFailure,
                 updateOverruns = _updateOverruns,
                 updateLastMilliseconds = _lastUpdateMilliseconds,
                 updateMeanMilliseconds = _meanUpdateMilliseconds,
                 updatePeakMilliseconds = _peakUpdateMilliseconds,
                 semanticObservationsRejected = _semanticObservationsRejected,
+                recoveredEnemyCasts = _recoveredEnemyCasts,
                 semanticBudgetTrips = _semanticBudgetTrips,
                 semanticFrameMilliseconds = _semanticMillisecondsThisFrame,
                 semanticPeakObservationMilliseconds = _semanticPeakMilliseconds,
@@ -301,6 +303,7 @@ public sealed partial class ForetellEngine
                 topologySuspended = TopologySuspended,
                 episodeRejections = _episodeRejections,
                 semanticObservationsRejected = _semanticObservationsRejected,
+                recoveredEnemyCasts = _recoveredEnemyCasts,
                 semanticBudgetTrips = _semanticBudgetTrips,
                 learningEvictions = _learningEvictions,
                 coverageUnaccounted = _store.Coverage.Unaccounted

@@ -13,6 +13,9 @@ def read(path: str) -> str:
 
 
 requirements = {
+    "BossMod/Foretell/ForetellRadarCore.cs": ["ClosedTerrainBounds", "TerrainOpacity", "RadarView Smooth", "InView"],
+    "BossMod/Foretell/ForetellCastRecovery.cs": ["budgetAvailable()", "accepted.GetValueOrDefault", "NPCRemainingTime"],
+    "BossMod/Foretell/ForetellFabricPolicy.cs": ["IsSheetStorageMember", "ExcelPage", "RowRef", "RowId"],
     "BossMod/Foretell/ForetellEngine.cs": [
         "RawActorControlReceived.Subscribe(OnRawActorControl)",
         "AttachRawCapture();",
@@ -98,7 +101,7 @@ requirements = {
     "BossMod/Foretell/ForetellModel.cs": [
         "DecisionAuditStage",
         "DecisionAuditEntry",
-        "public int Schema { get; set; } = 24",
+        "public int Schema { get; set; } = 25",
         "public string PluginVersion { get; set; }",
         "List<DecisionAuditEntry> DecisionAudit",
         "SignalTriggerMemory",
@@ -186,7 +189,7 @@ requirements = {
         "DrawArenaBoundaryRadarFrame",
         "DrawDynamicTerrainRadar",
         "DrawDynamicTerrainWorld",
-        "EffectiveRadarWorldRadius",
+        "EffectiveRadarView",
         "DrawWorldLineClipped",
         "DrawRadarLineClipped",
         "Walkability cannot establish attack occlusion",
@@ -194,7 +197,8 @@ requirements = {
         "ProjectWorldAlertToTopology",
         "topology.Contours",
         "TryClipSegmentToCircle",
-        "↑ camera",
+        "ForetellRadarCore.TerrainOpacity",
+        "SelectForDisplay",
     ],
     "BossMod/Foretell/ForetellInspector.cs": [
         'DrawInspectorTab("Knowledge", DrawKnowledgeExplorer)',
@@ -496,6 +500,8 @@ requirements = {
         "IsGazeActionVFX",
         "IsAmbiguousLargeCircleAction",
         "IsReliableSpatialActionPrior",
+        "NormalizeActionPrior",
+        "unmarked circle: radius cannot distinguish",
     ],
     "BossMod/Foretell/ForetellStorageCore.cs": [
         "protectedFullPaths",

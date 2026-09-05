@@ -192,7 +192,7 @@ public sealed class ContextualMechanic
         }
     }
 
-    [JsonIgnore] public bool HasReliableActionPrior => PriorKind == MechanicKind.Gaze && PriorConfidence >= .90f
+    [JsonIgnore] public bool HasReliableActionPrior => PriorKind is MechanicKind.Gaze or MechanicKind.Knockback && PriorConfidence >= .90f
         || ForetellInferenceCore.IsReliableSpatialActionPrior(PriorKind, PriorGeometry, PriorConfidence, PriorP1, PriorP2);
     [JsonIgnore] public float GuidanceConfidence => Math.Min(RecentContradictions >= 2 ? .74f : 1f,
         HasReliableActionPrior ? Math.Max(Confidence, ForetellInferenceCore.WilsonLowerBound(ForecastHits, ForecastHits + ForecastMisses)) : ForetellInferenceCore.GuidanceConfidence(Confidence, ForecastHits, ForecastMisses));
@@ -499,7 +499,7 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 24;
+    public int Schema { get; set; } = 25;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];

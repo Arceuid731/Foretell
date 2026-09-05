@@ -13,17 +13,17 @@ public sealed partial class ForetellEngine
         { ++_outcomeGapGeneration; _lastOutcomeGapAt = observation.At; }
     }
 
-    private void ProcessObservation(ForetellObservation observation, bool replaying = false, bool enriched = false)
+    private bool ProcessObservation(ForetellObservation observation, bool replaying = false, bool enriched = false)
     {
         if (replaying)
         {
             ProcessObservationCore(observation, replaying: true, enriched: enriched);
-            return;
+            return true;
         }
         if (!TryEnterSemanticBudget(ForetellInferenceCore.IsPrioritySemanticObservation(observation.Kind, observation.SourceKind)))
         {
             NoteMissingOutcome(observation);
-            return;
+            return false;
         }
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
@@ -34,6 +34,7 @@ public sealed partial class ForetellEngine
         {
             ChargeSemanticBudget(started);
         }
+        return true;
     }
 
     private void ProcessObservationCore(ForetellObservation observation, bool replaying, bool enriched)
@@ -45,6 +46,7 @@ public sealed partial class ForetellEngine
         observation.Text ??= [];
         observation.Binary ??= [];
         observation.At = NormalizeObservationTime(observation.At);
+        if (observation.Prior is { } recordedPrior) observation.Prior = ForetellInferenceCore.NormalizeActionPrior(recordedPrior);
         var previousGap = _outcomeGapGeneration;
         PrepareDecisionContext(observation);
         if (observation.Numeric.TryGetValue("decision.outcomeGap", out var gap))
@@ -1754,7 +1756,7 @@ public sealed partial class ForetellEngine
             _preImpact.Resolve(episode.PreImpactFeatures, episode.PreImpactGuess, observedKind, episode.LeadSeconds, true);
 
         if (_cfg.EnableLearning && episode.Trigger.Kind == ObservationKind.CastStart && fit is FitResult globalFit
-            && mechanic.PriorKind != MechanicKind.Gaze && (mechanic.HasReliableActionPrior || !globalFit.Ambiguous))
+            && mechanic.PriorKind is not (MechanicKind.Gaze or MechanicKind.Knockback) && (mechanic.HasReliableActionPrior || !globalFit.Ambiguous))
         {
             var canonicalFit = mechanic.HasReliableActionPrior
                 ? new FitResult(mechanic.PriorGeometry, globalFit.Origin, globalFit.Rotation, mechanic.PriorP1, mechanic.PriorP2, mechanic.PriorConfidence)

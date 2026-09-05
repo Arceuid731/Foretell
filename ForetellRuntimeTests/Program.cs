@@ -107,6 +107,7 @@ internal static class Program
         var changed = ForetellEngine.EvaluateRecordedObservations(changedOutcome);
         Check(JsonSerializer.Serialize(before) == JsonSerializer.Serialize(changed.Knowledge.DecisionAudit.Where(d => d.At <= cast.At)
             .Select(d => new { d.Stage, d.Mechanic, d.Geometry, d.Confidence }).ToArray()), "Future outcomes changed earlier decisions");
+        CastRecoveryTests.Run();
         CaptureTests.Run(events, firstRun.Report.DecisionDigest);
         foreach (var observation in events) { observation.Context = null; observation.ContextID = 0; }
         var legacy = ForetellEngine.EvaluateRecordedObservations(events);

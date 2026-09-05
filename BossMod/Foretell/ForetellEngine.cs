@@ -97,6 +97,7 @@ public sealed partial class ForetellEngine : IDisposable
     private Task<ForetellRawReadReport>? _rawAnalysisTask;
     private ForetellRawReadReport? _lastRawAnalysis;
     private long _updateFailures;
+    private string _lastUpdateFailure = "";
     private long _updateOverruns;
     private double _lastUpdateMilliseconds;
     private double _peakUpdateMilliseconds;
@@ -279,6 +280,8 @@ public sealed partial class ForetellEngine : IDisposable
         catch (Exception e)
         {
             ++_updateFailures;
+            _lastUpdateFailure = e.ToString();
+            if (_lastUpdateFailure.Length > 4096) _lastUpdateFailure = _lastUpdateFailure[..4096];
             var now = DateTime.UtcNow;
             if ((now - _lastUpdateFailureLog).TotalSeconds >= 5)
             {
@@ -320,6 +323,7 @@ public sealed partial class ForetellEngine : IDisposable
             BeginCombatPull(_store.Encounters.GetValueOrDefault(_territory), now);
 
         SyncReplayWriter();
+        RecoverActiveEnemyCasts();
         if ((DateTime.UtcNow - _rawOpenedAt).TotalHours >= 1)
             OpenRawJournal();
         // During burst recovery, exact captures continue on their bounded background queues. Optional derived
@@ -393,6 +397,7 @@ public sealed partial class ForetellEngine : IDisposable
         _episodeCleanup.Clear();
         _tracks.Clear();
         _precursorCues.Clear();
+        _acceptedActiveCasts.Clear();
         _decisionContext = null;
         _lastOutcomeGapAt = default;
         ++_predictionRevision;
@@ -683,7 +688,7 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 24);
+        _store.Schema = Math.Max(_store.Schema, 25);
         _store.PreImpact ??= new();
         _store.Mechanics ??= [];
         if (loadedSchema < 24) _store.Mechanics.Clear(); // Rebuild derived cross-territory fits; contextual samples remain.
@@ -794,6 +799,7 @@ public sealed partial class ForetellEngine : IDisposable
                         if (!mechanic.HasReliableActionPrior)
                         { mechanic.Kind = MechanicKind.Unknown; mechanic.GeometryAmbiguous = true; }
                     }
+                if (loadedSchema < 25) MigratePre25ActionGuidance(encounter);
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
                 foreach (var trigger in encounter.TriggerContexts.Values) NormalizeSignalTriggerMemory(trigger);
                 foreach (var edge in encounter.CausalEdges.Values)
@@ -969,6 +975,32 @@ public sealed partial class ForetellEngine : IDisposable
             composite.Forecasts = 0;
             composite.Hits = 0;
             composite.Misses = 0;
+        }
+    }
+
+    private void MigratePre25ActionGuidance(EncounterMemory encounter)
+    {
+        foreach (var mechanic in encounter.Mechanics.Values.Where(m => m.TriggerKind == ObservationKind.CastStart))
+        {
+            var prior = new ActionGeometryPrior(mechanic.TriggerID, mechanic.PriorGeometry, mechanic.PriorKind,
+                mechanic.PriorP1, mechanic.PriorP2, mechanic.PriorConfidence, mechanic.PriorCastType, mechanic.PriorEffectRange,
+                mechanic.PriorXAxisModifier, mechanic.PriorTargetArea, mechanic.PriorOmenID, mechanic.PriorOmen,
+                mechanic.PriorVFXID, mechanic.PriorEvidence);
+            var repaired = ForetellInferenceCore.NormalizeActionPrior(prior);
+            if (repaired == prior) continue;
+            mechanic.PriorKind = repaired.Kind; mechanic.PriorGeometry = repaired.Geometry;
+            mechanic.PriorP1 = repaired.P1; mechanic.PriorP2 = repaired.P2;
+            mechanic.PriorConfidence = repaired.Confidence; mechanic.PriorEvidence = repaired.Evidence;
+            // Remove the unsafe instruction and its derived stages, preserving observations and unrelated memory.
+            if (mechanic.Kind is MechanicKind.GroundAOE or MechanicKind.TargetedAOE)
+            {
+                ResetUnsafeMechanicClassification(mechanic);
+                mechanic.GeometryAmbiguous = true;
+                mechanic.Stages.Clear();
+                mechanic.Hypotheses.Clear();
+            }
+            ReassertReliableActionPrior(mechanic);
+            _store.Mechanics.Remove(mechanic.TriggerID);
         }
     }
 

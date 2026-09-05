@@ -83,7 +83,7 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("Radar arena frame", tooltip: "Auto keeps a world-aligned, double-buffered collision map prefetched beyond the visible radar, including barriers that close at pull start. Complete contours swap atomically so movement never exposes scan chunks. The map is local and independent from authored BMR arena data. Circle and Square force the presentation frame without changing learned mechanics.")]
     public ForetellRadarShape RadarShape = ForetellRadarShape.Auto;
 
-    [PropertyDisplay("Radar zoom mode", tooltip: "Automatic fits a detected closed room or arena, but stays within the configured readable limits in open areas and corridors. Manual always uses the selected visible radius.")]
+    [PropertyDisplay("Radar zoom mode", tooltip: "Automatic fits compact observed rooms or focuses on the boss, party and attack sources. Open areas use the configured local radius. Manual always uses the selected visible radius.")]
     public ForetellRadarZoom RadarZoom = ForetellRadarZoom.Automatic;
 
     [PropertyDisplay("Radar terrain style", tooltip: "Outline draws only observed walls, drops and closed-arena edges. Filled also shades the connected walkable surface.")]
@@ -134,7 +134,7 @@ public sealed class ForetellConfig : ConfigNode
     [PropertySlider(50, 100, Speed = 1)]
     public float SafeConfidence = 99;
 
-    [PropertyDisplay("Maximum learned AOEs rendered simultaneously", tooltip: "Caps adaptive world-overlay clutter when several learned mechanics are active at once.")]
+    [PropertyDisplay("Maximum simultaneous hazard groups", tooltip: "Limits distinct attacks in the radar and world overlay. Simultaneous sources of the same attack remain together, within a 64-shape rendering limit.")]
     [PropertySlider(1, 32, Speed = 1)]
     public int MaxRenderedMechanics = 12;
 
@@ -142,7 +142,7 @@ public sealed class ForetellConfig : ConfigNode
     [PropertySlider(5, 120, Speed = 1)]
     public float RadarWorldRadius = 30;
 
-    [PropertyDisplay("Automatic zoom minimum radius (yalms)", tooltip: "Local radius used when no complete closed boundary can be proved.")]
+    [PropertyDisplay("Open-world automatic radius (yalms)", tooltip: "Local radius in open areas. Compact rooms and boss combat can zoom closer automatically.")]
     [PropertySlider(10, 60, Speed = 1)]
     public float RadarAutoMinimumRadius = 30;
 

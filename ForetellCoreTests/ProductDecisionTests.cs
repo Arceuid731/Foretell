@@ -13,6 +13,7 @@ internal static class ProductDecisionTests
         RoutesRespectTimingAndUncertainty();
         FootprintsRequirePositionAndTimeAgreement();
         SequencesRequireSpatialAgreement();
+        SimultaneousFootprintsStayTogether();
         Console.WriteLine("Foretell product decision tests passed.");
     }
 
@@ -22,6 +23,22 @@ internal static class ProductDecisionTests
     private static DecisionHazard Hazard(long id, ActivePrediction p, double duration = 1)
         => new(id, p, p.Activation.AddSeconds(duration), p.Geometry != GeometryKind.Unknown, false, "test");
     private static DecisionFrame Frame(params DecisionHazard[] hazards) => new(At, hazards, true, true);
+
+    private static void SimultaneousFootprintsStayTogether()
+    {
+        var lines = Enumerable.Range(0, 5).Select(i => Hazard(i, Circle(new(i * 8, 0), 1) with
+        { CasterID = (ulong)(100 + i), Geometry = GeometryKind.Rectangle, P1 = 40, P2 = 2, SignalKey = "same attack" })).ToArray();
+        var separate = Hazard(20, Circle(Vector2.Zero, 5, 3) with { ActionID = 21 });
+        var selected = ForetellDecisionCore.SelectForDisplay(Frame([.. lines, separate]), .75f, 1);
+        Check.That(selected.Length == 5 && selected.Select(p => p.CasterID).Distinct().Count() == 5,
+            "Display budget dropped simultaneous sources of one mechanic");
+        var low = Hazard(21, Circle(Vector2.Zero, 5, 1, .5f));
+        Check.That(ForetellDecisionCore.SelectForDisplay(Frame([low, .. lines]), .75f, 1).Length == 5,
+            "Below-threshold hazard consumed a display group");
+        var many = Enumerable.Range(0, 100).Select(i => Hazard(i, lines[0].Prediction with { CasterID = (ulong)i })).ToArray();
+        Check.That(ForetellDecisionCore.SelectForDisplay(Frame(many), .75f, 1).Length == 64, "Display safety bound was lost");
+        Check.That(Frame([.. lines, separate]).Hazards.Length == 6, "Presentation budget mutated the decision input");
+    }
 
     private static void ReliabilityDoesNotCountOccurrencesAsProof()
     {

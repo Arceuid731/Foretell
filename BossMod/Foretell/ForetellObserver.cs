@@ -6,6 +6,8 @@ namespace BossMod.Foretell;
 public sealed partial class ForetellEngine
 {
     private readonly HashSet<Type> _substitutedWorldOperations = [];
+    private readonly Dictionary<ulong, ActorCastInfo> _acceptedActiveCasts = [];
+    private long _recoveredEnemyCasts;
     private readonly Dictionary<(uint Source, uint Command), ActorControlGate> _actorControlGates = [];
     private readonly record struct ActorControlGate(ulong Fingerprint, DateTime At);
 
@@ -16,13 +18,26 @@ public sealed partial class ForetellEngine
     }
 
     private void OnActorRemoved(Actor actor)
-        => ProcessObservation(Observation(ObservationKind.ActorRemoved, actor, detail: actor.Type.ToString()));
+    {
+        _acceptedActiveCasts.Remove(actor.InstanceID);
+        ProcessObservation(Observation(ObservationKind.ActorRemoved, actor, detail: actor.Type.ToString()));
+    }
 
-    private void OnCastStarted(Actor actor)
+    private void OnCastStarted(Actor actor) => ObserveCastStart(actor, false);
+
+    // Recover an already-visible cast on the next frame after callback budget pressure. Observe its CURRENT
+    // remaining duration/pose; never backdate a prediction or infer a hidden cast from encounter-authored data.
+    private void RecoverActiveEnemyCasts()
+    {
+        ForetellCastRecovery.Recover(_ws.Actors, _acceptedActiveCasts,
+            () => SemanticBudgetAvailable(priority: true), actor => ObserveCastStart(actor, true));
+    }
+
+    private bool ObserveCastStart(Actor actor, bool recovered)
     {
         PrioritizeNativeActor(actor.InstanceID);
         var spell = actor.CastInfo;
-        if (spell == null || !spell.IsSpell()) return;
+        if (spell == null || !spell.IsSpell()) return false;
         var castSeconds = (float)Math.Max(0, spell.NPCRemainingTime);
         var obs = Observation(ObservationKind.CastStart, actor, spell.Action.ID, target: spell.TargetID, value1: castSeconds);
         if (_ws.Actors.Find(spell.TargetID) is { } castTarget)
@@ -30,7 +45,14 @@ public sealed partial class ForetellEngine
         else
         { obs.TargetX = spell.LocXZ.X; obs.TargetZ = spell.LocXZ.Z; }
         obs.Rotation = spell.Rotation.Rad;
-        ProcessObservation(obs);
+        if (recovered) obs.Numeric["cast.recoveredFromLiveState"] = 1;
+        if (ProcessObservation(obs))
+        {
+            _acceptedActiveCasts[actor.InstanceID] = spell;
+            if (recovered) ++_recoveredEnemyCasts;
+            return true;
+        }
+        return false;
     }
 
     private void OnCastFinished(Actor actor)

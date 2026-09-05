@@ -1,11 +1,12 @@
-Foretell 0.10.1 makes development capture automatic and bounded.
+Foretell 0.10.2 improves radar stability, combat framing and simultaneous attack collection.
 
-- Record accepted decision inputs, client priors and bounded world context automatically; the optional readable Replay Lab switch is no longer required for Analysis ZIP capture.
-- Compress and seal small independent parts on a background worker. Bound the new cache to 64 MiB per territory session, 256 MiB total and 14 days; report oversized events, backlog losses and quota stops explicitly.
-- Include the selected session capture in Analysis ZIP, including a safely sealed snapshot of an active session. Limit the ZIP to 128 MiB and disclose supplemental files omitted for size. Fix exclusion of readable recordings already closed with record off.
-- Inspect and evaluate ZIPs progressively without retaining the whole recording. Verify part hashes and event counts, preserve missing-evidence abstention, and expose an --inspect summary command.
-- Clarify English UI labels and show automatic capture status. Existing raw/readable retention settings, learned memory and exported ZIPs keep their existing policy.
+- Keep terrain opacity stable during normal refreshes and remove transparency seams inside the filled map. Published missing-floor changes still replace the map immediately.
+- Use a square Auto viewport, fit compact observed rooms or boss combat space, and smooth zoom and panning. The open-world radius no longer forces small boss arenas to zoom out; rectangular corners remain visible.
+- Recover still-active enemy casts missed during callback budget pressure, without duplicate predictions or backdating. Apply the shared radar/world display limit to simultaneous attack groups, preserving their individual footprints within a separate 64-shape bound.
+- Exclude Lumina backing Excel pages before reflection and cache bounded static row features, addressing oversized actor observations and unnecessary ingestion work.
+- Stop turning unmarked circle metadata into unsupported AVOID instructions. Keep ambiguous casts as WATCH; recognize explicit knockback Omen names without inventing a landing point. Migrate affected old derived instructions while retaining observation counts and unrelated knowledge.
+- Remove the camera caption and clarify the confidence legend: Learning / Confident / Very high. Include the last update exception and recovered-cast count in analysis diagnostics. Automatic capture remains enabled without extra Replay settings.
 
-Validated with detached real-engine capture/export regressions, core tests, telemetry contract and release build. Live UI/performance validation remains necessary. Semantic replay does not reconstruct rendered pixels, historical collision changes or a complete initial learned-memory checkpoint.
+Validated with real-engine simultaneous-cast and guidance regressions, radar/core tests, automatic capture/export tests, the telemetry contract and a Release build. Live visual/performance checks remain necessary. The inspected Praetorium capture is partial, so the changes do not claim complete encounter coverage or the same first-occurrence anticipation as authored BMR modules.
 
-See docs/foretell-0.10.1.md for limits and analysis commands.
+See docs/review-praetorium-2026-09-05.md for findings, limits and the next test.

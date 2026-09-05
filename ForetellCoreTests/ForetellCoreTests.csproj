@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../BossMod/Foretell/ForetellRadarCore.cs" Link="ForetellRadarCore.cs" />
     <Compile Include="../BossMod/Foretell/ForetellTopologyGrid.cs" Link="ForetellTopologyGrid.cs" />
     <Compile Include="../BossMod/Foretell/ForetellTopologyWindow.cs" Link="ForetellTopologyWindow.cs" />
     <Compile Include="../BossMod/Foretell/ForetellCollisionRasterizer.cs" Link="ForetellCollisionRasterizer.cs" />

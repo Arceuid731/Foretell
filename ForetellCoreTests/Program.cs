@@ -44,6 +44,7 @@ static class ForetellCoreTests
             return;
         }
         ProductDecisionTests.Run();
+        RadarTests.Run();
         TopologyConnectedComponentAndHole();
         TopologyWindowPrefetchesBeforeVisibleEdge();
         TopologyRadarContourClipIsContinuous();
@@ -956,7 +957,7 @@ static class ForetellCoreTests
             MeanBossHPRatio = .7
         };
         var copy = JsonSerializer.Deserialize<ForetellStore>(JsonSerializer.Serialize(store));
-        Check.That(copy?.Schema == 24 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
+        Check.That(copy?.Schema == 25 && copy.DecisionAudit.Count == 1, "decision audit schema/list did not round-trip");
         Check.That(copy!.Sessions.Single().PluginVersion == "0.8.9.0", "session plugin-version provenance did not round-trip");
         var entry = copy!.DecisionAudit[0];
         Check.That(entry.Stage == DecisionAuditStage.Proposed && entry.Geometry == GeometryKind.Cone

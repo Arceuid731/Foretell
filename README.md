@@ -51,6 +51,12 @@ One occurrence can supply a complete client shape, but one inferred occurrence d
 
 World, radar and text consume one decision frame. Direct movement suggestions account for activation windows, walking travel time, all represented credible hazards, fresh connected terrain and observed arena limits. Unknown spatial requirements, unresolved personal mechanics and recent capture gaps block a route recommendation. The planner is advisory and intentionally bounded; it does not solve every encounter constraint.
 
+## Radar and guidance updates
+
+Auto uses a square viewport to retain rectangular arena corners. Automatic zoom fits compact observed terrain or the boss, party and attack sources, with smooth transitions; the open-world radius does not impose a minimum on small fights. Terrain opacity stays stable during routine refreshes, and missing-floor updates replace the published grid immediately. The English legend describes confidence: Learning / Confident / Very high.
+
+A complete client radius does not establish a tactical instruction. Unmarked circle families remain WATCH until their meaning is supported; explicit knockback Omen names produce KNOCKBACK without a guessed distance. Simultaneous casts missed under load can be recovered while still active, and the radar/world rendering budget preserves multiple sources of the same attack. See the [Praetorium analysis and 0.10.2 corrections](docs/review-praetorium-2026-09-05.md).
+
 ## Foretell modes
 
 - **Legacy** — BMR presentation only; Foretell guidance is hidden.

@@ -196,7 +196,7 @@ public sealed partial class ForetellEngine
 
             var evidence = $"Action sheet: CastType={castType}, EffectRange={effectRange}, XAxisModifier={xAxis}, Range={range}, " +
                 $"TargetArea={targetArea}, AffectsPosition={affectsPosition}, Omen={omenID}:{omen}, VFX={vfxID}; {why}";
-            return new(trigger.PrimaryID, geometry, kind, p1, p2, confidence, castType, effectRange, xAxis, targetArea, omenID, omen, vfxID, evidence);
+            return ForetellInferenceCore.NormalizeActionPrior(new(trigger.PrimaryID, geometry, kind, p1, p2, confidence, castType, effectRange, xAxis, targetArea, omenID, omen, vfxID, evidence));
         }
         catch (Exception e)
         {
@@ -266,7 +266,7 @@ public sealed partial class ForetellEngine
                 var watchSource = new Vector2(trigger.X, trigger.Z);
                 var watchTarget = new Vector2(trigger.TargetX, trigger.TargetZ);
                 var semanticKind = hasSemanticPrior ? p.Kind : MechanicKind.Unknown;
-                var guidance = semanticKind == MechanicKind.Gaze ? GuidanceKind.LookAway : GuidanceKind.None;
+                var guidance = ForetellInferenceCore.GuidanceFor(semanticKind);
                 var watchConfidence = hasSemanticPrior ? p.Confidence : .76f;
                 var remainingSeconds = float.IsFinite(trigger.Value1) ? Math.Clamp(trigger.Value1, 0, 120) : 0;
                 var evidence = hasSemanticPrior
@@ -324,9 +324,9 @@ public sealed partial class ForetellEngine
 
     private static void ReassertReliableActionPrior(ContextualMechanic mechanic)
     {
-        if (mechanic.PriorKind == MechanicKind.Gaze && mechanic.PriorConfidence >= .90f)
+        if (mechanic.PriorKind is MechanicKind.Gaze or MechanicKind.Knockback && mechanic.PriorConfidence >= .90f)
         {
-            mechanic.Kind = MechanicKind.Gaze;
+            mechanic.Kind = mechanic.PriorKind;
             mechanic.Geometry = GeometryKind.Unknown;
             mechanic.P1 = 0;
             mechanic.P2 = 0;
@@ -349,6 +349,7 @@ public sealed partial class ForetellEngine
         var directAffectedEvidence = mechanic.AffectedSamples > 0;
         return mechanic.Kind switch
         {
+            MechanicKind.GroundAOE => mechanic.ForecastHits >= 3 && !mechanic.GeometryAmbiguous,
             MechanicKind.Raidwide => mechanic.AffectedSamples >= 3,
             MechanicKind.Tankbuster or MechanicKind.TargetedAOE => directAffectedEvidence,
             MechanicKind.Stack or MechanicKind.Spread or MechanicKind.LineStack => mechanic.AffectedSamples >= 2 && mechanic.Evidence.GetValueOrDefault(ObservationKind.Icon) > 0,

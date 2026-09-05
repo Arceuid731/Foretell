@@ -341,7 +341,7 @@ public sealed partial class ForetellEngine
             changed |= ImGui.SliderFloat("Visual threshold (%)", ref _cfg.VisualConfidence, 50, 100);
             changed |= ImGui.SliderFloat("Warning threshold (%)", ref _cfg.WarningConfidence, 50, 100);
             changed |= ImGui.SliderFloat("Safe threshold (%)", ref _cfg.SafeConfidence, 50, 100);
-            changed |= ImGui.SliderInt("Maximum simultaneous mechanics", ref _cfg.MaxRenderedMechanics, 1, 32);
+            changed |= ImGui.SliderInt("Maximum simultaneous hazard groups", ref _cfg.MaxRenderedMechanics, 1, 32);
             _cfg.WarningConfidence = Math.Max(_cfg.VisualConfidence, _cfg.WarningConfidence);
             _cfg.SafeConfidence = Math.Max(_cfg.WarningConfidence, _cfg.SafeConfidence);
         }
@@ -367,10 +367,10 @@ public sealed partial class ForetellEngine
                 changed |= ImGui.SliderFloat("Manual distance to edge (yalms)", ref _cfg.RadarWorldRadius, 5, 120);
             else
             {
-                changed |= ImGui.SliderFloat("Auto zoom minimum (yalms)", ref _cfg.RadarAutoMinimumRadius, 10, 60);
+                changed |= ImGui.SliderFloat("Open-world radius (yalms)", ref _cfg.RadarAutoMinimumRadius, 10, 60);
                 _cfg.RadarAutoMaximumRadius = Math.Max(_cfg.RadarAutoMaximumRadius, _cfg.RadarAutoMinimumRadius);
                 changed |= ImGui.SliderFloat("Auto zoom maximum (yalms)", ref _cfg.RadarAutoMaximumRadius, Math.Max(20, _cfg.RadarAutoMinimumRadius), 120);
-                ImGui.TextDisabled("Closed rooms are fitted automatically; open terrain and unfinished corridors keep the minimum zoom.");
+                ImGui.TextDisabled("Compact rooms fit their observed bounds. Boss fights focus on the combat area; open terrain uses the radius above. Auto framing includes rectangular arena corners.");
             }
             var terrainStyle = (int)_cfg.RadarTerrainStyle;
             if (ImGui.Combo("Terrain drawing", ref terrainStyle, RadarTerrainStyleLabels, RadarTerrainStyleLabels.Length))
