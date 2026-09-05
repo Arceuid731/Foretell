@@ -60,6 +60,9 @@ jobs:
       - name: Restore
         run: dotnet restore BossMod/BossModReborn.csproj
 
+      - name: Run detached Foretell runtime tests
+        run: dotnet run --project ForetellRuntimeTests/ForetellRuntimeTests.csproj -c Release
+
       - name: Run deterministic Foretell core tests
         run: dotnet run --project ForetellCoreTests/ForetellCoreTests.csproj -c Release
 

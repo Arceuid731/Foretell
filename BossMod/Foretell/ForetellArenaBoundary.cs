@@ -32,7 +32,7 @@ public sealed partial class ForetellEngine
         get
         {
             var player = _ws.Party[PartyState.PlayerSlot];
-            var inCombat = Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat];
+            var inCombat = DecisionCombat;
             if (!ForetellInferenceCore.ShouldUseFastArenaBoundary(inCombat)
                 || _arenaBoundary is not { ArenaLike: true } boundary || player == null
                 || Math.Abs(player.PosRot.Y - boundary.ReferenceY) > 6
@@ -261,6 +261,7 @@ public sealed partial class ForetellEngine
 
     private void RecordLearnedArenaSourceContext(ForetellObservation observation, SourceMemory source)
     {
+        if (_isReplay) return;
         if (source.Kind != SourceKind.Enemy)
             return;
         if (observation.Numeric.TryGetValue("actor.hp.maximum", out var hp) && hp is > 0 and <= uint.MaxValue)

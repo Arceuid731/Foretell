@@ -6,6 +6,7 @@ on:
     paths:
       - 'BossMod/**'
       - 'ForetellCoreTests/**'
+      - 'ForetellRuntimeTests/**'
       - 'global.json'
       - '.github/workflows/build.yml'
       - '.github/scripts/check_foretell_telemetry_contract.py'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'BossMod/**'
       - 'ForetellCoreTests/**'
+      - 'ForetellRuntimeTests/**'
       - 'global.json'
       - '.github/workflows/build.yml'
       - '.github/scripts/check_foretell_telemetry_contract.py'
@@ -41,6 +43,9 @@ jobs:
           Invoke-WebRequest -Uri https://goatcorp.github.io/dalamud-distrib/latest.zip -OutFile latest.zip
           Expand-Archive -Force latest.zip -DestinationPath $dest
       - run: dotnet restore BossMod/BossModReborn.csproj
+      - name: Run detached Foretell runtime tests
+        run: dotnet run --project ForetellRuntimeTests/ForetellRuntimeTests.csproj -c Release
+
       - name: Run deterministic Foretell core tests
         run: dotnet run --project ForetellCoreTests/ForetellCoreTests.csproj -c Release
       - name: Build

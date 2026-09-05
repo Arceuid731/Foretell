@@ -193,9 +193,10 @@ public sealed class ClientState
 
     public uint GetInventoryItemQuantity(uint itemId) => Inventory.TryGetValue(itemId, out var q) ? q : 0;
 
-    public ClientState()
+    public ClientState(bool initializeSupportedItems = true)
     {
         Inventory = [];
+        if (!initializeSupportedItems) return;
         foreach (var it in ActionDefinitions.Instance.SupportedItems)
         {
             Inventory[it] = default;

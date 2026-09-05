@@ -98,7 +98,7 @@ requirements = {
     "BossMod/Foretell/ForetellModel.cs": [
         "DecisionAuditStage",
         "DecisionAuditEntry",
-        "public int Schema { get; set; } = 23",
+        "public int Schema { get; set; } = 24",
         "public string PluginVersion { get; set; }",
         "List<DecisionAuditEntry> DecisionAudit",
         "SignalTriggerMemory",
@@ -197,8 +197,8 @@ requirements = {
         "↑ camera",
     ],
     "BossMod/Foretell/ForetellInspector.cs": [
-        'DrawInspectorTab("Knowledge explorer", DrawKnowledgeExplorer)',
-        'DrawInspectorTab("Replay & storage", DrawInspectorReplay)',
+        'DrawInspectorTab("Knowledge", DrawKnowledgeExplorer)',
+        'DrawInspectorTab("Recordings", DrawInspectorReplay)',
         "finally { ImGui.EndTabBar(); }",
         "finally { ImGui.EndTabItem(); }",
         "DrawKnowledgeExplorer()",

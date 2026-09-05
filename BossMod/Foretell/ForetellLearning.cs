@@ -5,11 +5,12 @@ namespace BossMod.Foretell;
 public sealed partial class ForetellEngine
 {
     private long _outcomeGapGeneration;
+    private DateTime _lastOutcomeGapAt;
 
     private void NoteMissingOutcome(ForetellObservation observation)
     {
         if (ForetellInferenceCore.IsMechanicOutcomeEvidence(observation.Kind, observation.SourceKind))
-            ++_outcomeGapGeneration;
+        { ++_outcomeGapGeneration; _lastOutcomeGapAt = observation.At; }
     }
 
     private void ProcessObservation(ForetellObservation observation, bool replaying = false, bool enriched = false)
@@ -44,6 +45,11 @@ public sealed partial class ForetellEngine
         observation.Text ??= [];
         observation.Binary ??= [];
         observation.At = NormalizeObservationTime(observation.At);
+        var previousGap = _outcomeGapGeneration;
+        PrepareDecisionContext(observation);
+        if (observation.Numeric.TryGetValue("decision.outcomeGap", out var gap))
+            _outcomeGapGeneration = Math.Max(_outcomeGapGeneration, (long)Math.Clamp(gap, 0, long.MaxValue));
+        if (_outcomeGapGeneration != previousGap) _lastOutcomeGapAt = observation.At;
         observation.X = FiniteOrZero(observation.X);
         observation.Z = FiniteOrZero(observation.Z);
         observation.TargetX = FiniteOrZero(observation.TargetX);
@@ -55,14 +61,28 @@ public sealed partial class ForetellEngine
         else _sequence = Math.Max(_sequence, observation.Sequence);
         if (observation.TerritoryID == 0) observation.TerritoryID = _territory;
         if (replaying) RegisterRecordedFeatures(observation); else if (!enriched) EnrichObservation(observation);
+        if (!replaying && observation.Kind is ObservationKind.CastStart or ObservationKind.ActionResolved)
+            observation.Prior = ReadActionGeometryPrior(observation);
 
         FinalizeDue(observation.At, exhaustive: replaying);
         _session.Observe(observation);
+        LockCastGeometry(observation);
+        if (observation.Kind == ObservationKind.DecisionFrame)
+        {
+            Record(observation, replaying);
+            UpdateTriggerContextForecasts(observation.At);
+            ExpireHazardContext(observation.At);
+            ExpireTimelineForecasts(observation.At);
+            if (_inPull && !DecisionCombat) EndCombatPull();
+            foreach (var id in _predictions.Where(p => PredictionEnd(p.Value) < observation.At).Select(p => p.Key).ToArray())
+                ExpirePrediction(id, "display lifetime ended");
+            return;
+        }
         var encounter = _store.Encounters.GetValueOrDefault(observation.TerritoryID);
         if (_cfg.EnableLearning)
         {
             encounter ??= Encounter(observation.TerritoryID);
-            encounter.LastSeen = DateTime.UtcNow;
+            encounter.LastSeen = LearningNow;
             encounter.ObservationCounts[observation.Kind] = encounter.ObservationCounts.GetValueOrDefault(observation.Kind) + 1;
             UpdateSourceMemory(encounter, observation);
             if (observation.Detail is "raw:feature-window" or "raw:250ms-window")
@@ -110,6 +130,12 @@ public sealed partial class ForetellEngine
         if (mayStartEpisode && observation.Kind == ObservationKind.CastStart)
             ApplyActionMetadataPrior(observation);
         AccumulateDataFeatures(observation, correlated);
+        if (ForetellPreImpactModel.IsPrecursor(observation.Kind))
+        {
+            _precursorCues.Enqueue(observation);
+            while (_precursorCues.Count > 32 || _precursorCues.TryPeek(out var cue) && (observation.At - cue.At).TotalSeconds > 3)
+                _precursorCues.Dequeue();
+        }
 
         if (observation.Kind == ObservationKind.DeathChanged && observation.Flag && observation.ActorID != 0)
             CancelPredictionsForCaster(observation.ActorID, "caster died");
@@ -142,13 +168,13 @@ public sealed partial class ForetellEngine
             {
                 OID = observation.ActorOID,
                 Kind = observation.SourceKind,
-                FirstSeen = DateTime.UtcNow,
-                LastSeen = DateTime.UtcNow
+                FirstSeen = LearningNow,
+                LastSeen = LearningNow
             };
             encounter.Sources[observation.ActorOID] = source;
         }
         ++source.Observations;
-        source.LastSeen = DateTime.UtcNow;
+        source.LastSeen = LearningNow;
         if (observation.Numeric.TryGetValue("actor.nameID", out var nameID) && nameID > 0 && nameID <= uint.MaxValue)
             source.NameID = (uint)nameID;
         if (observation.Text.TryGetValue("actor.name", out var name) && !string.IsNullOrWhiteSpace(name))
@@ -221,7 +247,7 @@ public sealed partial class ForetellEngine
         // but must not invent pulls and phases. Open world has no equivalent condition boundary, so signals retain
         // the inactivity-based heuristic there.
         var inDuty = _ws.CurrentCFCID != 0;
-        if (inDuty && !Service.Condition[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat])
+        if (inDuty && !DecisionCombat)
             return;
         if (!_inPull || (!inDuty && (observation.At - _lastCombatSignal).TotalSeconds > 30))
             BeginCombatPull(encounter, observation.At);
@@ -345,6 +371,7 @@ public sealed partial class ForetellEngine
 
     private void ExpirePrediction(long id, string reason)
     {
+        ++_predictionRevision;
         AuditPredictionOutcome(id, DecisionAuditStage.Expired, null, reason);
         _predictions.Remove(id);
     }
@@ -440,7 +467,7 @@ public sealed partial class ForetellEngine
             encounter.PhaseBoundaries[signature] = candidate = new() { Signature = signature, EvidenceKind = observation.Kind };
         }
         ++candidate.Seen;
-        candidate.LastSeen = DateTime.UtcNow;
+        candidate.LastSeen = LearningNow;
         if (candidate.LastPull != encounter.Pulls)
         {
             candidate.LastPull = encounter.Pulls;
@@ -572,7 +599,7 @@ public sealed partial class ForetellEngine
         if (memory.LastPull == encounter.Pulls)
             return;
         memory.LastPull = encounter.Pulls;
-        memory.LastSeen = DateTime.UtcNow;
+        memory.LastSeen = LearningNow;
         var seconds = Math.Clamp((observation.At - _phaseStartedAt).TotalSeconds, 0, 1800);
         ++memory.Samples;
         var timeDelta = seconds - memory.MeanPhaseSeconds;
@@ -775,6 +802,7 @@ public sealed partial class ForetellEngine
         StorePrediction(id, forecastPrediction, trigger);
         _timelineForecasts[id] = new()
         {
+            OutcomeGapGeneration = _outcomeGapGeneration,
             ID = id,
             TerritoryID = encounter.TerritoryID,
             Phase = memory.Phase,
@@ -785,8 +813,11 @@ public sealed partial class ForetellEngine
             Due = activation,
             Expires = expires
         };
-        if (basis == PredictiveTriggerBasis.BossHealth) ++memory.HealthForecasts;
-        else ++memory.TimeForecasts;
+        if (_cfg.EnableLearning)
+        {
+            if (basis == PredictiveTriggerBasis.BossHealth) ++memory.HealthForecasts;
+            else ++memory.TimeForecasts;
+        }
     }
 
     private bool TryBossHealth(uint preferredOID, ulong preferredInstanceID, DateTime now,
@@ -795,6 +826,18 @@ public sealed partial class ForetellEngine
         boss = null!;
         ratio = 0;
         lossPerSecond = 0;
+        if (_isReplay)
+        {
+            var recorded = _ws.Actors.Find(_decisionContext?.BossID ?? 0);
+            if (recorded == null || recorded.HPMP.MaxHP == 0) return false;
+            boss = recorded;
+            ratio = recorded.HPMP.CurHP / (double)recorded.HPMP.MaxHP;
+            if (!_bossHealthTracks.TryGetValue(recorded.InstanceID, out var recordedTrack))
+                _bossHealthTracks[recorded.InstanceID] = recordedTrack = new();
+            recordedTrack.Update(now, ratio);
+            lossPerSecond = recordedTrack.LossPerSecond;
+            return true;
+        }
         // HP thresholds are boss-only evidence. A large trash mob in a corridor must never become a fake HP gate;
         // require the independently observed arena boundary and the same boss-candidate test used by the radar.
         if (CurrentArenaBoundary is not { ArenaLike: true } boundary)
@@ -865,7 +908,7 @@ public sealed partial class ForetellEngine
         if (prediction == null) return;
         var id = _nextForecastID--;
         if (_nextForecastID == long.MinValue) _nextForecastID = -1;
-        var transitionReliability = edge.Forecasts >= 3
+        var transitionReliability = edge.Hits + edge.Misses >= 3
             ? edge.ForecastReliability
             : Math.Min(.94f, probability * edge.Stability);
         var forecastPrediction = prediction.Value with
@@ -878,6 +921,7 @@ public sealed partial class ForetellEngine
         var edgeKey = $"{edge.Phase}:{edge.From}>{edge.To}";
         _timelineForecasts[id] = new()
         {
+            OutcomeGapGeneration = _outcomeGapGeneration,
             ID = id,
             TerritoryID = encounter.TerritoryID,
             Phase = timelinePhase,
@@ -887,7 +931,7 @@ public sealed partial class ForetellEngine
             Due = due,
             Expires = due.AddSeconds(tolerance)
         };
-        ++edge.Forecasts;
+        if (_cfg.EnableLearning) ++edge.Forecasts;
     }
 
     private void ResolveTimelineForecasts(EncounterMemory encounter, ForetellObservation observation)
@@ -897,14 +941,21 @@ public sealed partial class ForetellEngine
         foreach (var forecast in _timelineForecasts.Values.Where(candidate => candidate.TerritoryID == encounter.TerritoryID
             && candidate.Phase == timelinePhase && candidate.ExpectedSignal == signal && observation.At <= candidate.Expires).ToArray())
         {
-            if (!string.IsNullOrEmpty(forecast.EdgeKey) && encounter.Timeline.TryGetValue(forecast.EdgeKey, out var edge)) ++edge.Hits;
-            if (!string.IsNullOrEmpty(forecast.CompositeKey) && encounter.Composites.TryGetValue(forecast.CompositeKey, out var composite)) ++composite.Hits;
-            if (!string.IsNullOrEmpty(forecast.TriggerContextKey) && encounter.TriggerContexts.TryGetValue(forecast.TriggerContextKey, out var trigger))
+            var verified = ForetellOutcomeValidation.VerifyTiming(forecast.Due, forecast.Expires, observation.At,
+                forecast.OutcomeGapGeneration == _outcomeGapGeneration);
+            if (_cfg.EnableLearning && verified is bool success)
             {
-                if (forecast.TriggerBasis == PredictiveTriggerBasis.BossHealth) ++trigger.HealthHits;
-                else if (forecast.TriggerBasis == PredictiveTriggerBasis.PhaseClock) ++trigger.TimeHits;
+                if (!string.IsNullOrEmpty(forecast.EdgeKey) && encounter.Timeline.TryGetValue(forecast.EdgeKey, out var edge))
+                { if (success) ++edge.Hits; else ++edge.Misses; }
+                if (!string.IsNullOrEmpty(forecast.CompositeKey) && encounter.Composites.TryGetValue(forecast.CompositeKey, out var composite))
+                { if (success) ++composite.Hits; else ++composite.Misses; }
+                if (!string.IsNullOrEmpty(forecast.TriggerContextKey) && encounter.TriggerContexts.TryGetValue(forecast.TriggerContextKey, out var trigger))
+                {
+                    if (forecast.TriggerBasis == PredictiveTriggerBasis.BossHealth) { if (success) ++trigger.HealthHits; else ++trigger.HealthMisses; }
+                    else if (forecast.TriggerBasis == PredictiveTriggerBasis.PhaseClock) { if (success) ++trigger.TimeHits; else ++trigger.TimeMisses; }
+                }
             }
-            AuditPredictionOutcome(forecast.ID, DecisionAuditStage.Verified, true, $"expected signal observed: {signal}");
+            AuditPredictionOutcome(forecast.ID, DecisionAuditStage.Verified, verified, $"expected signal observed: {signal}; timing and capture checked");
             _timelineForecasts.Remove(forecast.ID);
             _predictions.Remove(forecast.ID);
         }
@@ -914,17 +965,18 @@ public sealed partial class ForetellEngine
     {
         foreach (var forecast in _timelineForecasts.Values.Where(candidate => candidate.Expires < now).ToArray())
         {
-            if (_store.Encounters.TryGetValue(forecast.TerritoryID, out var encounter))
+            var complete = forecast.OutcomeGapGeneration == _outcomeGapGeneration;
+            if (complete && _store.Encounters.TryGetValue(forecast.TerritoryID, out var encounter))
             {
-                if (!string.IsNullOrEmpty(forecast.EdgeKey) && encounter.Timeline.TryGetValue(forecast.EdgeKey, out var edge)) ++edge.Misses;
-                if (!string.IsNullOrEmpty(forecast.CompositeKey) && encounter.Composites.TryGetValue(forecast.CompositeKey, out var composite)) ++composite.Misses;
-                if (!string.IsNullOrEmpty(forecast.TriggerContextKey) && encounter.TriggerContexts.TryGetValue(forecast.TriggerContextKey, out var trigger))
+                if (_cfg.EnableLearning && !string.IsNullOrEmpty(forecast.EdgeKey) && encounter.Timeline.TryGetValue(forecast.EdgeKey, out var edge)) ++edge.Misses;
+                if (_cfg.EnableLearning && !string.IsNullOrEmpty(forecast.CompositeKey) && encounter.Composites.TryGetValue(forecast.CompositeKey, out var composite)) ++composite.Misses;
+                if (_cfg.EnableLearning && !string.IsNullOrEmpty(forecast.TriggerContextKey) && encounter.TriggerContexts.TryGetValue(forecast.TriggerContextKey, out var trigger))
                 {
                     if (forecast.TriggerBasis == PredictiveTriggerBasis.BossHealth) ++trigger.HealthMisses;
                     else if (forecast.TriggerBasis == PredictiveTriggerBasis.PhaseClock) ++trigger.TimeMisses;
                 }
             }
-            AuditPredictionOutcome(forecast.ID, DecisionAuditStage.Expired, false, $"expected signal not observed before {forecast.Expires:u}");
+            AuditPredictionOutcome(forecast.ID, DecisionAuditStage.Expired, complete ? false : null, $"expected signal not observed before {forecast.Expires:u}");
             _timelineForecasts.Remove(forecast.ID);
             _predictions.Remove(forecast.ID);
         }
@@ -937,7 +989,7 @@ public sealed partial class ForetellEngine
         foreach (var composite in encounter.Composites.Values.Where(candidate => candidate.Phase == timelinePhase
             && candidate.Count >= 3 && candidate.Stability >= .45f && candidate.Signals.Contains(current)).Take(8))
         {
-            var baseReliability = composite.Forecasts >= 3
+            var baseReliability = composite.Hits + composite.Misses >= 3
                 ? composite.ForecastReliability
                 : Math.Min(.94f, (1f - MathF.Exp(-composite.Count / 4f)) * composite.Stability);
             if (baseReliability < .35f) continue;
@@ -972,6 +1024,7 @@ public sealed partial class ForetellEngine
                 StorePrediction(id, forecastPrediction, trigger);
                 _timelineForecasts[id] = new()
                 {
+                    OutcomeGapGeneration = _outcomeGapGeneration,
                     ID = id,
                     TerritoryID = encounter.TerritoryID,
                     Phase = timelinePhase,
@@ -981,7 +1034,7 @@ public sealed partial class ForetellEngine
                     Due = due,
                     Expires = due.AddSeconds(Math.Clamp(composite.StdDev * 2 + .75, 1, 3))
                 };
-                ++composite.Forecasts;
+                if (_cfg.EnableLearning) ++composite.Forecasts;
             }
         }
     }
@@ -1058,7 +1111,7 @@ public sealed partial class ForetellEngine
             Trigger = trigger,
             LeadSeconds = lead,
             Activation = trigger.At.AddSeconds(lead),
-            FinalizeAt = trigger.At.AddSeconds(lead + 3)
+            FinalizeAt = trigger.At.AddSeconds(lead + 12)
         };
         foreach (var (id, track) in _tracks)
         {
@@ -1071,6 +1124,8 @@ public sealed partial class ForetellEngine
             episode.ParticipantRoleNames[id] = track.RoleName;
         }
         episode.AddEvidence(trigger.Kind);
+        episode.PreImpactFeatures = ForetellPreImpactModel.Features(trigger, episode.ParticipantPositions.Values, _precursorCues);
+        episode.PreImpactGuess = _preImpact.Predict(episode.PreImpactFeatures);
         _episodes[episode.ID] = episode;
         AddDecisionAudit(new()
         {
@@ -1093,7 +1148,7 @@ public sealed partial class ForetellEngine
             Evidence = "accepted mechanic trigger"
         });
         _episodeFinalization.Enqueue(episode.ID, episode.FinalizeAt.Ticks);
-        if (encounter != null)
+        if (_cfg.EnableLearning && encounter != null)
             LearnCompositeMechanics(encounter, episode);
 
         if (contextual != null && (contextual.Geometry != GeometryKind.Unknown || ForetellInferenceCore.GuidanceFor(contextual.Kind) != GuidanceKind.None))
@@ -1129,6 +1184,20 @@ public sealed partial class ForetellEngine
             episode.ForecastKind = MechanicKind.Marker;
             episode.ForecastConfidence = .90f;
         }
+        if (_cfg.EnableML && !_predictions.ContainsKey(episode.ID) && episode.LeadSeconds >= .35
+            && episode.PreImpactGuess.Reliability >= _cfg.VisualConfidence / 100f && episode.PreImpactGuess.Probability >= .8f
+            && ForetellInferenceCore.GuidanceFor(episode.PreImpactGuess.Kind) is var learnedGuidance && learnedGuidance != GuidanceKind.None)
+        {
+            var confidence = Math.Min(episode.PreImpactGuess.Reliability, episode.PreImpactGuess.Probability);
+            var prediction = new ActivePrediction(trigger.ActorID, trigger.PrimaryID, GeometryKind.Unknown, episode.PreImpactGuess.Kind,
+                new(trigger.X, trigger.Z), new(trigger.TargetX, trigger.TargetZ), trigger.Rotation, 0, 0, episode.Activation, confidence,
+                "Pre-impact features; independently assessed chronological model", episode.SignalKey, trigger.TargetID, learnedGuidance, true,
+                "Predicted mechanic") { Provenance = "Pre-impact model" };
+            StorePrediction(episode.ID, prediction, trigger);
+            episode.ForecastIssued = true;
+            episode.ForecastKind = prediction.Kind;
+            episode.ForecastConfidence = confidence;
+        }
     }
 
     private void IssueMechanicPrediction(MechanicEpisode episode, ContextualMechanic mechanic, ForetellObservation trigger, bool anticipated)
@@ -1144,6 +1213,8 @@ public sealed partial class ForetellEngine
         episode.ForecastP1 = mechanic.P1;
         episode.ForecastP2 = mechanic.P2;
         episode.ForecastConfidence = mechanic.GuidanceConfidence;
+        episode.ForecastOrigin = value.Origin;
+        episode.ForecastRotation = value.Rotation;
     }
 
     private ActivePrediction? BuildMechanicPrediction(ContextualMechanic mechanic, ForetellObservation trigger, DateTime activation, bool anticipated)
@@ -1165,7 +1236,7 @@ public sealed partial class ForetellEngine
             target = source + f * (float)mechanic.MeanAnchorForward + r * (float)mechanic.MeanAnchorSide;
         }
         if (target == Vector2.Zero) target = source;
-        var geometry = mechanic.Geometry;
+        var geometry = !mechanic.HasReliableActionPrior && mechanic.GeometryAmbiguous ? GeometryKind.Unknown : mechanic.Geometry;
         // A learned target-relative offset is only safe to draw ahead of the trigger once repeated samples agree.
         // The textual/non-spatial warning remains useful, but an unstable spatial guess is deliberately hidden.
         if (anticipated && mechanic.OriginKind == PredictionOriginKind.Target
@@ -1184,10 +1255,22 @@ public sealed partial class ForetellEngine
 
     private void StorePrediction(long id, ActivePrediction prediction, ForetellObservation trigger)
     {
+        ++_predictionRevision;
+        var mechanic = _store.Encounters.GetValueOrDefault(trigger.TerritoryID)?.Mechanics.GetValueOrDefault(prediction.SignalKey);
+        prediction = prediction with { CreatedAt = trigger.At,
+            Binding = trigger.Prior?.CastType == 8 && trigger.TargetID != 0 ? HazardBinding.LineEndpoints : prediction.Binding,
+            LineMinimumLength = trigger.Prior?.CastType == 8 ? Math.Max(0, trigger.Prior.Value.EffectRange) : prediction.LineMinimumLength,
+            Stages = mechanic?.Stages.Select(stage => stage with { Polygon = stage.Polygon.ToArray() }).ToArray(),
+            Provenance = prediction.Provenance == "Pre-impact model" ? prediction.Provenance
+                : trigger.Prior is { Geometry: not GeometryKind.Unknown } ? "Client geometry"
+                : trigger.Prior is { Kind: not MechanicKind.Unknown } ? "Client semantics"
+                : prediction.Anticipated ? "Learned sequence" : trigger.Prior != null ? "Observed cast" : "Learned hypothesis" };
+        if (_episodes.GetValueOrDefault(id) is { } forecastEpisode)
+        { forecastEpisode.ForecastOrigin = prediction.Origin; forecastEpisode.ForecastRotation = prediction.Rotation; forecastEpisode.ForecastSnapshot = prediction; }
         _predictions[id] = prediction;
         AddDecisionAudit(new()
         {
-            At = DateTime.UtcNow,
+            At = LearningNow,
             Activation = prediction.Activation,
             PredictionID = id,
             Stage = DecisionAuditStage.Proposed,
@@ -1219,13 +1302,18 @@ public sealed partial class ForetellEngine
 
     private void AuditPredictionOutcome(long id, DecisionAuditStage stage, bool? verified, string evidence)
     {
-        if (!_predictions.TryGetValue(id, out var prediction)) return;
+        if (!_predictions.TryGetValue(id, out var prediction))
+        {
+            if (_episodes.GetValueOrDefault(id)?.ForecastSnapshot is not { } snapshot) return;
+            prediction = snapshot;
+        }
         AddDecisionAudit(new()
         {
-            At = DateTime.UtcNow,
+            At = LearningNow,
             Activation = prediction.Activation,
             PredictionID = id,
             Stage = stage,
+            Validation = _timelineForecasts.ContainsKey(id) ? PredictionValidationKind.TriggerTiming : PredictionValidationKind.Outcome,
             SignalKey = prediction.SignalKey,
             TriggerID = prediction.ActionID,
             Mechanic = prediction.Kind,
@@ -1253,6 +1341,7 @@ public sealed partial class ForetellEngine
     {
         entry.SessionID = _session.ID;
         entry.TerritoryID = entry.TerritoryID == 0 ? _session.TerritoryID : entry.TerritoryID;
+        _evaluationAuditSink?.Invoke(entry);
         _store.DecisionAudit.Add(entry);
         // Trim in batches so the hot path never shifts the full bounded list for every new entry.
         if (_store.DecisionAudit.Count > 8448)
@@ -1296,6 +1385,7 @@ public sealed partial class ForetellEngine
 
         var episode = BestEpisode(observation);
         if (episode == null) return null;
+        RecordEpisodeComponent(episode, observation);
         episode.AddEvidence(observation.Kind);
         if (!episode.ResolutionObserved && episode.Trigger.Kind != ObservationKind.CastStart && IsResolutionEvidence(observation.Kind)
             && observation.At >= episode.Trigger.At)
@@ -1322,6 +1412,10 @@ public sealed partial class ForetellEngine
                 }
                 break;
             case ObservationKind.AffectedTarget:
+                if (!episode.ParticipantPositions.ContainsKey(observation.TargetID)
+                    || episode.FirstResolvedAt != default && (observation.At - episode.FirstResolvedAt).TotalSeconds > .75) break;
+                episode.TypedKnockback |= observation.Numeric.Any(kv => kv.Key.StartsWith("actionEffect.", StringComparison.Ordinal) && kv.Key.EndsWith(".type", StringComparison.Ordinal) && kv.Value == 31 && observation.Numeric.GetValueOrDefault(kv.Key[..^5] + ".atSource") == 0);
+                episode.TypedAttract |= observation.Numeric.Any(kv => kv.Key.StartsWith("actionEffect.", StringComparison.Ordinal) && kv.Key.EndsWith(".type", StringComparison.Ordinal) && kv.Value is >= 32 and <= 36 && observation.Numeric.GetValueOrDefault(kv.Key[..^5] + ".atSource") == 0);
                 if (observation.TargetID != 0 && ForetellInferenceCore.HasConfirmedHit(observation.Numeric))
                 {
                     episode.AffectedTargets.Add(observation.TargetID);
@@ -1370,6 +1464,10 @@ public sealed partial class ForetellEngine
 
     private MechanicEpisode? BestEpisode(ForetellObservation observation)
     {
+        if (observation.Kind == ObservationKind.AffectedTarget && observation.Numeric.TryGetValue("action.globalSequence", out var globalSequence)
+            && globalSequence is > 0 and <= uint.MaxValue && _effectSequenceEpisodes.TryGetValue((uint)globalSequence, out var linked)
+            && _episodes.TryGetValue(linked, out var linkedEpisode) && !linkedEpisode.Finalized)
+            return linkedEpisode;
         if (observation.Kind == ObservationKind.EffectResult && observation.PrimaryID != 0
             && _effectSequenceEpisodes.TryGetValue(observation.PrimaryID, out var exactID)
             && _episodes.TryGetValue(exactID, out var exact) && !exact.Finalized)
@@ -1377,6 +1475,7 @@ public sealed partial class ForetellEngine
 
         MechanicEpisode? best = null;
         var bestScore = double.MaxValue;
+        var secondScore = double.MaxValue;
         var encounter = _store.Encounters.GetValueOrDefault(observation.TerritoryID);
         var effect = EffectSignalKey(observation);
         foreach (var episode in _episodes.Values)
@@ -1396,11 +1495,13 @@ public sealed partial class ForetellEngine
             }
             if (score < bestScore)
             {
+                secondScore = bestScore;
                 bestScore = score;
                 best = episode;
             }
+            else if (score < secondScore) secondScore = score;
         }
-        return bestScore <= 3.5 ? best : null;
+        return bestScore <= 3.5 && secondScore - bestScore >= .35 ? best : null;
     }
 
     private static bool IsResolutionEvidence(ObservationKind kind)
@@ -1443,7 +1544,7 @@ public sealed partial class ForetellEngine
         var delta = delay - edge.MeanDelay;
         edge.MeanDelay += delta / edge.Count;
         edge.M2 += delta * (delay - edge.MeanDelay);
-        edge.LastSeen = DateTime.UtcNow;
+        edge.LastSeen = LearningNow;
     }
 
     private void HandlePositionSample(ForetellObservation observation, bool replaying)
@@ -1539,10 +1640,13 @@ public sealed partial class ForetellEngine
         {
             // Missing target callbacks must not turn party members into negative (safe) geometry samples.
             AuditPredictionOutcome(episode.ID, DecisionAuditStage.Verified, null, "outcome incomplete: semantic capture budget dropped evidence");
+            if (_store.Encounters.GetValueOrDefault(episode.Trigger.TerritoryID)?.Mechanics.GetValueOrDefault(episode.SignalKey) is { } incomplete)
+                ++incomplete.UnverifiableOutcomes;
+            if (_cfg.EnableLearning) ++_store.PreImpact.MissingOutcomes;
             return;
         }
 
-        if (!_cfg.EnableLearning)
+        if (!_cfg.EnableLearning && !_isReplay)
         {
             _lastEvidence = $"{episode.SignalKey}: outcome observed; adaptive learning is disabled";
             return;
@@ -1568,15 +1672,15 @@ public sealed partial class ForetellEngine
                 TriggerKind = episode.Trigger.Kind,
                 TriggerID = episode.Trigger.PrimaryID,
                 TriggerDetail = episode.Trigger.Detail,
-                FirstSeen = DateTime.UtcNow
+                FirstSeen = LearningNow
             };
-            encounter.Mechanics[key] = mechanic;
-            ++_session.NewMechanics;
+            if (_cfg.EnableLearning)
+            { encounter.Mechanics[key] = mechanic; ++_session.NewMechanics; }
         }
         mechanic.Samples ??= [];
 
         var affected = new HashSet<ulong>(episode.AffectedTargets);
-        affected.UnionWith(episode.StatusTargets);
+        // Status applications alone do not establish a damaging spatial footprint.
         // Resolve every participant against the sample nearest to impact. Affected-target callbacks update this
         // eagerly; this pass also moves non-affected controls to the same point in time for unbiased geometry fits.
         foreach (var id in episode.ParticipantPositions.Keys)
@@ -1586,23 +1690,22 @@ public sealed partial class ForetellEngine
         AddGeometrySamples(outcomeSamples, episode, affected);
         var outcomeFit = FitNormalizedGeometry(outcomeSamples.Samples);
         var observedKind = ClassifyEpisode(episode, affected, outcomeFit);
+        if (!_cfg.EnableLearning)
+        {
+            var evaluationProbe = new ContextualMechanic();
+            var frozenVerified = episode.ForecastIssued ? ValidateMechanicForecast(evaluationProbe, episode, observedKind, outcomeFit) : null;
+            AuditPredictionOutcome(episode.ID, DecisionAuditStage.Verified, frozenVerified, "frozen model evaluated against independent outcome");
+            if (_cfg.EnableML) _preImpact.Resolve(episode.PreImpactFeatures, episode.PreImpactGuess, observedKind, episode.LeadSeconds, true, train: false);
+            return;
+        }
+        ForetellReliability.ObserveHypotheses(mechanic, ForetellOutcomeHypotheses.Candidates(OutcomeCues(episode, affected, outcomeFit)));
+        LearnEpisodeProgram(mechanic, episode);
         AddGeometrySamples(mechanic, episode, affected);
         var fit = FitNormalizedGeometry(mechanic.Samples);
+        mechanic.GeometryAmbiguous = fit is { Ambiguous: true };
         var kind = observedKind;
         var score = EvidenceScore(kind, outcomeFit);
-        var features = ExtendFeatureVector(BuildEpisodeFeatures(episode, affected, outcomeFit), episode);
-        var ml = _cfg.EnableML ? _classifier.Predict(features) : (MechanicKind.Unknown, 0f);
-        if (kind == MechanicKind.Unknown && ml.Item1 != MechanicKind.Unknown && ml.Item2 >= .72f)
-        {
-            kind = ml.Item1;
-            score = Math.Max(score, ml.Item2 * .62f);
-            episode.AddEvidence(ObservationKind.GenericFeature);
-        }
-        else if (kind != MechanicKind.Unknown && ml.Item1 == kind && ml.Item2 >= .55f)
-        {
-            score = Math.Clamp(score + (ml.Item2 - .5f) * .12f, 0, 1);
-            episode.AddEvidence(ObservationKind.GenericFeature);
-        }
+        var ml = (episode.PreImpactGuess.Kind, episode.PreImpactGuess.Probability);
 
         var previousKind = mechanic.Kind;
         var previousGeometry = mechanic.Geometry;
@@ -1613,7 +1716,7 @@ public sealed partial class ForetellEngine
         mechanic.DeathSamples += episode.DeathTargets.Count;
         mechanic.MeanLeadSeconds += (episode.LeadSeconds - mechanic.MeanLeadSeconds) / mechanic.Observations;
         UpdateMechanicAnchor(mechanic, episode);
-        mechanic.LastSeen = DateTime.UtcNow;
+        mechanic.LastSeen = LearningNow;
         foreach (var (evidence, count) in episode.Evidence)
             mechanic.Evidence[evidence] = mechanic.Evidence.GetValueOrDefault(evidence) + count;
 
@@ -1647,12 +1750,11 @@ public sealed partial class ForetellEngine
         // not a behavioral class for the outcome classifier.
         // Never train on the classifier's own guess or a previously retained label. Only this episode's
         // independent outcome (or an authoritative client-data prior) may supply a training target.
-        var trainingKind = mechanic.HasReliableActionPrior ? mechanic.PriorKind : observedKind;
-        if (_cfg.EnableLearning && _cfg.EnableML && ForetellInferenceCore.CanTrainOutcome(trainingKind))
-            _classifier.Train(features, trainingKind);
+        if (_cfg.EnableML)
+            _preImpact.Resolve(episode.PreImpactFeatures, episode.PreImpactGuess, observedKind, episode.LeadSeconds, true);
 
         if (_cfg.EnableLearning && episode.Trigger.Kind == ObservationKind.CastStart && fit is FitResult globalFit
-            && mechanic.PriorKind != MechanicKind.Gaze)
+            && mechanic.PriorKind != MechanicKind.Gaze && (mechanic.HasReliableActionPrior || !globalFit.Ambiguous))
         {
             var canonicalFit = mechanic.HasReliableActionPrior
                 ? new FitResult(mechanic.PriorGeometry, globalFit.Origin, globalFit.Rotation, mechanic.PriorP1, mechanic.PriorP2, mechanic.PriorConfidence)
@@ -1663,10 +1765,13 @@ public sealed partial class ForetellEngine
         bool? forecastVerified = null;
         if (episode.ForecastIssued)
             forecastVerified = ValidateMechanicForecast(mechanic, episode, observedKind, outcomeFit);
+        if (episode.ForecastIssued && forecastVerified == null) ++mechanic.UnverifiableOutcomes;
+        if (forecastVerified == false) ++mechanic.RecentContradictions;
+        else if (forecastVerified == true) mechanic.RecentContradictions = Math.Max(0, mechanic.RecentContradictions - 1);
 
         AddDecisionAudit(new()
         {
-            At = DateTime.UtcNow,
+            At = LearningNow,
             Activation = episode.Activation,
             PredictionID = episode.ID,
             Stage = DecisionAuditStage.Classified,
@@ -1695,9 +1800,10 @@ public sealed partial class ForetellEngine
             Label = MechanicDisplayName(mechanic),
             Evidence = $"{mechanic.Confirmations}/{mechanic.Observations} confirmations; affected {affected.Count}/{episode.ParticipantPositions.Count}; evidence {episode.Evidence.Count}; ML {ml.Item1} {ml.Item2:P0}"
         });
-        if (forecastVerified is bool verified)
-            AuditPredictionOutcome(episode.ID, DecisionAuditStage.Verified, verified,
-                verified ? "predicted mechanic matched the observed outcome" : "predicted mechanic differed from the observed outcome");
+        if (episode.ForecastIssued)
+            AuditPredictionOutcome(episode.ID, DecisionAuditStage.Verified, forecastVerified,
+                forecastVerified == true ? "predicted mechanic matched the observed outcome" : forecastVerified == false
+                    ? "predicted mechanic differed from the observed outcome" : "outcome does not independently resolve the forecast");
 
         _lastEvidence = $"{key}: {mechanic.Kind}/{mechanic.Geometry} {mechanic.Confidence:P0}; evidence {episode.Evidence.Count}; " +
             $"affected {affected.Count}/{episode.ParticipantPositions.Count}; move {episode.MovementTargets.Count}; ML {ml.Item1} {ml.Item2:P0}";
@@ -1728,19 +1834,12 @@ public sealed partial class ForetellEngine
 
     private static bool? ValidateMechanicForecast(ContextualMechanic mechanic, MechanicEpisode episode, MechanicKind observedKind, FitResult? fit)
     {
-        // A correctly avoided spatial telegraph produces no affected/safe split, hence no empirical shape fit.
-        // That is missing validation evidence, not a forecast miss. Only score a spatial claim when the outcome
-        // actually contains enough information to compare geometry.
-        if (episode.ForecastGeometry != GeometryKind.Unknown && fit == null)
-            return null;
-        if (episode.ForecastGeometry == GeometryKind.Unknown && observedKind == MechanicKind.Unknown)
-            return null;
+        if (episode.ForecastSnapshot is not { } prediction) return null;
+        var points = episode.ResolutionPositions.Where(p => episode.ParticipantPositions.ContainsKey(p.Key))
+            .Select(p => new SpatialOutcomePoint(p.Value, episode.AffectedTargets.Contains(p.Key))).ToArray();
+        var verdict = ForetellOutcomeValidation.Verify(prediction, observedKind, episode.FirstResolvedAt, points, complete: true);
+        if (verdict is not bool success) return null;
         ++mechanic.Forecasts;
-        var kindMatches = episode.ForecastKind == MechanicKind.Unknown || observedKind == MechanicKind.Unknown || episode.ForecastKind == observedKind;
-        var geometryMatches = episode.ForecastGeometry == GeometryKind.Unknown
-            || fit is FitResult observed && ForetellInferenceCore.GeometryMatches(episode.ForecastGeometry, episode.ForecastP1, episode.ForecastP2,
-                observed.Geometry, observed.P1, observed.P2);
-        var success = kindMatches && geometryMatches && (observedKind != MechanicKind.Unknown || fit != null);
         if (success) ++mechanic.ForecastHits;
         else ++mechanic.ForecastMisses;
         var probability = Math.Clamp(episode.ForecastConfidence, 0, 1);
@@ -1753,6 +1852,7 @@ public sealed partial class ForetellEngine
     {
         var source = new Vector2(episode.Trigger.X, episode.Trigger.Z);
         var target = new Vector2(episode.Trigger.TargetX, episode.Trigger.TargetZ);
+        if (episode.Trigger.TargetID == 0 && episode.Trigger.Prior?.TargetArea != true) target = source;
         var s = MathF.Sin(episode.Trigger.Rotation);
         var c = MathF.Cos(episode.Trigger.Rotation);
         foreach (var (id, resolved) in episode.ResolutionPositions)
@@ -1776,9 +1876,11 @@ public sealed partial class ForetellEngine
     {
         if (samples.Count < 2 || !samples.Any(s => s.Affected) || !samples.Any(s => !s.Affected)) return null;
         FitResult best = new(GeometryKind.Unknown, Vector2.Zero, 0, 0, 0, 0);
+        Dictionary<GeometryKind, float> alternatives = [];
         void Try(GeometryKind kind, float p1, float p2, Func<MechanicSamplePoint, bool> contains)
         {
             var score = NormalizedScore(samples, contains);
+            alternatives[kind] = Math.Max(alternatives.GetValueOrDefault(kind), score);
             if (score > best.Score) best = new(kind, Vector2.Zero, 0, p1, p2, score);
         }
 
@@ -1811,7 +1913,7 @@ public sealed partial class ForetellEngine
                     (MathF.Abs(p.Forward) <= halfWidth && MathF.Abs(p.Side) <= length));
             }
 
-        return best.Score >= .58f ? best : null;
+        return best.Score >= .58f ? best with { AlternativeScore = alternatives.Where(p => p.Key != best.Geometry).Select(p => p.Value).DefaultIfEmpty().Max() } : null;
     }
 
     private static float NormalizedScore(List<MechanicSamplePoint> samples, Func<MechanicSamplePoint, bool> contains)
@@ -1831,58 +1933,21 @@ public sealed partial class ForetellEngine
         return Math.Clamp((tpr + tnr) * .375f + precision * .25f, 0, 1);
     }
 
+    private static OutcomeCueSummary OutcomeCues(MechanicEpisode episode, HashSet<ulong> affected, FitResult? fit)
+        => new(episode.ParticipantPositions.Count, affected.Count, episode.StatusTargets.Count, episode.MovementTargets.Count,
+            episode.Evidence.ContainsKey(ObservationKind.Icon), episode.TetherTargets.Count > 0,
+            affected.Count > 0 && affected.All(id => episode.ParticipantRoleNames.GetValueOrDefault(id)?.Contains("Tank", StringComparison.OrdinalIgnoreCase) == true),
+            LooksLikeGaze(episode, affected), LooksLikeProximity(episode), fit?.Geometry ?? GeometryKind.Unknown,
+            fit?.Score ?? 0, episode.ResolutionPositions.Count);
+
     private static MechanicKind ClassifyEpisode(MechanicEpisode episode, HashSet<ulong> affected, FitResult? fit)
     {
-        var participants = episode.ParticipantPositions.Count;
-        if (episode.TetherTargets.Count > 0) return MechanicKind.Tether;
-        if (LooksLikeGaze(episode, affected)) return MechanicKind.Gaze;
-        if (LooksLikeProximity(episode)) return MechanicKind.Proximity;
-        if (episode.MovementTargets.Count > 0)
-        {
-            if (participants >= 2 && episode.MovementTargets.Count >= Math.Ceiling(participants * .5)) return MechanicKind.Knockback;
-            if (episode.MovementTargets.Count >= 1 && episode.Evidence.ContainsKey(ObservationKind.StatusGain)) return MechanicKind.ForcedMovement;
-        }
-        if (episode.StatusTargets.Count > 0 && episode.AffectedTargets.Count == 0) return MechanicKind.Debuff;
-        if (participants >= 3 && affected.Count >= Math.Ceiling(participants * .75)) return MechanicKind.Raidwide;
-
-        if (affected.Count is > 0 and <= 2)
-        {
-            var allTanks = affected.All(id => episode.ParticipantRoleNames.GetValueOrDefault(id)?.Contains("Tank", StringComparison.OrdinalIgnoreCase) == true);
-            if (participants >= 4 && allTanks) return MechanicKind.Tankbuster;
-        }
-
-        if (fit is { Geometry: GeometryKind.Rectangle, Score: >= .62f } && affected.Count >= 2 && affected.Count < participants
-            && episode.Evidence.ContainsKey(ObservationKind.Icon)) return MechanicKind.LineStack;
-        if (episode.Evidence.ContainsKey(ObservationKind.Icon) && affected.Count > 1)
-        {
-            var positions = affected.Where(episode.ParticipantPositions.ContainsKey).Select(id => episode.ParticipantPositions[id]).ToArray();
-            if (positions.Length > 1)
-            {
-                double average = 0;
-                var pairs = 0;
-                for (var i = 0; i < positions.Length; ++i)
-                    for (var j = i + 1; j < positions.Length; ++j)
-                    {
-                        average += Vector2.Distance(positions[i], positions[j]);
-                        ++pairs;
-                    }
-                average /= Math.Max(1, pairs);
-                return average > 7 ? MechanicKind.Spread : MechanicKind.Stack;
-            }
-        }
-        if (episode.Evidence.ContainsKey(ObservationKind.Icon)) return MechanicKind.Marker;
-        if (affected.Count == 0 && episode.Trigger.Kind is ObservationKind.ObjectEffect or ObservationKind.NativeVFXSpawn or ObservationKind.EventObjectState
-            && episode.MovementTargets.Count > 0)
-        {
-            var target = new Vector2(episode.Trigger.TargetX, episode.Trigger.TargetZ);
-            if (target == Vector2.Zero) target = new(episode.Trigger.X, episode.Trigger.Z);
-            var near = episode.ParticipantPositions.Keys.Count(id => Vector2.Distance(episode.PositionFor(id), target) <= 3.5f);
-            if (near is >= 1 and <= 4) return MechanicKind.Tower;
-        }
-        if (fit is FitResult f && f.Score >= .62f) return MechanicKind.GroundAOE;
-        if (episode.Trigger.SourceKind is SourceKind.Environment or SourceKind.EventObject) return MechanicKind.Environment;
-        if (episode.Trigger.Kind == ObservationKind.DirectorUpdate) return MechanicKind.Transition;
-        return MechanicKind.Unknown;
+        if (episode.TypedKnockback) return MechanicKind.Knockback;
+        if (episode.TypedAttract) return MechanicKind.ForcedMovement;
+        if (fit is { Ambiguous: true } && !(episode.Trigger.Prior is { } prior
+            && ForetellInferenceCore.IsReliableSpatialActionPrior(prior.Kind, prior.Geometry, prior.Confidence, prior.P1, prior.P2)))
+            return MechanicKind.Unknown;
+        return ForetellOutcomeHypotheses.IndependentLabel(OutcomeCues(episode, affected, fit));
     }
 
     private static bool LooksLikeGaze(MechanicEpisode episode, HashSet<ulong> affected)
@@ -1948,34 +2013,6 @@ public sealed partial class ForetellEngine
         _ => fit?.Score ?? .25f
     };
 
-    private static double[] BuildEpisodeFeatures(MechanicEpisode episode, HashSet<ulong> affected, FitResult? fit)
-    {
-        var n = Math.Max(1, episode.ParticipantPositions.Count);
-        var damageValues = episode.DamageByTarget.Values.Where(value => value > 0).ToArray();
-        var damageSpread = damageValues.Length < 2 ? 0 : (damageValues.Max() - damageValues.Min()) / Math.Max(1, damageValues.Average());
-        var origin = new Vector2(episode.Trigger.X, episode.Trigger.Z);
-        var target = new Vector2(episode.Trigger.TargetX, episode.Trigger.TargetZ);
-        return
-        [
-            Math.Clamp(episode.LeadSeconds / 10d, 0, 1),
-            Math.Clamp(affected.Count / (double)n, 0, 1),
-            Math.Clamp(episode.StatusTargets.Count / (double)n, 0, 1),
-            Math.Clamp(episode.MovementTargets.Count / (double)n, 0, 1),
-            episode.TetherTargets.Count > 0 ? 1 : 0,
-            episode.Evidence.ContainsKey(ObservationKind.Icon) ? 1 : 0,
-            episode.Evidence.ContainsKey(ObservationKind.VFX) || episode.Evidence.ContainsKey(ObservationKind.NativeVFXSpawn) ? 1 : 0,
-            fit?.Score ?? 0,
-            episode.Trigger.SourceKind is SourceKind.Environment or SourceKind.EventObject ? 1 : 0,
-            Math.Clamp(episode.DeathTargets.Count / (double)n, 0, 1),
-            Math.Clamp(episode.DamageByTarget.Count / (double)n, 0, 1),
-            Math.Clamp(damageSpread / 2, 0, 1),
-            Math.Clamp(Vector2.Distance(origin, target) / 50d, 0, 1),
-            episode.Trigger.Kind == ObservationKind.CastStart ? 1 : 0,
-            episode.FeatureCounts.Keys.Any(key => key.StartsWith("raw.window.", StringComparison.Ordinal)) ? 1 : 0,
-            episode.Trigger.TargetID != 0 || target != Vector2.Zero ? 1 : 0
-        ];
-    }
-
     private void UpdateGlobalMechanic(MechanicEpisode episode, FitResult fit, MechanicKind kind)
     {
         var action = episode.Trigger.PrimaryID;
@@ -1993,7 +2030,7 @@ public sealed partial class ForetellEngine
                 Observations = 1,
                 Confirmations = 1,
                 MeanCastSeconds = episode.LeadSeconds,
-                LastSeen = DateTime.UtcNow
+                LastSeen = LearningNow
             };
             return;
         }
@@ -2016,7 +2053,7 @@ public sealed partial class ForetellEngine
         }
         if (kind != MechanicKind.Unknown) mechanic.Kind = kind;
         mechanic.MeanCastSeconds += (episode.LeadSeconds - mechanic.MeanCastSeconds) / mechanic.Observations;
-        mechanic.LastSeen = DateTime.UtcNow;
+        mechanic.LastSeen = LearningNow;
     }
 
 }

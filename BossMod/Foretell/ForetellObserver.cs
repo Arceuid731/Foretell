@@ -24,9 +24,11 @@ public sealed partial class ForetellEngine
         var spell = actor.CastInfo;
         if (spell == null || !spell.IsSpell()) return;
         var castSeconds = (float)Math.Max(0, spell.NPCRemainingTime);
-        var obs = Observation(ObservationKind.CastStart, actor, spell.Action.ID, value1: castSeconds);
-        obs.TargetX = spell.LocXZ.X;
-        obs.TargetZ = spell.LocXZ.Z;
+        var obs = Observation(ObservationKind.CastStart, actor, spell.Action.ID, target: spell.TargetID, value1: castSeconds);
+        if (_ws.Actors.Find(spell.TargetID) is { } castTarget)
+        { obs.TargetX = castTarget.Position.X; obs.TargetZ = castTarget.Position.Z; }
+        else
+        { obs.TargetX = spell.LocXZ.X; obs.TargetZ = spell.LocXZ.Z; }
         obs.Rotation = spell.Rotation.Rad;
         ProcessObservation(obs);
     }
@@ -42,7 +44,10 @@ public sealed partial class ForetellEngine
     {
         var action = ev.Action.ID;
         if (action == 0) return;
-        var resolved = Observation(ObservationKind.ActionResolved, actor, action, value1: ev.Targets.Count);
+        var resolved = Observation(ObservationKind.ActionResolved, actor, action, target: ev.MainTargetID, value1: ev.Targets.Count);
+        resolved.Rotation = ev.Rotation.Rad;
+        if (ev.TargetPos != Vector3.Zero || ev.MainTargetID == 0)
+        { resolved.TargetX = ev.TargetPos.X; resolved.TargetZ = ev.TargetPos.Z; }
         resolved.Numeric["action.globalSequence"] = ev.GlobalSequence;
         resolved.Numeric["action.sourceSequence"] = ev.SourceSequence;
         resolved.Numeric["action.maxTargets"] = ev.MaxTargets;

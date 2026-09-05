@@ -15,12 +15,12 @@ For cast actions, Foretell also consumes useful local FFXIV client metadata as a
 1. Install Foretell from the custom repository and disable a separate BossMod Reborn installation while testing; Foretell already contains the BMR stack.
 2. Run `/foretell` to open the Foretell cockpit.
 3. Start in **Observe** on familiar content. Foretell learns silently while BMR remains your reference.
-4. After a few pulls/runs, switch to **Hybrid** to display complete BMR and Foretell guidance together, then review **Learned mechanics**.
+4. After a few pulls/runs, switch to **Hybrid** to display complete BMR and Foretell guidance together, then review **Knowledge**.
 5. Use pure **Foretell** only when you intentionally want to hide legacy BMR encounter presentation.
 
-The dedicated in-game cockpit provides Dashboard, Knowledge explorer, Timeline, Live feed, Replay & storage, Settings and Help tabs. The Knowledge explorer is organized as content category → territory/duty → arena/environment/source → mechanic, with confirmed deletion at every useful level. It also exposes learned causal links, raw protocol families, phase transitions and simultaneous patterns individually.
+The dedicated in-game cockpit provides Overview, Knowledge, Timeline, Recordings, Settings and Diagnostics tabs. The Knowledge explorer is organized as content category → territory/duty → arena/environment/source → mechanic, with confirmed deletion at every useful level. It also exposes learned causal links, raw protocol families, phase transitions and simultaneous patterns individually.
 
-After leaving a duty, expand that content in **Knowledge explorer** and click **Analysis ZIP**. Foretell creates one shareable archive containing the matching sealed raw journal(s), the full cumulative learned encounter snapshot, configuration and health counters, plus a bounded decision audit for the latest completed territory session from accepted trigger through proposed prediction, classification and verification/expiry. The archive records the selected session's plugin version separately from the newer plugin version that may have exported it. The optional readable JSONL replay is included when it was enabled and is safely closed; it is not required for the bundle to contain the authoritative raw input and semantic decisions.
+After leaving a duty, expand that content in **Knowledge** and click **Analysis ZIP**. Foretell creates one shareable archive containing the matching sealed raw journal(s), the full cumulative learned encounter snapshot, configuration and health counters, plus a bounded decision audit for the latest completed territory session from accepted trigger through proposed prediction, classification and verification/expiry. The archive records the selected session's plugin version separately from the newer plugin version that may have exported it. The optional readable JSONL replay is included when it was enabled and is safely closed; it is not required for the bundle to contain the authoritative raw input and semantic decisions.
 
 ## Confidence visualization
 
@@ -31,7 +31,7 @@ Foretell separates evidence confidence from verified guidance reliability. A can
 - orange — high-confidence warning-grade inference
 - red — safe-guidance-grade danger (at the configured strict threshold)
 
-The radar also prints confidence percentages. Target-relative geometry is withheld from anticipated spatial drawing until repeated offsets are stable, and incomplete geometry is likewise kept out of the world and radar overlays. Safe-position suggestions remain advisory and are only eligible at the strict safe-confidence gate.
+The radar prints time to impact and a compact evidence legend. Overview and Knowledge explain client-provided shapes, observed hypotheses, assessed predictions and contradictions. Target-relative geometry is withheld from anticipated spatial drawing until repeated offsets are stable, and incomplete geometry is likewise kept out of the world and radar overlays. Safe-position suggestions remain advisory and are only eligible at the strict safe-confidence gate.
 
 ## Prediction pipeline
 
@@ -40,6 +40,16 @@ Every eligible encounter signal—not only cast bars—can become a learned trig
 Repeated signal transitions produce branch-aware timeline forecasts. Ambiguous branches cause Foretell to abstain. In parallel, every mechanic occurrence learns its offset from the current phase clock and—only for independently detected boss arenas—the boss HP ratio at which it appeared. Cross-pull variance decides whether elapsed time or HP is the more credible trigger; a stable clock wins ties so similar group DPS cannot manufacture a false HP gate. HP forecasts estimate threshold arrival from the observed health-loss slope, while occurrence indexing keeps repeated cycles distinct.
 
 Stable simultaneous patterns can forecast their other components, while learned causal links improve assignment of later effects to the correct trigger. Each issued mechanic, sequence, phase-clock, HP-threshold and composite forecast records hits and misses so reliability is measured rather than inferred from repetition alone.
+
+## Learning before impact
+
+The online classifier now predicts from inputs frozen at the trigger. Independent outcomes score that saved prediction before any weight update. Features describe transferable cue families, timing, geometry metadata and party distribution; future hit/damage/status data and opaque actor/action/territory identifiers cannot become classifier inputs. Only independently supported outcome labels train the model. Unresolved semantics abstain.
+
+Broad party hits retain both raidwide and avoidable-AOE explanations. A marker retains stack and spread alternatives. Displacement alone does not establish knockback semantics. Tied spatial fits remain unresolved instead of drawing the first shape that happens to fit. Repeated follow-up impacts can form bounded stage programs with relative positions, rotations and delays; only stages forecast before the outcome earn validation credit.
+
+One occurrence can supply a complete client shape, but one inferred occurrence does not establish a general rule. Under the Wilson check, all-correct independent tests need at least 12 / 73 / 381 assessable outcomes for lower bounds of 75% / 95% / 99%. Those are statistical best cases, not cast-count requirements or survival probabilities. Repeated ambiguous observations, missing outcomes and correlated samples do not guarantee progress.
+
+World, radar and text consume one decision frame. Direct movement suggestions account for activation windows, walking travel time, all represented credible hazards, fresh connected terrain and observed arena limits. Unknown spatial requirements, unresolved personal mechanics and recent capture gaps block a route recommendation. The planner is advisory and intentionally bounded; it does not solve every encounter constraint.
 
 ## Foretell modes
 
@@ -65,7 +75,9 @@ Stable simultaneous patterns can forecast their other components, while learned 
 
 ## Replay Lab
 
-Foretell can record a compact normalized event stream locally. Independently of that optional setting, it writes compressed raw journals for server IPC, client IPC and ActorControl. The online raw learner derives bounded per-opcode length, byte-stability, sequence-hash and transition features while retaining the original bytes. Replay Lab re-injects normalized observations and raw journals overlapping the recorded session through the same learner in a temporary store. It reports what was rediscovered, ambiguous or rejected, then restores the live learned memory. Some decisions still consult live world state, so Replay Lab is not yet an independent deterministic evaluation of the full engine. It is an inference replay, not a video or 3D recreation of FFXIV.
+Foretell optionally records normalized observations with bounded decision-context snapshots (nearby actors, party, combat/duty state, boss identity, recorded client shape and learning thresholds). Replay now creates a separate managed world and engine, without game-service initialization, native hooks, writers or live-state swaps. Evaluation runs in the background; older recordings without decision context remain readable but cannot establish outcome reliability.
+
+The standalone `ForetellRuntimeTests` executable supports chronological training on one recording and frozen evaluation on a later, separate recording. It reports footprint/response outcomes separately from trigger-timing outcomes, counts missing evidence, and hashes the complete decision audit even when the inspectable audit tail is bounded. See [the 0.10 evaluation guide](docs/foretell-0.10.md) for commands and limits. This is a semantic decision replay; it does not reconstruct the rendered game or stream the native collision scene.
 
 The storage page can delete individual inactive recordings or apply a retention/quota cleanup. Automatic cleanup is opt-in, runs outside combat on a background worker, and never deletes the active journal or learned memory.
 

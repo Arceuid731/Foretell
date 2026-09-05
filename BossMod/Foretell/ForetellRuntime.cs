@@ -27,12 +27,21 @@ internal sealed class MechanicEpisode
     public HashSet<string> BinaryKeys { get; } = [];
     public long BinaryBytes { get; private set; }
     public bool ResolutionObserved { get; set; }
+    public double[] PreImpactFeatures { get; set; } = [];
+    public PreImpactGuess PreImpactGuess { get; set; }
+    public bool TypedKnockback { get; set; }
+    public bool TypedAttract { get; set; }
+    public DateTime FirstResolvedAt { get; set; }
+    public List<HazardStage> Components { get; } = [];
     public long OutcomeGapGeneration { get; init; }
     public GeometryKind ForecastGeometry { get; set; }
     public MechanicKind ForecastKind { get; set; }
     public float ForecastP1 { get; set; }
     public float ForecastP2 { get; set; }
     public float ForecastConfidence { get; set; }
+    public Vector2 ForecastOrigin { get; set; }
+    public float ForecastRotation { get; set; }
+    public ActivePrediction? ForecastSnapshot { get; set; }
     public bool ForecastIssued { get; set; }
     public bool ForecastAnticipated { get; set; }
     public bool Finalized { get; set; }
@@ -145,6 +154,7 @@ internal readonly record struct ParticipantPositionPoint(DateTime At, Vector2 Po
 
 internal sealed class PendingTimelineForecast
 {
+    public long OutcomeGapGeneration { get; init; }
     public long ID { get; init; }
     public uint TerritoryID { get; init; }
     public int Phase { get; init; }
@@ -194,8 +204,8 @@ internal readonly record struct BossHealthSnapshot(Actor Boss, double Ratio, dou
 
 internal sealed class LiveSessionStats
 {
-    public string ID { get; } = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
-    public DateTime Started { get; } = DateTime.UtcNow;
+    public string ID { get; init; } = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+    public DateTime Started { get; init; } = DateTime.UtcNow;
     public string PluginVersion { get; set; } = "";
     public uint TerritoryID { get; set; }
     public int Pulls { get; set; }

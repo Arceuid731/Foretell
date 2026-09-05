@@ -17,7 +17,7 @@ public sealed class WorldState
     public readonly WaymarkState Waymarks = new();
     public readonly ActorState Actors = new();
     public readonly PartyState Party;
-    public readonly ClientState Client = new();
+    public readonly ClientState Client;
     public readonly DeepDungeonState DeepDungeon = new();
     public readonly NetworkState Network = new();
 
@@ -26,8 +26,9 @@ public sealed class WorldState
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public DateTime FutureTime(double deltaSeconds) => Frame.Timestamp.AddSeconds(deltaSeconds);
 
-    public WorldState(ulong qpf, string gameVersion)
+    public WorldState(ulong qpf, string gameVersion, bool initializeSupportedItems = true)
     {
+        Client = new(initializeSupportedItems);
         QPF = qpf;
         GameVersion = gameVersion;
         Party = new(Actors);

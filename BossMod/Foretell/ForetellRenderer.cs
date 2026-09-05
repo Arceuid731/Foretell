@@ -15,18 +15,18 @@ public sealed partial class ForetellEngine
 
     public void Draw()
     {
+        _presentationFrame = null;
         DrawSafely(DrawInspector, "inspector");
         if (_cfg.MiniRadar)
             DrawSafely(() => DrawRadar(_cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell), "radar");
         if (_cfg.Mode is ForetellMode.Legacy or ForetellMode.Observe) return;
         DrawSafely(() =>
         {
-            if (_cfg.WorldOverlay) DrawDynamicTerrainWorld();
             var confidenceCut = _cfg.VisualConfidence / 100f;
             var displayed = 0;
-            foreach (var p in _predictions.Values.Where(p => ValidPrediction(p) && HasSpatialPresentation(p)).OrderBy(p => p.Activation))
+            foreach (var p in PresentationFrame.Hazards.Select(h => h.Prediction).Where(p => ValidPrediction(p) && HasSpatialPresentation(p)).OrderBy(p => p.Activation))
             {
-                if (p.Confidence < confidenceCut || displayed++ >= _cfg.MaxRenderedMechanics) continue;
+                if (p.Confidence < confidenceCut && p.Provenance != "Terrain cue" || displayed++ >= _cfg.MaxRenderedMechanics) continue;
                 if (_cfg.WorldOverlay) DrawWorld(p);
             }
         }, "world overlay");
@@ -99,6 +99,14 @@ public sealed partial class ForetellEngine
         var thickness = ConfidenceThickness(p.Confidence);
         switch (p.Geometry)
         {
+            case GeometryKind.Polygon when p.Polygon is { Count: >= 3 } polygon:
+                for (var i = 0; i < polygon.Count; ++i)
+                {
+                    var a = PolygonPoint(p, polygon[i]); var b = PolygonPoint(p, polygon[(i + 1) % polygon.Count]);
+                    DrawWorldLineClipped(cam, new(a.X, o.Y, a.Y), new(b.X, o.Y, b.Y), color, thickness);
+                }
+                break;
+
             case GeometryKind.Circle:
                 DrawWorldCircleClipped(cam, o, p.P1, color, thickness);
                 break;
@@ -268,8 +276,9 @@ public sealed partial class ForetellEngine
             }
             _textWasUnlocked = _cfg.TextHintsUnlocked;
 
-            var active = _predictions.Values.Where(p => ValidPrediction(p) && p.Confidence >= _cfg.VisualConfidence / 100f)
-                .OrderBy(p => p.Activation).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
+            var playerContext = _ws.Party[PartyState.PlayerSlot];
+            var active = ForetellDecisionCore.Prioritize(PresentationFrame, playerContext == null ? Vector2.Zero : V(playerContext.Position), playerContext?.InstanceID ?? 0)
+                .Select(h => h.Prediction).Where(p => p.Confidence >= _cfg.VisualConfidence / 100f).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
             var terrainCue = _ws.Party[PartyState.PlayerSlot] is { } localPlayer
                 && ActiveDynamicTerrainWarnings().Any(w => ForetellArenaBoundaryCore.Contains(w.Points, V(localPlayer.Position)));
             var hasActive = active.Length != 0 || terrainCue;
@@ -279,36 +288,12 @@ public sealed partial class ForetellEngine
                 if (i != 0) ImGui.Separator();
                 var remain = Math.Max(0, (prediction.Activation - _ws.CurrentTime).TotalSeconds);
                 ImGui.TextColored(ConfidenceTextColor(prediction.Confidence), $"{GuidanceInstruction(prediction.Guidance, prediction.Kind, prediction.Geometry)} — {UserFacingPredictionLabel(prediction)}");
-                ImGui.TextDisabled($"{remain:F1}s · confidence {prediction.Confidence:P0}{(prediction.Anticipated ? " · predicted ahead" : "")}");
+                ImGui.TextDisabled($"{remain:F1}s · {prediction.Provenance}{(prediction.Anticipated ? " · anticipated" : "")}");
             }
             if (terrainCue)
                 ImGui.TextColored(new Vector4(.28f, .75f, 1, 1), "WATCH TERRAIN — possible floor change");
-            var next = PredictNextContextual();
-            if (next != null)
-            {
-                var encounter = _store.Encounters.GetValueOrDefault(_territory);
-                if (encounter?.Mechanics.GetValueOrDefault(next.To) is { } mechanic)
-                {
-                    if (hasActive) ImGui.Separator();
-                    ImGui.TextUnformatted($"NEXT — {UserFacingMechanicLabel(mechanic)}");
-                    ImGui.TextDisabled($"about {next.MeanDelay:F1}s · learned {next.Count}× · timing {next.Stability:P0}");
-                }
-            }
-            else if (!hasActive)
-            {
-                var legacyNext = PredictNext();
-                var legacyName = legacyNext == null ? null : LookupActionName(legacyNext.To);
-                if (legacyNext != null && !string.IsNullOrWhiteSpace(legacyName))
-                {
-                    ImGui.TextUnformatted($"NEXT — {legacyName}");
-                    ImGui.TextDisabled($"about {legacyNext.MeanDelay:F1}s · learned {legacyNext.Count}×");
-                }
-                else
-                {
-                    var contextualCount = _store.Encounters.GetValueOrDefault(_territory)?.Mechanics.Count ?? 0;
-                    ImGui.TextDisabled($"Foretell is learning · {contextualCount} candidates · no verified guidance yet");
-                }
-            }
+            if (!hasActive)
+                ImGui.TextDisabled("Watching for signals · no actionable prediction");
         }
         finally { ImGui.End(); }
     }
@@ -321,7 +306,7 @@ public sealed partial class ForetellEngine
 
     private static string GuidanceInstruction(GuidanceKind guidance, MechanicKind kind, GeometryKind geometry) => guidance switch
     {
-        GuidanceKind.Avoid => "AVOID",
+        GuidanceKind.Avoid => geometry == GeometryKind.Unknown ? "WATCH AOE" : "AVOID",
         GuidanceKind.Stack => "STACK",
         GuidanceKind.Spread => "SPREAD",
         GuidanceKind.Soak => "SOAK TOWER",
@@ -360,7 +345,7 @@ public sealed partial class ForetellEngine
         _ => "learned mechanic"
     };
 
-    private static string UserFacingMechanicLabel(ContextualMechanic mechanic)
+    private string UserFacingMechanicLabel(ContextualMechanic mechanic)
     {
         if (mechanic.TriggerKind is ObservationKind.CastStart or ObservationKind.CastFinish or ObservationKind.ActionResolved or ObservationKind.AffectedTarget)
         {
@@ -370,7 +355,7 @@ public sealed partial class ForetellEngine
         return FriendlyMechanicLabel(mechanic.Kind, mechanic.Geometry);
     }
 
-    private static string UserFacingPredictionLabel(ActivePrediction prediction)
+    private string UserFacingPredictionLabel(ActivePrediction prediction)
     {
         var actionName = LookupActionName(prediction.ActionID);
         return !string.IsNullOrWhiteSpace(actionName) ? actionName : FriendlyMechanicLabel(prediction.Kind, prediction.Geometry);
@@ -478,22 +463,20 @@ public sealed partial class ForetellEngine
             DrawRadarFrame(draw, center, radius, shape);
         DrawRadarScale(draw, center, radius, scale);
         DrawRadarActors(draw, player, playerPos, cameraAzimuth, center, radius, scale);
-        if (showPredictions)
-            DrawDynamicTerrainRadar(draw, playerPos, cameraAzimuth, center, scale);
 
         if (showPredictions)
         {
             var displayed = 0;
-            foreach (var p in _predictions.Values.Where(p => ValidPrediction(p) && HasSpatialPresentation(p)).OrderBy(p => p.Activation))
+            foreach (var p in PresentationFrame.Hazards.Select(h => h.Prediction).Where(p => ValidPrediction(p) && HasSpatialPresentation(p)).OrderBy(p => p.Activation))
             {
-                if (p.Confidence < _cfg.VisualConfidence / 100f || displayed++ >= _cfg.MaxRenderedMechanics)
+                if (p.Confidence < _cfg.VisualConfidence / 100f && p.Provenance != "Terrain cue" || displayed++ >= _cfg.MaxRenderedMechanics)
                     continue;
                 var col = ConfidenceColor(p.Confidence);
                 var thickness = ConfidenceThickness(p.Confidence);
                 DrawRadarGeometry(draw, p, playerPos, cameraAzimuth, center, scale, col, thickness);
                 DrawRadarGuidance(draw, p, playerPos, cameraAzimuth, center, scale, col, thickness);
                 var c = RadarPoint(p.Origin, playerPos, cameraAzimuth, center, scale);
-                draw.AddText(c + new Vector2(5, -9), col, $"{p.Confidence:P0}");
+                draw.AddText(c + new Vector2(5, -9), col, $"{Math.Max(0, (p.Activation - PresentationFrame.At).TotalSeconds):F1}s");
             }
         }
         DrawRadarPlayer(draw, center);
@@ -502,11 +485,11 @@ public sealed partial class ForetellEngine
         if (showPredictions)
         {
             var column = size / 3;
-            DrawRadarCaption(draw, new(center.X - radius, legendY), column, ConfidenceColor(_cfg.VisualConfidence / 100f), $"{_cfg.VisualConfidence:F0}%");
-            DrawRadarCaption(draw, new(center.X - radius + column, legendY), column, ConfidenceColor(_cfg.WarningConfidence / 100f), $"{_cfg.WarningConfidence:F0}%");
-            DrawRadarCaption(draw, new(center.X - radius + 2 * column, legendY), column, ConfidenceColor(_cfg.SafeConfidence / 100f), $"{_cfg.SafeConfidence:F0}%");
+            DrawRadarCaption(draw, new(center.X - radius, legendY), column, ConfidenceColor(_cfg.VisualConfidence / 100f), "Learning");
+            DrawRadarCaption(draw, new(center.X - radius + column, legendY), column, ConfidenceColor(_cfg.WarningConfidence / 100f), "Warning");
+            DrawRadarCaption(draw, new(center.X - radius + 2 * column, legendY), column, ConfidenceColor(_cfg.SafeConfidence / 100f), "Strict");
             DrawRadarCaption(draw, new(center.X - radius, legendY + ImGui.GetFontSize()), size,
-                Pack(165, 180, 195, 180), "prediction confidence");
+                Pack(165, 180, 195, 180), "evidence level · details in Overview");
         }
         else
             draw.AddText(new(center.X - radius, legendY), Pack(165, 180, 195, 180), "terrain only · guidance silent");
@@ -720,6 +703,12 @@ public sealed partial class ForetellEngine
     {
         switch (p.Geometry)
         {
+            case GeometryKind.Polygon when p.Polygon is { Count: >= 3 } polygon:
+                for (var i = 0; i < polygon.Count; ++i)
+                    DrawRadarLineClipped(draw, PolygonPoint(p, polygon[i]), PolygonPoint(p, polygon[(i + 1) % polygon.Count]),
+                        player, cameraAzimuth, center, scale, color, thickness);
+                break;
+
             case GeometryKind.Circle:
                 DrawRadarCircleClipped(draw, p.Origin, p.P1, player, cameraAzimuth, center, scale, color, thickness);
                 break;
@@ -953,43 +942,29 @@ public sealed partial class ForetellEngine
     private void DrawSafeSuggestion()
     {
         var player = _ws.Party[PartyState.PlayerSlot];
-        if (player == null) return;
-        var dangers = _predictions.Values.Where(p => ValidPrediction(p) && (p.Guidance is GuidanceKind.Avoid or GuidanceKind.None)
-            && p.Geometry != GeometryKind.Unknown && p.Confidence >= _cfg.SafeConfidence / 100f).ToArray();
-        if (dangers.Length == 0) return;
-        var pp = V(player.Position);
-        if (!FiniteVector(pp)) return;
-        bool Unsafe(Vector2 q) => dangers.Any(p => Contains(p, q));
-        if (!Unsafe(pp)) return;
-        if (!HasFreshTopologyEvidence) return;
-        Vector2? best = null;
-        var bestD = float.MaxValue;
-        for (var ring = 2f; ring <= 25f; ring += 2f)
-            for (var i = 0; i < 48; ++i)
-            {
-                var a = MathF.Tau * i / 48;
-                var q = pp + new Vector2(MathF.Sin(a), MathF.Cos(a)) * ring;
-                var topology = IsTopologyPassable(q);
-                if (!Unsafe(q) && topology == true && ring < bestD
-                    && _topology.CanTraverseSegment(pp, q, _topologyAnalysis?.ConnectedCells)
-                    && !ActiveDynamicTerrainWarnings().Any(w => ForetellArenaBoundaryCore.Contains(w.Points, q)))
-                { best = q; bestD = ring; }
-            }
-        if (best is not Vector2 b) return;
-        var cam = Camera.Instance;
-        if (cam == null) return;
-        var y = player.PosRot.Y + .1f;
-        if (!float.IsFinite(y)) return;
-        DrawWorldLineClipped(cam, new(pp.X, y, pp.Y), new(b.X, y, b.Y), 0xFF40FF40u, 4f);
-        cam.DrawWorldCircle(ProjectWorldAlertToTopology(new(b.X, y, b.Y)), 1f, 0xFF40FF40u, 3f);
+        if (player == null || Camera.Instance is not { } camera) return;
+        var position = V(player.Position);
+        var frame = PresentationFrame;
+        PollRouteRecommendation(frame, position);
+        if (_routeResult is not { } result || !result.Assessment.Eligible || !frame.TerrainFresh || !frame.EvidenceComplete
+            || result.Revision != _predictionRevision || (frame.At - result.At).TotalSeconds > .4
+            || Vector2.Distance(position, result.Start) > .75f || result.Assessment.Confidence < _cfg.SafeConfidence / 100f)
+            return;
+        var target = result.Assessment.Destination;
+        // Recheck the selected route against this draw's actor positions and terrain, including moving targets.
+        var checkedRoute = ForetellDecisionCore.AssessRoute(frame, position, target,
+            (a, b) => _topology.CanTraverseSegment(a, b, _topologyAnalysis?.ConnectedCells) && RouteInsideArena(a, b, CurrentArenaBoundary?.Points));
+        if (!checkedRoute.Eligible || checkedRoute.Confidence < _cfg.SafeConfidence / 100f) return;
+        DrawWorldLineClipped(camera, new(position.X, player.PosRot.Y + .1f, position.Y),
+            new(target.X, player.PosRot.Y + .1f, target.Y), 0xFF40FF40u, 4);
+        camera.DrawWorldCircle(ProjectWorldAlertToTopology(new(target.X, player.PosRot.Y + .1f, target.Y)), 1, 0xFF40FF40u, 3);
     }
 
-    private static bool ValidPrediction(ActivePrediction prediction)
-        => float.IsFinite(prediction.Origin.X) && float.IsFinite(prediction.Origin.Y)
-            && float.IsFinite(prediction.Target.X) && float.IsFinite(prediction.Target.Y)
-            && float.IsFinite(prediction.Rotation) && float.IsFinite(prediction.P1) && prediction.P1 is >= 0 and <= 200
-            && float.IsFinite(prediction.P2) && prediction.P2 is >= 0 and <= 200
-            && float.IsFinite(prediction.Confidence) && prediction.Confidence is >= 0 and <= 1;
+    private static Vector2 PolygonPoint(ActivePrediction p, HazardVertex vertex)
+        => p.Origin + new Vector2(vertex.X * MathF.Cos(p.Rotation) + vertex.Z * MathF.Sin(p.Rotation),
+            -vertex.X * MathF.Sin(p.Rotation) + vertex.Z * MathF.Cos(p.Rotation));
+
+    private static bool ValidPrediction(ActivePrediction prediction) => ForetellDecisionCore.Valid(prediction);
 
     private static bool HasSpatialPresentation(ActivePrediction prediction)
         => prediction.Geometry != GeometryKind.Unknown || prediction.Guidance != GuidanceKind.None;

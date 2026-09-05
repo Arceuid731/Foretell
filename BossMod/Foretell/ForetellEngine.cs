@@ -24,7 +24,8 @@ public sealed partial class ForetellEngine : IDisposable
     private readonly JsonSerializerOptions _replayJson = new() { WriteIndented = false, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new JsonStringEnumConverter() } };
 
     private ForetellStore _store;
-    private OnlineClassifier _classifier;
+    private ForetellPreImpactModel _preImpact;
+    private readonly Queue<ForetellObservation> _precursorCues = new();
     private ForetellReplayWriter? _replay;
     private readonly ForetellRawWriter _raw;
     private string _replayPath = "";
@@ -178,7 +179,7 @@ public sealed partial class ForetellEngine : IDisposable
         try
         {
             NormalizeStore();
-            _classifier = new(_store.ML);
+            _preImpact = new(_store.PreImpact);
             _territory = CurrentTerritory();
             _session = NewSession(_territory);
             StartEncounterSession(_territory);
@@ -251,6 +252,7 @@ public sealed partial class ForetellEngine : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _semanticReplayCancellation.Cancel();
         try { FinalizeDue(DateTime.MaxValue, exhaustive: true); CompleteSession(); SaveStore(); }
         catch (Exception e) { Service.Log($"[Foretell] Final save during dispose failed safely: {e.Message}"); }
         _ws.Network.CaptureRawTransport = false;
@@ -322,6 +324,7 @@ public sealed partial class ForetellEngine : IDisposable
             DrainRawFeatureWindows();
             DrainNativeCaptures();
         }
+        PollSemanticReplay();
         PollStorageMaintenance();
         PollAnalysisBundleExport();
         SampleNativeTopology();
@@ -330,14 +333,14 @@ public sealed partial class ForetellEngine : IDisposable
         {
             SamplePartyPositions();
             SampleDataFabric();
-            UpdateTriggerContextForecasts(now);
+            ProcessObservation(Observation(ObservationKind.DecisionFrame), enriched: true);
             _lastPositionSample = now;
         }
 
         FinalizeDue(now);
         ExpireHazardContext(now);
         ExpireTimelineForecasts(now);
-        foreach (var key in _predictions.Where(p => p.Value.Activation.AddSeconds(1.5) < now).Select(p => p.Key).ToArray())
+        foreach (var key in _predictions.Where(p => PredictionEnd(p.Value) < now).Select(p => p.Key).ToArray())
             ExpirePrediction(key, "display lifetime ended");
 
         // The game combat condition is available globally. Ending on its falling edge prevents stale predictions
@@ -383,6 +386,12 @@ public sealed partial class ForetellEngine : IDisposable
         _episodeFinalization.Clear();
         _episodeCleanup.Clear();
         _tracks.Clear();
+        _precursorCues.Clear();
+        _decisionContext = null;
+        _lastRecordedContext = 0;
+        _lastOutcomeGapAt = default;
+        ++_predictionRevision;
+        _routeResult = null;
         _activePositionTrackIDs.Clear();
         ResetDataFabric();
         ResetTopology();
@@ -425,15 +434,16 @@ public sealed partial class ForetellEngine : IDisposable
 
     private static string CurrentPluginVersion => typeof(ForetellEngine).Assembly.GetName().Version?.ToString() ?? "unknown";
 
-    private LiveSessionStats NewSession(uint territory) => new() { TerritoryID = territory, PluginVersion = CurrentPluginVersion };
+    private LiveSessionStats NewSession(uint territory) => new() { TerritoryID = territory, PluginVersion = CurrentPluginVersion,
+        Started = LearningNow, ID = LearningNow.ToString("yyyyMMdd-HHmmss") };
 
     private void StartEncounterSession(uint territory)
     {
         var encounter = Encounter(territory);
         RefreshEncounterIdentity(encounter, territory == _territory ? _ws.CurrentCFCID : encounter.ContentFinderConditionID);
         ++encounter.Sessions;
-        if (encounter.FirstSeen == default) encounter.FirstSeen = DateTime.UtcNow;
-        encounter.LastSeen = DateTime.UtcNow;
+        if (encounter.FirstSeen == default) encounter.FirstSeen = LearningNow;
+        encounter.LastSeen = LearningNow;
     }
 
     private void CompleteSession()
@@ -467,7 +477,7 @@ public sealed partial class ForetellEngine : IDisposable
     {
         if (!_store.Encounters.TryGetValue(territory, out var encounter))
         {
-            encounter = new() { TerritoryID = territory, FirstSeen = DateTime.UtcNow, LastSeen = DateTime.UtcNow };
+            encounter = new() { TerritoryID = territory, FirstSeen = LearningNow, LastSeen = LearningNow };
             _store.Encounters[territory] = encounter;
         }
         return encounter;
@@ -665,8 +675,10 @@ public sealed partial class ForetellEngine : IDisposable
         // is an audit index, not learned mechanic evidence, so compact it once without touching learned data.
         if (_store.Schema < 9)
             _store.Coverage = new();
-        _store.Schema = Math.Max(_store.Schema, 23);
+        _store.Schema = Math.Max(_store.Schema, 24);
+        _store.PreImpact ??= new();
         _store.Mechanics ??= [];
+        if (loadedSchema < 24) _store.Mechanics.Clear(); // Rebuild derived cross-territory fits; contextual samples remain.
         _store.Timeline ??= [];
         _store.Encounters ??= [];
         _store.Sessions ??= [];
@@ -764,6 +776,16 @@ public sealed partial class ForetellEngine : IDisposable
                         mechanic.BrierScoreSum = 0;
                     }
                 foreach (var mechanic in encounter.Mechanics.Values) NormalizeContextualMechanic(mechanic);
+                if (loadedSchema < 24)
+                    foreach (var mechanic in encounter.Mechanics.Values)
+                    {
+                        mechanic.Hypotheses = [];
+                        // Previous counters did not test world origin/timing, including for client-prior shapes.
+                        mechanic.Forecasts = mechanic.ForecastHits = mechanic.ForecastMisses = 0;
+                        mechanic.BrierScoreSum = 0;
+                        if (!mechanic.HasReliableActionPrior)
+                        { mechanic.Kind = MechanicKind.Unknown; mechanic.GeometryAmbiguous = true; }
+                    }
                 foreach (var edge in encounter.Timeline.Values) NormalizeSignalTimelineEdge(edge);
                 foreach (var trigger in encounter.TriggerContexts.Values) NormalizeSignalTriggerMemory(trigger);
                 foreach (var edge in encounter.CausalEdges.Values)
@@ -864,7 +886,7 @@ public sealed partial class ForetellEngine : IDisposable
                 // The classifier was trained from the same contaminated episodes and has no source attribution in
                 // its persisted weights, so retaining it would keep player rotations influencing future labels.
                 _store.ML = new();
-                Service.Log($"[Foretell] Removed {migratedInvalidMechanics} invalid player/pet/non-mechanic signal episodes and reset contaminated derived ML state.");
+                if (!_isReplay) Service.Log($"[Foretell] Removed {migratedInvalidMechanics} invalid player/pet/non-mechanic signal episodes and reset contaminated derived ML state.");
             }
         }
         if (loadedSchema < 21 && migratedUnsafeMetadata > 0)
@@ -872,12 +894,12 @@ public sealed partial class ForetellEngine : IDisposable
             // The online classifier has no per-session provenance. Rows whose metadata was misread as a spatial
             // circle or whose ambient outcomes became CLEANSE/MOVE labels can therefore contaminate future duties.
             _store.ML = new();
-            Service.Log($"[Foretell] Repaired {migratedUnsafeMetadata} unsafe pre-21 Action metadata models and reset contaminated derived ML state.");
+            if (!_isReplay) Service.Log($"[Foretell] Repaired {migratedUnsafeMetadata} unsafe pre-21 Action metadata models and reset contaminated derived ML state.");
         }
         if (loadedSchema < 23)
         {
             _store.ML = new();
-            Service.Log("[Foretell] Reset self-trained classifier weights and non-independent forecast scores; empirical samples and learned mechanics retained.");
+            if (!_isReplay) Service.Log("[Foretell] Reset self-trained classifier weights and non-independent forecast scores; empirical samples and learned mechanics retained.");
         }
     }
 
@@ -1120,6 +1142,24 @@ public sealed partial class ForetellEngine : IDisposable
 
     private static void NormalizeContextualMechanic(ContextualMechanic mechanic)
     {
+        mechanic.Hypotheses ??= [];
+        mechanic.Stages ??= [];
+        mechanic.Hypotheses = mechanic.Hypotheses.Where(h => h != null).Take(18).ToList();
+        mechanic.Stages = mechanic.Stages.Where(s => s != null && float.IsFinite(s.Delay) && s.Delay is >= 0 and <= 12
+            && float.IsFinite(s.OffsetX) && float.IsFinite(s.OffsetZ) && float.IsFinite(s.P1) && float.IsFinite(s.P2)
+            && float.IsFinite(s.Duration) && s.Duration is > 0 and <= 12).Take(8).ToList();
+        foreach (var stage in mechanic.Stages)
+        {
+            stage.Polygon = (stage.Polygon ?? []).Where(p => p != null && float.IsFinite(p.X) && float.IsFinite(p.Z)).Take(256).ToArray();
+            stage.P1 = Finite(stage.P1, 0, 0, 200); stage.P2 = Finite(stage.P2, 0, 0, 200);
+            stage.RotationOffset = Finite(stage.RotationOffset, 0, -MathF.Tau, MathF.Tau);
+            stage.OffsetX = Finite(stage.OffsetX, 0, -200, 200); stage.OffsetZ = Finite(stage.OffsetZ, 0, -200, 200);
+            stage.Observations = Math.Clamp(stage.Observations, 0, 1_000_000);
+            stage.Hits = Math.Clamp(stage.Hits, 0, 1_000_000); stage.Misses = Math.Clamp(stage.Misses, 0, 1_000_000);
+            stage.DelayM2 = Finite(stage.DelayM2, 0, 0, double.MaxValue);
+        }
+        mechanic.UnverifiableOutcomes = Math.Max(0, mechanic.UnverifiableOutcomes);
+        mechanic.RecentContradictions = Math.Max(0, mechanic.RecentContradictions);
         mechanic.Key ??= "";
         mechanic.TriggerDetail ??= "";
         mechanic.PriorOmen ??= "";

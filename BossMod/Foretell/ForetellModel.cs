@@ -3,7 +3,7 @@ using System.Numerics;
 
 namespace BossMod.Foretell;
 
-public enum GeometryKind { Unknown, Circle, Donut, Cone, Rectangle, Cross }
+public enum GeometryKind { Unknown, Circle, Donut, Cone, Rectangle, Cross, Polygon }
 public enum GuidanceKind { None, Avoid, Stack, Spread, Soak, LookAway, Knockback, Tether, Raidwide, Cleanse, Move, Marker, Tankbuster }
 public enum PredictionOriginKind { Source, Target }
 public enum MechanicKind
@@ -24,11 +24,12 @@ public enum ObservationKind
     WorldOperation, ServerIPC, ClientIPC, ActorControlRaw,
     PositionSample, Displacement, ActorSnapshot, EnvironmentSnapshot, CameraSnapshot,
     NativeVFXSpawn, NativeVFXDestroy, TopologySnapshot,
-    ClientMetadata, GenericFeature
+    ClientMetadata, GenericFeature, DecisionFrame
 }
 
 public enum SourceKind { Unknown, Player, Pet, Enemy, EventObject, Environment }
 
+public enum PredictionValidationKind { Unresolved, Outcome, TriggerTiming }
 public enum DecisionAuditStage { Detected, Proposed, Classified, Verified, Expired }
 
 public sealed class DataCapability
@@ -115,6 +116,11 @@ public sealed class ContextualMechanic
     public int ForecastHits { get; set; }
     public int ForecastMisses { get; set; }
     public double BrierScoreSum { get; set; }
+    public int UnverifiableOutcomes { get; set; }
+    public int RecentContradictions { get; set; }
+    public List<MechanicHypothesis> Hypotheses { get; set; } = [];
+    public bool GeometryAmbiguous { get; set; }
+    public List<HazardStage> Stages { get; set; } = [];
     public DateTime FirstSeen { get; set; }
     public DateTime LastSeen { get; set; }
     public Dictionary<ObservationKind, int> Evidence { get; set; } = [];
@@ -188,9 +194,8 @@ public sealed class ContextualMechanic
 
     [JsonIgnore] public bool HasReliableActionPrior => PriorKind == MechanicKind.Gaze && PriorConfidence >= .90f
         || ForetellInferenceCore.IsReliableSpatialActionPrior(PriorKind, PriorGeometry, PriorConfidence, PriorP1, PriorP2);
-    [JsonIgnore] public float GuidanceConfidence => HasReliableActionPrior
-        ? Confidence
-        : ForetellInferenceCore.GuidanceConfidence(Confidence, ForecastHits, ForecastMisses);
+    [JsonIgnore] public float GuidanceConfidence => Math.Min(RecentContradictions >= 2 ? .74f : 1f,
+        HasReliableActionPrior ? Math.Max(Confidence, ForetellInferenceCore.WilsonLowerBound(ForecastHits, ForecastHits + ForecastMisses)) : ForetellInferenceCore.GuidanceConfidence(Confidence, ForecastHits, ForecastMisses));
     [JsonIgnore] public float ForecastAccuracy => Forecasts == 0 ? 0 : ForecastHits / (float)Math.Max(1, Forecasts);
     [JsonIgnore] public double AnchorStdDev => AnchorSamples > 1
         ? Math.Sqrt(Math.Max(0, AnchorForwardM2 + AnchorSideM2) / (AnchorSamples - 1))
@@ -373,6 +378,7 @@ public sealed class SessionSummary
 // This records decisions, not every observation: exact incoming bytes remain in the compressed raw journal.
 public sealed class DecisionAuditEntry
 {
+    public PredictionValidationKind Validation { get; set; }
     public DateTime At { get; set; }
     public DateTime Activation { get; set; }
     public string SessionID { get; set; } = "";
@@ -492,18 +498,22 @@ public sealed class MLState
 
 public sealed class ForetellStore
 {
-    public int Schema { get; set; } = 23;
+    public int Schema { get; set; } = 24;
     public Dictionary<uint, LearnedMechanic> Mechanics { get; set; } = [];
     public Dictionary<string, TimelineEdge> Timeline { get; set; } = [];
     public Dictionary<uint, EncounterMemory> Encounters { get; set; } = [];
     public List<SessionSummary> Sessions { get; set; } = [];
     public List<DecisionAuditEntry> DecisionAudit { get; set; } = [];
     public MLState ML { get; set; } = new();
+    public PreImpactMemory PreImpact { get; set; } = new();
     public DataCoverage Coverage { get; set; } = new();
 }
 
 public sealed class ForetellObservation
 {
+    public long ContextID { get; set; }
+    public DecisionContextSnapshot? Context { get; set; }
+    public ActionGeometryPrior? Prior { get; set; }
     public long Sequence { get; set; }
     public DateTime At { get; set; }
     public uint TerritoryID { get; set; }
@@ -531,6 +541,18 @@ public sealed class ForetellObservation
 
 public sealed class ReplayReport
 {
+    public int TriggerAssessed { get; set; }
+    public int TriggerCorrect { get; set; }
+    public int TriggerUnverifiable { get; set; }
+    public int AuditEntries { get; set; }
+    public int MissingContexts { get; set; }
+    public int Assessed { get; set; }
+    public int Correct { get; set; }
+    public int Incorrect { get; set; }
+    public int Unverifiable { get; set; }
+    public int PreImpactAssessed { get; set; }
+    public int PreImpactCorrect { get; set; }
+    public string DecisionDigest { get; set; } = "";
     public string File { get; set; } = "";
     public int Lines { get; set; }
     public int Parsed { get; set; }
@@ -552,11 +574,25 @@ public readonly record struct ActivePrediction(
     Vector2 Origin, Vector2 Target, float Rotation, float P1, float P2,
     DateTime Activation, float Confidence, string Evidence,
     string SignalKey = "", ulong TargetID = 0, GuidanceKind Guidance = GuidanceKind.None,
-    bool Anticipated = false, string Label = "");
+    bool Anticipated = false, string Label = "")
+{
+    public DateTime CreatedAt { get; init; }
+    public DateTime MotionUntil { get; init; }
+    public Vector2 Velocity { get; init; }
+    public HazardBinding Binding { get; init; }
+    public float LineMinimumLength { get; init; }
+    public IReadOnlyList<HazardVertex>? Polygon { get; init; }
+    public IReadOnlyList<HazardStage>? Stages { get; init; }
+    public string Provenance { get; init; } = "Observed signal";
+}
 
-internal readonly record struct ActionGeometryPrior(
+public readonly record struct ActionGeometryPrior(
     uint ActionID, GeometryKind Geometry, MechanicKind Kind, float P1, float P2, float Confidence,
     int CastType, int EffectRange, int XAxisModifier, bool TargetArea,
     uint OmenID, string Omen, uint VFXID, string Evidence);
 
-internal readonly record struct FitResult(GeometryKind Geometry, Vector2 Origin, float Rotation, float P1, float P2, float Score);
+internal readonly record struct FitResult(GeometryKind Geometry, Vector2 Origin, float Rotation, float P1, float P2, float Score)
+{
+    public float AlternativeScore { get; init; }
+    public bool Ambiguous => AlternativeScore >= Score - .08f;
+}

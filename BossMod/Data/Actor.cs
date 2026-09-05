@@ -181,7 +181,7 @@ public enum Visibility
     Blocked
 }
 
-public sealed class Actor(ulong instanceID, uint oid, int spawnIndex, uint layoutID, string name, uint nameID, ActorType type, Class classID, int level, Vector4 posRot, float hitboxRadius = 1f, ActorHPMP hpmp = default, bool targetable = true, bool ally = false, ulong ownerID = default, uint fateID = default, int renderflags = 0)
+public sealed class Actor(ulong instanceID, uint oid, int spawnIndex, uint layoutID, string name, uint nameID, ActorType type, Class classID, int level, Vector4 posRot, float hitboxRadius = 1f, ActorHPMP hpmp = default, bool targetable = true, bool ally = false, ulong ownerID = default, uint fateID = default, int renderflags = 0, bool resolveGameMetadata = true)
 {
     public ulong InstanceID = instanceID; // 'uuid'
     public uint OID = oid;
@@ -236,8 +236,8 @@ public sealed class Actor(ulong instanceID, uint oid, int spawnIndex, uint layou
     public bool Omnidirectional
     {
         get;
-        set => field = value || Utils.CharacterIsOmnidirectional(OID);
-    } = Utils.CharacterIsOmnidirectional(oid);
+        set => field = value || (resolveGameMetadata && Utils.CharacterIsOmnidirectional(OID));
+    } = resolveGameMetadata && Utils.CharacterIsOmnidirectional(oid);
 
     public bool IsDeadOrDestroyed => IsDead || IsDestroyed;
 

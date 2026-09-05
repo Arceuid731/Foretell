@@ -27,7 +27,7 @@ public sealed partial class ForetellEngine
     private static readonly string[] RadarShapeLabels = ["Auto (observed arena boundary)", "Circle", "Square"];
     private static readonly string[] RadarZoomLabels = ["Automatic (bounded arena fit)", "Manual"];
     private static readonly string[] RadarTerrainStyleLabels = ["Outline only", "Outline + filled surface"];
-    private static readonly string[] KnowledgeConfidenceLabels = ["All confidence levels", "Learned (75%+)", "High (95%+)", "Safe (99%+)"];
+    private static readonly string[] KnowledgeConfidenceLabels = ["All confidence levels", "Learned (75%+)", "High (95%+)", "Strict guidance (99%+)"];
     private static readonly string[] ObservationKindLabels = ["All event types", .. Enum.GetNames<ObservationKind>()];
     private readonly record struct StorageFileEntry(string Path, string Kind, long Bytes, DateTime Updated, bool Active);
 
@@ -151,13 +151,12 @@ public sealed partial class ForetellEngine
             {
                 try
                 {
-                    DrawInspectorTab("Dashboard", DrawDashboard);
-                    DrawInspectorTab("Knowledge explorer", DrawKnowledgeExplorer);
+                    DrawInspectorTab("Overview", DrawDashboard);
+                    DrawInspectorTab("Knowledge", DrawKnowledgeExplorer);
                     DrawInspectorTab("Timeline", DrawInspectorTimeline);
-                    DrawInspectorTab("Live feed", DrawInspectorObservations);
-                    DrawInspectorTab("Replay & storage", DrawInspectorReplay);
+                    DrawInspectorTab("Recordings", DrawInspectorReplay);
                     DrawInspectorTab("Settings", DrawInspectorSettings);
-                    DrawInspectorTab("Help", DrawInspectorHelp);
+                    DrawInspectorTab("Diagnostics", DrawDiagnostics);
                 }
                 finally { ImGui.EndTabBar(); }
             }
@@ -190,16 +189,18 @@ public sealed partial class ForetellEngine
         ImGui.SameLine();
         DrawModeButton(ForetellMode.Foretell);
 
-        ImGui.SameLine();
-        ImGui.TextUnformatted("  Territory");
+        ImGui.Spacing();
+        ImGui.TextUnformatted("Content");
         ImGui.SameLine();
         if (ImGui.Button($"Current: {EncounterName(_territory)}##current-territory"))
             _inspectorTerritory = _territory;
-        foreach (var id in _store.Encounters.Keys.Where(id => id != _territory).OrderByDescending(id => _store.Encounters[id].LastSeen).Take(4))
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(280);
+        if (ImGui.BeginCombo("##selected-content", EncounterName(_inspectorTerritory)))
         {
-            ImGui.SameLine();
-            if (ImGui.Button($"{EncounterName(id)}##territory{id}"))
-                _inspectorTerritory = id;
+            foreach (var id in _store.Encounters.Keys.OrderByDescending(id => _store.Encounters[id].LastSeen))
+                if (ImGui.Selectable(EncounterName(id), id == _inspectorTerritory)) _inspectorTerritory = id;
+            ImGui.EndCombo();
         }
         ImGui.Separator();
     }
@@ -218,7 +219,7 @@ public sealed partial class ForetellEngine
             SetMode(mode);
     }
 
-    private void DrawDashboard()
+    private void DrawTelemetryDashboard()
     {
         DrawRecommendedNextStep();
         DrawTelemetryStatus();
@@ -254,7 +255,7 @@ public sealed partial class ForetellEngine
             DrawMetricCell(visual.ToString(), $">= {_cfg.VisualConfidence:F0}% visual");
             DrawMetricCell(warnings.ToString(), $">= {_cfg.WarningConfidence:F0}% warning");
             DrawMetricCell(safe.ToString(), $">= {_cfg.SafeConfidence:F0}% safe");
-            DrawMetricCell(_store.ML.Updates.ToString("N0"), "ML updates");
+            DrawMetricCell(_store.PreImpact.Model.Updates.ToString("N0"), "ML updates");
             ImGui.EndTable();
         }
 
@@ -282,7 +283,7 @@ public sealed partial class ForetellEngine
             {
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
-                ImGui.TextUnformatted($"{ConfidenceBadge(mechanic.GuidanceConfidence)} {mechanic.GuidanceConfidence:P0} verified");
+                ImGui.TextUnformatted($"{ConfidenceBadge(mechanic.GuidanceConfidence)} {mechanic.GuidanceConfidence:P0} display score");
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(mechanic.Kind.ToString());
                 ImGui.TableNextColumn();
@@ -628,13 +629,14 @@ public sealed partial class ForetellEngine
     private void DrawMechanicKnowledge(EncounterMemory encounter, ContextualMechanic mechanic)
     {
         var name = MechanicDisplayName(mechanic);
-        var open = ImGui.TreeNodeEx($"{ConfidenceBadge(mechanic.GuidanceConfidence)} {name}  — {mechanic.Kind}, {mechanic.Geometry}, {mechanic.GuidanceConfidence:P0} verified##mechanic-{encounter.TerritoryID}-{mechanic.Key}", ImGuiTreeNodeFlags.SpanAvailWidth);
+        var open = ImGui.TreeNodeEx($"{name}  — {(mechanic.HasReliableActionPrior ? "Client shape" : ForetellReliability.Describe(mechanic).Maturity.ToString())} · {mechanic.Observations} seen##mechanic-{encounter.TerritoryID}-{mechanic.Key}", ImGuiTreeNodeFlags.SpanAvailWidth);
         ImGui.SameLine();
         if (ImGui.Button($"Delete##delete-mechanic-{encounter.TerritoryID}-{mechanic.Key}"))
             RequestPurge(name, "Delete this learned mechanic, its samples and dependent timeline edges?", () => PurgeMechanic(encounter.TerritoryID, mechanic.Key));
         if (!open)
             return;
 
+        DrawMechanicReliability(mechanic);
         if (ImGui.BeginTable($"mechanic-summary-{encounter.TerritoryID}-{mechanic.Key}", 6, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV))
         {
             DrawMetricCell(mechanic.Observations.ToString(), "Observations");
@@ -1087,10 +1089,9 @@ public sealed partial class ForetellEngine
             DrawMetricCell(_raw.RejectedItems.ToString("N0"), "Rejected");
             ImGui.EndTable();
         }
-        ImGui.BeginDisabled(_inPull);
-        if (ImGui.Button("Replay latest in sandbox")) ReplayLatest();
+        ImGui.BeginDisabled(_semanticReplayTask is { IsCompleted: false });
+        if (ImGui.Button("Evaluate latest recording")) ReplayLatest();
         ImGui.EndDisabled();
-        if (_inPull && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled)) ImGui.SetTooltip("Replay is disabled during combat to protect frame time.");
         ImGui.SameLine();
         if (ImGui.Button(_rawAnalysisTask is { IsCompleted: false } ? "Indexing raw journal..." : "Index latest raw journal")) StartRawAnalysis();
         ImGui.SameLine();
@@ -1115,6 +1116,7 @@ public sealed partial class ForetellEngine
             DrawMetricCell((replay.Rejected + replay.RawErrors).ToString("N0"), "Errors/rejected");
             ImGui.EndTable();
         }
+        ImGui.TextWrapped($"Outcome checks: {replay.Correct} matched · {replay.Incorrect} contradicted · {replay.Unverifiable} unassessable · {replay.MissingContexts} events missing world context");
         if (replay.First != default) ImGui.TextUnformatted($"Recorded time range: {replay.First:u} -> {replay.Last:u}");
         if (!string.IsNullOrEmpty(_diagnosticsPath))
             ImGui.TextUnformatted($"Latest diagnostics export: {_diagnosticsPath}");

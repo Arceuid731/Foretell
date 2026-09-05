@@ -21,6 +21,12 @@ public sealed partial class ForetellEngine
 
     private void RefreshEncounterIdentity(EncounterMemory encounter, uint cfcID)
     {
+        if (_isReplay)
+        {
+            encounter.ContentFinderConditionID = cfcID;
+            if (encounter.TerritoryName.Length == 0) encounter.TerritoryName = $"Territory {encounter.TerritoryID}";
+            return;
+        }
         string? territoryName = null;
         try
         {
@@ -76,6 +82,7 @@ public sealed partial class ForetellEngine
         if (!string.IsNullOrWhiteSpace(source.Name))
             return source.Name;
 
+        if (_isReplay) return source.OID == 0 ? "Recorded environment" : $"Recorded source 0x{source.OID:X}";
         if (source.NameID != 0)
         {
             string? learnedName = null;
@@ -94,7 +101,7 @@ public sealed partial class ForetellEngine
         return $"{source.Kind} 0x{source.OID:X8}";
     }
 
-    private static string MechanicDisplayName(ContextualMechanic mechanic)
+    private string MechanicDisplayName(ContextualMechanic mechanic)
     {
         if (mechanic.TriggerID != 0 && mechanic.TriggerKind is ObservationKind.CastStart or ObservationKind.CastFinish or ObservationKind.ActionResolved or ObservationKind.AffectedTarget)
         {
@@ -118,8 +125,9 @@ public sealed partial class ForetellEngine
             : $"{label} · 0x{mechanic.TriggerID:X}";
     }
 
-    private static string? LookupActionName(uint actionID)
+    private string? LookupActionName(uint actionID)
     {
+        if (_isReplay) return null;
         try { return Service.LuminaRow<Lumina.Excel.Sheets.Action>(actionID)?.Name.ToString(); }
         catch { return null; }
     }

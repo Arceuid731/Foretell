@@ -17,5 +17,9 @@
     <Compile Include="../BossMod/Foretell/ForetellInferenceCore.cs" Link="ForetellInferenceCore.cs" />
     <Compile Include="../BossMod/Foretell/ForetellStorageCore.cs" Link="ForetellStorageCore.cs" />
     <Compile Include="../BossMod/Foretell/OnlineClassifier.cs" Link="OnlineClassifier.cs" />
+    <Compile Include="../BossMod/Foretell/ForetellReliability.cs" Link="ForetellReliability.cs" />
+    <Compile Include="../BossMod/Foretell/ForetellPreImpact.cs" Link="ForetellPreImpact.cs" />
+    <Compile Include="../BossMod/Foretell/ForetellReplayContext.cs" Link="ForetellReplayContext.cs" />
+    <Compile Include="../BossMod/Foretell/ForetellDecisionCore.cs" Link="ForetellDecisionCore.cs" />
   </ItemGroup>
 </Project>

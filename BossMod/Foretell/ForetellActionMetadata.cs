@@ -12,6 +12,7 @@ public sealed partial class ForetellEngine
     // Ambiguous metadata families remain explicitly unshaped and are left to outcome learning.
     private ActionGeometryPrior? ReadActionGeometryPrior(ForetellObservation trigger)
     {
+        if (_isReplay || trigger.Prior != null) return trigger.Prior;
         if (trigger.PrimaryID == 0) return null;
         try
         {
@@ -209,7 +210,7 @@ public sealed partial class ForetellEngine
         var prior = ReadActionGeometryPrior(trigger);
         if (prior is not ActionGeometryPrior p) return;
 
-        ContextualMechanic? mechanic = null;
+        ContextualMechanic? mechanic = _store.Encounters.GetValueOrDefault(trigger.TerritoryID)?.Mechanics.GetValueOrDefault(SignalKey(trigger));
         if (_cfg.EnableLearning)
         {
             var encounter = Encounter(trigger.TerritoryID);
@@ -224,8 +225,8 @@ public sealed partial class ForetellEngine
                     SourceKind = trigger.SourceKind,
                     TriggerKind = trigger.Kind,
                     TriggerID = trigger.PrimaryID,
-                    FirstSeen = DateTime.UtcNow,
-                    LastSeen = DateTime.UtcNow
+                    FirstSeen = LearningNow,
+                    LastSeen = LearningNow
                 };
                 encounter.Mechanics[key] = mechanic;
                 ++_session.NewMechanics;
@@ -245,7 +246,7 @@ public sealed partial class ForetellEngine
             mechanic.PriorVFXID = p.VFXID;
             mechanic.PriorEvidence = p.Evidence;
             mechanic.Evidence[ObservationKind.ClientMetadata] = 1;
-            mechanic.LastSeen = DateTime.UtcNow;
+            mechanic.LastSeen = LearningNow;
 
             ReassertReliableActionPrior(mechanic);
         }
@@ -259,7 +260,7 @@ public sealed partial class ForetellEngine
             var hasSemanticPrior = p.Kind != MechanicKind.Unknown;
             var shouldWatch = ForetellInferenceCore.ShouldSurfaceUnshapedCast(trigger.Value1);
             var replaceExisting = !_predictions.TryGetValue(trigger.Sequence, out var existingUnshaped)
-                || !HasTrustworthyLearnedUnshapedMechanic(mechanic, existingUnshaped);
+                || existingUnshaped.Provenance != "Pre-impact model" && !HasTrustworthyLearnedUnshapedMechanic(mechanic, existingUnshaped);
             if ((hasSemanticPrior || shouldWatch) && replaceExisting)
             {
                 var watchSource = new Vector2(trigger.X, trigger.Z);
@@ -290,8 +291,9 @@ public sealed partial class ForetellEngine
 
         var source = new Vector2(trigger.X, trigger.Z);
         var target = new Vector2(trigger.TargetX, trigger.TargetZ);
+        if (trigger.TargetID == 0 && !p.TargetArea) target = source;
         var origin = p.Geometry is GeometryKind.Circle or GeometryKind.Donut ? target : source;
-        var confidence = p.Confidence;
+        var confidence = mechanic?.RecentContradictions >= 2 ? Math.Min(p.Confidence, .74f) : p.Confidence;
         var geometry = p.Geometry;
         var p1 = p.P1;
         var p2 = p.P2;
@@ -301,7 +303,7 @@ public sealed partial class ForetellEngine
         if (_predictions.TryGetValue(trigger.Sequence, out var existing))
         {
             if (existing.Geometry == geometry && existing.Kind == MechanicKind.GroundAOE && existing.Guidance == GuidanceKind.Avoid)
-                confidence = Math.Max(confidence, existing.Confidence);
+                confidence = Math.Min(mechanic?.RecentContradictions >= 2 ? .74f : 1f, Math.Max(confidence, existing.Confidence));
         }
 
         var prediction = new ActivePrediction(trigger.ActorID, trigger.PrimaryID, geometry, MechanicKind.GroundAOE,
