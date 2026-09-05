@@ -1,13 +1,11 @@
-Foretell 0.10.0 adds pre-impact learning, explicit uncertainty and detached evaluation.
+Foretell 0.10.1 makes development capture automatic and bounded.
 
-- Freeze classifier inputs at the trigger; evaluate independent outcomes before training. Keep ambiguous raidwide/AOE, marker and spatial explanations unresolved.
-- Validate issued footprints against observed world positions and impact time. Separate trigger-timing metrics from mechanic outcomes, preserve unassessable results and demote recent contradictions.
-- Learn bounded follow-up stage programs; share hazards between world, radar and text. Update target-dependent line endpoints and assess direct routes against activation windows, credible lower-confidence dangers, terrain and unresolved personal constraints.
-- Replace the main dashboard with an English Overview explaining current alerts, knowledge, missing evidence and occurrence requirements. Move technical counters into Diagnostics and replace radar percentages with impact timers and a compact legend.
-- Evaluate recordings in a separate managed engine on a background worker. Record bounded world context, support separate chronological training/frozen evaluation, and test the real engine without initialized game services in CI.
+- Record accepted decision inputs, client priors and bounded world context automatically; the optional readable Replay Lab switch is no longer required for Analysis ZIP capture.
+- Compress and seal small independent parts on a background worker. Bound the new cache to 64 MiB per territory session, 256 MiB total and 14 days; report oversized events, backlog losses and quota stops explicitly.
+- Include the selected session capture in Analysis ZIP, including a safely sealed snapshot of an active session. Limit the ZIP to 128 MiB and disclose supplemental files omitted for size. Fix exclusion of readable recordings already closed with record off.
+- Inspect and evaluate ZIPs progressively without retaining the whole recording. Verify part hashes and event counts, preserve missing-evidence abstention, and expose an --inspect summary command.
+- Clarify English UI labels and show automatic capture status. Existing raw/readable retention settings, learned memory and exported ZIPs keep their existing policy.
 
-Memory schema 24 preserves contextual observations and client priors while restarting old spatial validation counters and rebuilding derived global fits. Old recordings without decision context remain readable but cannot establish the new outcome reliability.
+Validated with detached real-engine capture/export regressions, core tests, telemetry contract and release build. Live UI/performance validation remains necessary. Semantic replay does not reconstruct rendered pixels, historical collision changes or a complete initial learned-memory checkpoint.
 
-One complete client shape can be usable on its first cast. Learned behavior has no universal required cast count. This release does not establish universal mechanic coverage or live rendering/performance validation. No authored encounter answers or automatic character movement were added.
-
-See docs/foretell-0.10.md for behavior, validation commands and remaining limits.
+See docs/foretell-0.10.1.md for limits and analysis commands.

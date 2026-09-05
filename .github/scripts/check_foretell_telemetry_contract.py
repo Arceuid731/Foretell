@@ -340,18 +340,27 @@ requirements = {
         "Transitions",
     ],
     "BossMod/Foretell/ForetellReplay.cs": [
-        "RawJournalsForReplay",
         "TryParseJournalTime",
-        "File.GetLastWriteTimeUtc(path)",
+        "OrderByDescending(File.GetLastWriteTimeUtc)",
         "DateTimeStyles.AdjustToUniversal",
         "ForetellRawFormat.Read",
         "MaxReadableReplayBytes",
-        "MaxReadableReplayLines",
+        "EvaluateRecordedStream",
+        "reader.Inspect",
+        "SnapshotAsync",
         'Detail = "raw:feature-window"',
         "if (includeStructuralDetails)",
         'obs.Numeric["raw.window.payloadBytes"]',
         'obs.Numeric[$"raw.window.opcode[{opcode:X8}]"]',
         'obs.Numeric[$"raw.window.binaryBucket[{i}]"]',
+    ],
+    "BossMod/Foretell/ForetellCapture.cs": [
+        "QueueLimit = 16L * 1024 * 1024", "SessionLimit = 64L * 1024 * 1024",
+        "CacheLimit = 256L * 1024 * 1024", "CopyForRecording", "SnapshotAsync",
+        "PruneCache", "SHA256.HashData", "Interlocked.Increment(ref session.Rejected)",
+    ],
+    "BossMod/Foretell/ForetellRecordingReader.cs": [
+        "IEnumerable<ForetellObservation>", "MaxExpandedBytes", "capture/index.json", "integrity check failed",
     ],
     "BossMod/Foretell/ForetellTopology.cs": [
         "PollCompletedCollisionRaster",
@@ -564,7 +573,7 @@ if "if (NativeHookTelemetryEnabled)\n                InitializeNativeHooks();" n
     errors.append("Foretell native hooks escaped their explicit data-complete gate")
 if "if (!includeNative || !NativeSnapshotTelemetryEnabled || PerformanceThrottled)\n            return;" not in fabric:
     errors.append("Foretell native snapshots escaped their explicit data-complete gate")
-if "_replay.Enqueue(_replayPath, observation)" not in engine or "_replay.WriteLine" in engine:
+if "_replay.Enqueue(_replayPath, observation.CopyForRecording())" not in engine or "_replay.WriteLine" in engine:
     errors.append("Foretell replay serialization can run synchronously on the framework thread")
 if "_ws.Network.CaptureRawTransport = true" not in engine:
     errors.append("Foretell data-complete raw transport capture is not always armed")

@@ -27,6 +27,8 @@ public sealed partial class ForetellEngine : IDisposable
     private ForetellPreImpactModel _preImpact;
     private readonly Queue<ForetellObservation> _precursorCues = new();
     private ForetellReplayWriter? _replay;
+    private ForetellCapture? _capture;
+    private ForetellCapture.Session? _captureSession;
     private readonly ForetellRawWriter _raw;
     private string _replayPath = "";
     private string _rawPath = "";
@@ -178,11 +180,13 @@ public sealed partial class ForetellEngine : IDisposable
         // and subscriptions are installed last; any failure unwinds every Foretell-owned resource in reverse.
         try
         {
+            _capture = new(Path.Combine(configDirectory, "foretell-captures"));
             NormalizeStore();
             _preImpact = new(_store.PreImpact);
             _territory = CurrentTerritory();
             _session = NewSession(_territory);
             StartEncounterSession(_territory);
+            _captureSession = _capture.NewSession(_territory, _session.ID, CurrentPluginVersion);
             foreach (var actor in _ws.Actors)
                 OnActorAdded(actor);
             SamplePartyPositions();
@@ -208,6 +212,7 @@ public sealed partial class ForetellEngine : IDisposable
             DetachRawCapture();
             try { _subscriptions.Dispose(); } catch { }
             try { DisposeNativeHooks(); } catch { }
+            _capture?.Dispose();
             _replay?.Dispose();
             _replay = null;
             _raw.Dispose();
@@ -261,6 +266,7 @@ public sealed partial class ForetellEngine : IDisposable
         try { DisposeNativeHooks(); } catch (Exception e) { Service.Log($"[Foretell] Native hook shutdown failed safely: {e.Message}"); }
         try { _replay?.Dispose(); } catch (Exception e) { Service.Log($"[Foretell] Replay shutdown failed safely: {e.Message}"); }
         _replay = null;
+        _capture?.Dispose();
         try { _raw.Dispose(); } catch (Exception e) { Service.Log($"[Foretell] Raw shutdown failed safely: {e.Message}"); }
         try { Service.CommandManager.RemoveHandler("/foretell"); } catch (Exception e) { Service.Log($"[Foretell] Command shutdown failed safely: {e.Message}"); }
     }
@@ -388,7 +394,6 @@ public sealed partial class ForetellEngine : IDisposable
         _tracks.Clear();
         _precursorCues.Clear();
         _decisionContext = null;
-        _lastRecordedContext = 0;
         _lastOutcomeGapAt = default;
         ++_predictionRevision;
         _routeResult = null;
@@ -427,6 +432,7 @@ public sealed partial class ForetellEngine : IDisposable
         _territory = territory;
         _session = NewSession(territory);
         StartEncounterSession(territory);
+        _captureSession = _capture?.NewSession(territory, _session.ID, CurrentPluginVersion);
         ReopenReplayWriter();
         OpenRawJournal();
         _lastEvidence = $"Entered territory {territory}";
@@ -461,7 +467,8 @@ public sealed partial class ForetellEngine : IDisposable
             MechanicsFinalized = _session.MechanicsFinalized,
             NewMechanics = _session.NewMechanics,
             AmbiguousMechanics = _session.AmbiguousMechanics,
-            ReplayFile = Path.GetFileName(_replayPath)
+            ReplayFile = Path.GetFileName(_replayPath),
+            CaptureDirectory = _captureSession == null ? "" : Path.GetFileName(_captureSession.Directory)
         });
         while (_store.Sessions.Count > 100)
             _store.Sessions.RemoveAt(0);
@@ -595,6 +602,7 @@ public sealed partial class ForetellEngine : IDisposable
     {
         _replay?.Dispose();
         _replay = null;
+        _replayPath = "";
         if (_cfg.RecordReplay) OpenReplayWriter();
     }
 
@@ -1316,8 +1324,9 @@ public sealed partial class ForetellEngine : IDisposable
 
     private void Record(ForetellObservation observation, bool replaying)
     {
-        if (replaying || !_cfg.RecordReplay || _replay == null) return;
-        _replay.Enqueue(_replayPath, observation);
+        if (replaying) return;
+        if (_captureSession != null) _capture?.Enqueue(_captureSession, observation);
+        if (_cfg.RecordReplay && _replay != null) _replay.Enqueue(_replayPath, observation.CopyForRecording());
     }
 
     private ForetellObservation Observation(ObservationKind kind, Actor? actor = null, uint primary = 0, uint secondary = 0, ulong target = 0,

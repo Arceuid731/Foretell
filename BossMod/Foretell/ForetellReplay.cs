@@ -7,7 +7,6 @@ namespace BossMod.Foretell;
 public sealed partial class ForetellEngine
 {
     private const long MaxReadableReplayBytes = 512L * 1024 * 1024;
-    private const int MaxReadableReplayLines = 2_000_000;
 
     private Task<ReplayReport>? _semanticReplayTask;
     private readonly CancellationTokenSource _semanticReplayCancellation = new();
@@ -15,16 +14,36 @@ public sealed partial class ForetellEngine
     public ReplayReport ReplayLatest()
     {
         if (_semanticReplayTask is { IsCompleted: false }) return _lastReplayReport;
-        var writer = _replay;
+        var completed = _store.Sessions.OrderByDescending(s => s.Ended).FirstOrDefault(s => !string.IsNullOrEmpty(s.CaptureDirectory));
+        var captureDirectory = completed == null ? _captureSession?.Directory
+            : Path.Combine(Path.GetDirectoryName(_replayDir)!, "foretell-captures", Path.GetFileName(completed.CaptureDirectory));
+        var activeDirectory = _captureSession?.Directory;
+        var captureWriter = _capture;
+        var captureTask = captureDirectory == null || _capture == null ? null : _capture.SnapshotAsync(captureDirectory);
         _lastReplayReport = new() { Status = "Detached evaluation running in background" };
-        _semanticReplayTask = Task.Run(() =>
+        _semanticReplayTask = Task.Run(async () =>
         {
-            writer?.Drain(TimeSpan.FromSeconds(2));
+            using var capture = captureTask == null ? null : await captureTask;
+            if (capture != null && capture.Parts.Length > 0) return EvaluateCapture(capture);
+            using var active = captureWriter == null || activeDirectory == null || activeDirectory == captureDirectory
+                ? null : await captureWriter.SnapshotAsync(activeDirectory);
+            if (active != null && active.Parts.Length > 0) return EvaluateCapture(active);
             var latest = Directory.GetFiles(_replayDir, "foretell-*.jsonl")
+                .Where(path => _replay == null || !string.Equals(path, _replayPath, StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
-            return latest == null ? new ReplayReport { Status = "No replay file found" } : ReplayFile(latest);
+            return latest == null ? new ReplayReport { Status = "No sealed recording found" } : ReplayFile(latest);
         });
         return _lastReplayReport;
+    }
+
+    private ReplayReport EvaluateCapture(ForetellCapture.Snapshot capture)
+    {
+        var reader = new ForetellRecordingReader(Path.Combine(capture.Directory, "index.json"), capture.Index);
+        reader.Inspect(_semanticReplayCancellation.Token);
+        var result = EvaluateRecordedStream(reader.Read(), captureComplete: reader.Complete, cancellationToken: _semanticReplayCancellation.Token).Report;
+        result.File = Path.GetFileName(capture.Directory);
+        result.Rejected = (int)Math.Min(int.MaxValue, reader.Rejected);
+        return result;
     }
 
     private void PollSemanticReplay()
@@ -72,29 +91,6 @@ public sealed partial class ForetellEngine
         return end > start && uint.TryParse(name.AsSpan(start, end - start), out var territory) ? territory : 0;
     }
 
-    private IReadOnlyList<string> RawJournalsForReplay(string replayPath, DateTime first, DateTime last)
-    {
-        var replayName = Path.GetFileNameWithoutExtension(replayPath);
-        var territory = ParseRawTerritory(replayPath);
-        if (!TryParseJournalTime(replayName, out var replayAt))
-            return LatestRawJournal(includeCurrent: false) is { } latest ? [latest] : [];
-
-        var candidates = Directory.GetFiles(_rawDir, $"foretell-T{territory}-*.ftraw.gz")
-            .Select(path => (Path: path,
-                Parsed: TryParseJournalTime(Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(path)), out var at),
-                At: at, Updated: File.GetLastWriteTimeUtc(path)))
-            .Where(candidate => candidate.Parsed)
-            .ToArray();
-        var overlap = candidates
-            .Where(candidate => candidate.At <= last.AddMinutes(1) && candidate.Updated >= first.AddMinutes(-1))
-            .OrderBy(candidate => candidate.At)
-            .Select(candidate => candidate.Path)
-            .ToArray();
-        if (overlap.Length != 0) return overlap;
-        var nearest = candidates.OrderBy(candidate => Math.Abs((candidate.At - replayAt).TotalMilliseconds)).FirstOrDefault();
-        return nearest.Path == null || Math.Abs((nearest.At - replayAt).TotalMinutes) > 10 ? [] : [nearest.Path];
-    }
-
     private static bool TryParseJournalTime(string name, out DateTime timestamp)
     {
         timestamp = default;
@@ -108,87 +104,17 @@ public sealed partial class ForetellEngine
 
     private ReplayReport ReplayFile(string path)
     {
-        var report = new ReplayReport { File = Path.GetFileName(path), Status = "Parsing" };
-        List<ForetellObservation> observations = [];
         try
         {
-            var length = new FileInfo(path).Length;
-            if (length > MaxReadableReplayBytes)
-                throw new InvalidDataException($"readable replay is {length / (1024d * 1024):F0} MiB and exceeds the {MaxReadableReplayBytes / (1024 * 1024)} MiB in-memory safety limit");
-            foreach (var line in File.ReadLines(path))
-            {
-                _semanticReplayCancellation.Token.ThrowIfCancellationRequested();
-                ++report.Lines;
-                if (report.Lines > MaxReadableReplayLines)
-                    throw new InvalidDataException($"readable replay exceeds the {MaxReadableReplayLines:N0}-line in-memory safety limit");
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    var observation = JsonSerializer.Deserialize<ForetellObservation>(line, _replayJson);
-                    if (observation == null || observation.Kind == ObservationKind.Unknown || observation.At == default)
-                    {
-                        ++report.Rejected;
-                        continue;
-                    }
-                    observation.At = NormalizeObservationTime(observation.At);
-                    observations.Add(observation);
-                    ++report.Parsed;
-                    report.Counts[observation.Kind] = report.Counts.GetValueOrDefault(observation.Kind) + 1;
-                    if (report.First == default || observation.At < report.First) report.First = observation.At;
-                    if (report.Last == default || observation.At > report.Last) report.Last = observation.At;
-                }
-                catch { ++report.Rejected; }
-            }
+            var reader = new ForetellRecordingReader(path);
+            reader.Inspect(_semanticReplayCancellation.Token);
+            var result = EvaluateRecordedStream(reader.Read(), captureComplete: reader.Complete,
+                cancellationToken: _semanticReplayCancellation.Token).Report;
+            result.File = Path.GetFileName(path);
+            result.Rejected = (int)Math.Min(int.MaxValue, reader.Rejected);
+            return result;
         }
-        catch (Exception e)
-        {
-            report.Status = $"Read failed: {e.Message}";
-            return report;
-        }
-
-        if (observations.Count == 0)
-        {
-            report.Status = report.Rejected > 0
-                ? "No normalized V2 observations found (this can be an older replay)"
-                : "Replay is empty";
-            return report;
-        }
-
-        // Replay every rotated raw journal overlapping this exact territory session. Feeding unrelated zones into
-        // a pull would create plausible-looking but causally false correlations.
-        var rawPaths = RawJournalsForReplay(path, report.First, report.Last);
-        foreach (var rawPath in rawPaths)
-        {
-            var raw = ForetellRawFormat.Read(rawPath, ParseRawTerritory(rawPath));
-            report.RawRecords += raw.Records;
-            report.RawWindows += raw.Windows.Count;
-            report.RawErrors += raw.Errors.Count;
-            foreach (var window in raw.Windows)
-            {
-                var rawObservation = RawWindowObservation(window);
-                observations.Add(rawObservation);
-                report.Counts[ObservationKind.GenericFeature] = report.Counts.GetValueOrDefault(ObservationKind.GenericFeature) + 1;
-            }
-        }
-        report.Territories = observations.Select(o => o.TerritoryID).Distinct().Count();
-
-        try
-        {
-            var evaluation = EvaluateRecordedObservations(observations, captureComplete: report.Rejected == 0 && report.RawErrors == 0, cancellationToken: _semanticReplayCancellation.Token);
-            evaluation.Report.File = report.File;
-            evaluation.Report.Lines = report.Lines;
-            evaluation.Report.Rejected = report.Rejected;
-            evaluation.Report.RawRecords = report.RawRecords;
-            evaluation.Report.RawWindows = report.RawWindows;
-            evaluation.Report.RawErrors = report.RawErrors;
-            report = evaluation.Report;
-        }
-        catch (Exception e)
-        {
-            report.Status = $"Detached replay failed: {e.GetType().Name}: {e.Message}";
-        }
-
-        return report;
+        catch (Exception e) { return new ReplayReport { File = Path.GetFileName(path), Status = $"Read/evaluation failed: {e.Message}" }; }
     }
 
     private ForetellObservation RawWindowObservation(ForetellRawFeatureWindow window, bool includeStructuralDetails = true)

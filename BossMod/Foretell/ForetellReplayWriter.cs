@@ -87,6 +87,7 @@ internal sealed class ForetellReplayWriter : IDisposable
     {
         StreamWriter? writer = null;
         var path = "";
+        long context = 0;
         var cappedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
@@ -102,8 +103,10 @@ internal sealed class ForetellReplayWriter : IDisposable
                 {
                     writer?.Dispose();
                     path = item.Path;
+                    context = 0;
                     writer = new(path, append: true) { AutoFlush = true };
                 }
+                if (item.Observation.ContextID == context) item.Observation.Context = null;
                 var line = JsonSerializer.Serialize(item.Observation, _json);
                 var encodedBytes = System.Text.Encoding.UTF8.GetByteCount(line) + Environment.NewLine.Length;
                 if (writer.BaseStream.Position + encodedBytes > MaxFileBytes)
@@ -115,6 +118,7 @@ internal sealed class ForetellReplayWriter : IDisposable
                     continue;
                 }
                 writer.WriteLine(line);
+                context = item.Observation.ContextID;
                 Interlocked.Decrement(ref _pending);
                 Interlocked.Increment(ref _written);
             }

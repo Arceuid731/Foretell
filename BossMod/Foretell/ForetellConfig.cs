@@ -105,7 +105,7 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("Safe-position suggestions", tooltip: "Draw a suggested safe destination only for predictions above the strict safe-guidance confidence threshold. Suggestion only: Foretell never moves your character.")]
     public bool SafePositionSuggestions = true;
 
-    [PropertyDisplay("Record local Replay Lab stream", tooltip: "Optional high-volume, human-readable stream of normalized encounter observations. It is written on a background thread, hard-limited to 512 MiB per territory segment, and never uploaded automatically. Exact packets remain in the separate compact raw journal.")]
+    [PropertyDisplay("Extra readable recording (advanced)", tooltip: "Optional high-volume JSONL for advanced diagnostics, capped at 512 MiB per territory segment. Automatic compressed Analysis ZIP capture already runs independently of this switch (64 MiB per session, 256 MiB cache, 14 days). No automatic upload.")]
     public bool RecordReplay;
 
     [PropertyDisplay("Automatically prune old recordings", tooltip: "Optional. When enabled, Foretell removes only inactive files from its own raw/replay folders, outside combat and on a background worker. Active recordings and learned memory are always protected.")]

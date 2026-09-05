@@ -33,7 +33,7 @@ Ces nombres ne sont **ni une obligation de subir autant de casts, ni une probabi
 
 ## Évaluer des sessions séparées
 
-Le flux normalisé reste facultatif : `/foretell record on` avant la capture, puis `/foretell record off`. La version 0.10 y ajoute un contexte borné : acteurs proches, groupe, état de combat et de contenu, boss observé, données client et paramètres d'apprentissage. Les journaux raw restent disponibles indépendamment.
+Depuis la **0.10.1**, les événements et le contexte nécessaires sont collectés automatiquement et intégrés à l’Analysis ZIP : aucune commande `record` n’est nécessaire. La 0.10.0 plaçait encore ce contexte dans le flux lisible facultatif. Voir [le fonctionnement et les limites de la collecte automatique](foretell-0.10.1.md). Les exemples ci-dessous acceptent aussi directement les nouveaux ZIP.
 
 Avec .NET 10.0.400 ou supérieur et les dépendances Dalamud installées, depuis le dépôt :
 
@@ -46,7 +46,7 @@ dotnet run --project ForetellRuntimeTests/ForetellRuntimeTests.csproj -c Release
 
 Le programme refuse un même fichier ou des périodes se chevauchant. Il produit `training-report.json`, `evaluation-report.json` et `evaluation-decisions.json`. Le dernier fichier contient la partie récente de l'audit borné ; compteurs et empreinte SHA-256 portent sur toutes les décisions de l'exécution. L'évaluation ne réentraîne pas le modèle. Une ligne rejetée empêche la certification des résultats de cette capture.
 
-Le bouton **Evaluate latest recording** effectue une évaluation chronologique avec une mémoire distincte. Il ne remplace pas la comparaison entre entraînement et session ultérieure proposée par la commande.
+Le bouton **Evaluate latest recording** effectue une évaluation avec une mémoire distincte, dans l’ordre d’arrivée des événements enregistrés. Il ne remplace pas la comparaison entre entraînement et session ultérieure proposée par la commande.
 
 Les anciens JSONL restent lisibles. Sans contexte enregistré, ils ne constituent pas des essais évaluables. Deux captures historiques relues pendant cette itération contiennent 775 et 1 004 observations lisibles ; elles n'apportent aucune validation prédictive de cette version. Deux autres anciens fichiers inspectés contiennent une unique ligne JSON tronquée. Aucune capture privée n'est ajoutée au dépôt.
 

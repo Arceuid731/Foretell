@@ -66,7 +66,7 @@ public sealed partial class ForetellEngine
                 break;
             case "RECORD":
             case "RECORDING":
-                if (TryToggle(args, ref _cfg.RecordReplay, "replay recording")) return true;
+                if (TryToggle(args, ref _cfg.RecordReplay, "extra readable replay recording (automatic Analysis ZIP capture stays on)")) return true;
                 break;
             case "REPLAY":
                 var report = ReplayLatest();
@@ -299,6 +299,14 @@ public sealed partial class ForetellEngine
         }
     }
 
+    private void DrawAutomaticCaptureStatus()
+    {
+        if (_captureSession == null) { ImGui.TextWrapped("Automatic capture unavailable."); return; }
+        ImGui.TextWrapped($"Automatic capture: {_captureSession.Written:N0} events, {_captureSession.Bytes / (1024d * 1024):F1} MiB sealed, {_captureSession.Rejected:N0} skipped. Queue: {(_capture?.PendingBytes ?? 0) / 1024:N0} KiB.");
+        if (_captureSession.Error.Length > 0) ImGui.TextWrapped(_captureSession.Error);
+        else if (_captureSession.Rejected > 0) ImGui.TextWrapped("Capture is partial. The ZIP reports missing events; live learning continues independently.");
+    }
+
     private void DrawInspectorSettings()
     {
         var changed = false;
@@ -307,11 +315,13 @@ public sealed partial class ForetellEngine
         {
             changed |= ImGui.Checkbox("Adaptive learning", ref _cfg.EnableLearning);
             changed |= ImGui.Checkbox("Local ML classifier", ref _cfg.EnableML);
-            changed |= ImGui.Checkbox("Record local replay stream", ref _cfg.RecordReplay);
-            changed |= ImGui.Checkbox("Automatically prune old recordings", ref _cfg.AutomaticStorageMaintenance);
+            ImGui.TextWrapped("Analysis capture is automatic: compressed locally, up to 64 MiB per session / 256 MiB total, retained for up to 14 days. Export Analysis ZIP after testing.");
+            DrawAutomaticCaptureStatus();
+            changed |= ImGui.Checkbox("Extra readable recording (advanced)", ref _cfg.RecordReplay);
+            changed |= ImGui.Checkbox("Prune extra raw / readable recordings", ref _cfg.AutomaticStorageMaintenance);
             changed |= ImGui.SliderInt("Recording retention (days)", ref _cfg.RecordingRetentionDays, 1, 365);
             changed |= ImGui.SliderInt("Recording storage quota (GiB)", ref _cfg.MaximumRecordingStorageGiB, 1, 100);
-            ImGui.TextDisabled("All data stays local. Automatic cleanup only touches inactive raw/replay files; learned memory and active files are protected.");
+            ImGui.TextDisabled("This optional quota applies to extra raw/readable files. The automatic capture cache has its own fixed limits. Learned memory and exported ZIPs are preserved.");
         }
 
         if (ImGui.CollapsingHeader("Combat presentation", ImGuiTreeNodeFlags.DefaultOpen))
@@ -412,7 +422,8 @@ public sealed partial class ForetellEngine
         var topologyHealthy = !TopologySuspended;
         var runtimeHealthy = _updateFailures == 0 && _drawFailures == 0 && _episodeRejections == 0 && _learningEvictions == 0
             && _semanticObservationsRejected == 0 && !PerformanceThrottled;
-        var healthy = !_raw.Failed && _raw.RejectedItems == 0 && !rawBacklogged && !nativeBacklogged && !replayDegraded && _nativeHookFailures == 0 && _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 && topologyHealthy && runtimeHealthy && coverage.Unaccounted == 0;
+        var captureHealthy = _captureSession != null && _captureSession.Capped == 0 && _captureSession.Rejected == 0;
+        var healthy = captureHealthy && !_raw.Failed && _raw.RejectedItems == 0 && !rawBacklogged && !nativeBacklogged && !replayDegraded && _nativeHookFailures == 0 && _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 && topologyHealthy && runtimeHealthy && coverage.Unaccounted == 0;
         ImGui.Separator();
         ImGui.TextUnformatted("Telemetry completeness");
         ImGui.SameLine();
@@ -425,7 +436,8 @@ public sealed partial class ForetellEngine
             ImGui.TableHeadersRow();
             DrawTelemetryRow("World state + semantic network events", "ACTIVE", "Processed with bounded typed handlers");
             DrawTelemetryRow("Raw server/client IPC + ActorControl", _raw.Failed ? "FAILED" : rawBacklogged ? "BACKLOG" : "LOSSLESS", $"Gzip: {_raw.PendingItems:N0} queued / {_raw.WrittenItems:N0} written / {_raw.RejectedItems:N0} rejected; features {_raw.PendingFeatureWindows:N0} queued / {_rawFeatureWindowsProcessed:N0} learned / {_raw.RejectedFeatureWindows:N0} rejected; semantic ActorControl {Interlocked.Read(ref _ws.Network.RejectedActorControlSemantic):N0} rejected; drain {_lastRawFeatureDrainMilliseconds:F2} ms (peak {_peakRawFeatureDrainMilliseconds:F2})");
-            DrawTelemetryRow("Readable Replay Lab stream", !_cfg.RecordReplay ? "OPTIONAL / OFF" : replayDegraded ? "DEGRADED" : "ACTIVE", _replay == null ? "Exact raw journal remains active" : $"{_replay.Pending:N0} queued / {_replay.Written:N0} written / {_replay.Rejected:N0} rejected; normalized events only");
+            DrawTelemetryRow("Automatic decision capture", _captureSession == null ? "UNAVAILABLE" : _captureSession.Capped != 0 || _captureSession.Rejected > 0 ? "PARTIAL" : "ACTIVE", _captureSession == null ? "No capture session" : $"{_captureSession.Written:N0} events / {_captureSession.Bytes / (1024d * 1024):F1} MiB sealed / {_captureSession.Rejected:N0} rejected");
+            DrawTelemetryRow("Extra readable replay", !_cfg.RecordReplay ? "OPTIONAL / OFF" : replayDegraded ? "DEGRADED" : "ACTIVE", _replay == null ? "Exact raw journal remains active" : $"{_replay.Pending:N0} queued / {_replay.Written:N0} written / {_replay.Rejected:N0} rejected; normalized events only");
             DrawTelemetryRow("Typed runtime snapshots", _typedSnapshotFailures == 0 && _nativeSnapshotFailures == 0 ? "ACTIVE" : "DEGRADED", $"1 Hz typed {_lastTypedSnapshotMilliseconds:F2} ms (peak {_peakTypedSnapshotMilliseconds:F2}); native {_lastNativeActorMilliseconds:F2} ms (peak {_peakNativeActorMilliseconds:F2}); {_typedSnapshotFailures + _nativeSnapshotFailures:N0} rejects");
             DrawTelemetryRow("Generic live reflection", "REPLACED", "Typed roots + WorldState deltas; no unmanaged getters on frame thread");
             DrawTelemetryRow("Native ObjectEffect + VFX lifecycle", _nativeHookFailures == 0 ? nativeBacklogged ? "BACKLOG" : "ACTIVE" : "DEGRADED", $"Primitive queue: {_nativeHookPending:N0} queued / {_nativeHookProcessed:N0} processed / {_nativeHookFailures:N0} rejected; drain {_lastNativeHookDrainMilliseconds:F2} ms (peak {_peakNativeHookDrainMilliseconds:F2})");
@@ -520,7 +532,7 @@ public sealed partial class ForetellEngine
         }
         ImGui.EndDisabled();
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("After leaving the duty, packages the sealed raw journal, learned content and the complete semantic decision audit into one shareable ZIP.");
+            ImGui.SetTooltip("Packages automatic decision capture, learned content and the bounded decision audit. Up to 128 MiB; large supplemental files may be omitted with a manifest warning. Leave the duty to include sealed raw journals too.");
         ImGui.SameLine();
         if (ImGui.Button($"Delete##delete-territory-{encounter.TerritoryID}"))
             RequestPurge(name, $"Delete this territory/content, its sources, mechanics, timelines and session history?", () => PurgeEncounter(encounter.TerritoryID));
@@ -1080,7 +1092,7 @@ public sealed partial class ForetellEngine
     {
         PollRawAnalysis();
         ImGui.TextUnformatted("Replay Lab");
-        ImGui.TextDisabled("Reprocess a recorded pull through the current learner without changing live knowledge.");
+        ImGui.TextDisabled("Developer tools: evaluate automatic captures without changing live knowledge. No manual recording command is needed.");
         if (ImGui.BeginTable("ReplayStorageMetrics", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV))
         {
             DrawMetricCell(_raw.WrittenItems.ToString("N0"), "Raw records written");
@@ -1269,7 +1281,8 @@ public sealed partial class ForetellEngine
         {
             ImGui.BulletText("foretell-memory.json: persistent learned memory.");
             ImGui.BulletText("foretell-raw/*.ftraw.gz: always-on compressed lossless IPC and ActorControl journal.");
-            ImGui.BulletText("foretell-replays/*.jsonl: optional human-readable Replay Lab stream.");
+            ImGui.BulletText("foretell-captures/: automatic compressed decision captures, 256 MiB cache / 14 days. Included in Analysis ZIP.");
+            ImGui.BulletText("foretell-replays/*.jsonl: optional extra readable recording for advanced diagnostics.");
             ImGui.BulletText("foretell-signal-filters.json: portable per-territory signal exclusions.");
             ImGui.BulletText("No remote API, private player chat or process pointer addresses.");
         }

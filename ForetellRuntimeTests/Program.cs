@@ -107,6 +107,7 @@ internal static class Program
         var changed = ForetellEngine.EvaluateRecordedObservations(changedOutcome);
         Check(JsonSerializer.Serialize(before) == JsonSerializer.Serialize(changed.Knowledge.DecisionAudit.Where(d => d.At <= cast.At)
             .Select(d => new { d.Stage, d.Mechanic, d.Geometry, d.Confidence }).ToArray()), "Future outcomes changed earlier decisions");
+        CaptureTests.Run(events, firstRun.Report.DecisionDigest);
         foreach (var observation in events) { observation.Context = null; observation.ContextID = 0; }
         var legacy = ForetellEngine.EvaluateRecordedObservations(events);
         Check(legacy.Report.MissingContexts > 0 && legacy.Report.Assessed == 0, "Legacy context gaps were reported as validated outcomes");
@@ -122,34 +123,28 @@ internal static class Program
             return index >= 0 && index + 1 < args.Length ? args[index + 1] : throw new ArgumentException($"Missing {flag}");
         }
         var options = new JsonSerializerOptions { WriteIndented = true, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
-        (List<ForetellObservation> Events, int Rejected) Read(string path)
+        var output = Path.GetFullPath(Argument("--out"));
+        if (Array.IndexOf(args, "--inspect") >= 0)
         {
-            if (new FileInfo(path).Length > 512L * 1024 * 1024) throw new InvalidDataException("Recording exceeds 512 MiB");
-            List<ForetellObservation> events = []; var rejected = 0;
-            foreach (var line in File.ReadLines(path))
-            {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    var item = JsonSerializer.Deserialize<ForetellObservation>(line, options);
-                    if (item == null || item.At == default || item.Kind == ObservationKind.Unknown) ++rejected;
-                    else events.Add(item);
-                }
-                catch (JsonException) { ++rejected; }
-            }
-            return (events, rejected);
+            var input = new ForetellRecordingReader(Argument("--inspect")); input.Inspect();
+            Directory.CreateDirectory(output);
+            File.WriteAllText(Path.Combine(output, "capture-summary.json"), JsonSerializer.Serialize(new
+            { input.Parsed, input.Rejected, input.Complete, input.First, input.Last }, options));
+            Console.WriteLine($"Capture: {input.Parsed:N0} events; complete={input.Complete}; {input.Rejected:N0} rejected");
+            return;
         }
         var trainingPath = Path.GetFullPath(Argument("--train"));
         var evaluationPath = Path.GetFullPath(Argument("--evaluate"));
         if (string.Equals(trainingPath, evaluationPath, StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Training and evaluation recordings must differ");
-        var (trainingEvents, trainingRejected) = Read(trainingPath); var (evaluationEvents, evaluationRejected) = Read(evaluationPath);
-        if (trainingEvents.Count == 0 || evaluationEvents.Count == 0 || trainingEvents.Max(o => o.At) >= evaluationEvents.Min(o => o.At))
+        var trainingInput = new ForetellRecordingReader(trainingPath); trainingInput.Inspect();
+        var evaluationInput = new ForetellRecordingReader(evaluationPath); evaluationInput.Inspect();
+        if (trainingInput.Last >= evaluationInput.First)
             throw new ArgumentException("Evaluation must be a separate recording strictly after the training period");
-        var training = ForetellEngine.EvaluateRecordedObservations(trainingEvents, captureComplete: trainingRejected == 0);
-        training.Report.Rejected = trainingRejected;
-        var result = ForetellEngine.EvaluateRecordedObservations(evaluationEvents, training.Knowledge, learn: false, captureComplete: evaluationRejected == 0);
-        result.Report.Rejected = evaluationRejected;
-        var output = Path.GetFullPath(Argument("--out")); Directory.CreateDirectory(output);
+        var training = ForetellEngine.EvaluateRecordedStream(trainingInput.Read(), captureComplete: trainingInput.Complete);
+        training.Report.Rejected = (int)Math.Min(int.MaxValue, trainingInput.Rejected);
+        var result = ForetellEngine.EvaluateRecordedStream(evaluationInput.Read(), training.Knowledge, learn: false, captureComplete: evaluationInput.Complete);
+        result.Report.Rejected = (int)Math.Min(int.MaxValue, evaluationInput.Rejected);
+        Directory.CreateDirectory(output);
         File.WriteAllText(Path.Combine(output, "training-report.json"), JsonSerializer.Serialize(training.Report, options));
         File.WriteAllText(Path.Combine(output, "evaluation-report.json"), JsonSerializer.Serialize(result.Report, options));
         File.WriteAllText(Path.Combine(output, "evaluation-decisions.json"), JsonSerializer.Serialize(result.Knowledge.DecisionAudit, options));

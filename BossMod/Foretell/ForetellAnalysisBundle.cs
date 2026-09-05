@@ -6,10 +6,10 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
-    private sealed record AnalysisBundleWork(string OutputPath, byte[] Analysis, string[] RawPaths,
-        string? ReplayPath, string[] Warnings, uint TerritoryID, string Content, string SessionID,
+    internal sealed record AnalysisBundleWork(string OutputPath, byte[] Analysis, string[] RawPaths,
+        string? ReplayPath, Task<ForetellCapture.Snapshot?> Capture, string[] Warnings, uint TerritoryID, string Content, string SessionID,
         string SessionPluginVersion, string ExporterPluginVersion, ForetellCollisionSnapshot? Collision);
-    private sealed record AnalysisBundleResult(string Path, int RawFiles, bool ReadableReplay, int Decisions,
+    internal sealed record AnalysisBundleResult(string Path, int RawFiles, bool ReadableReplay, int Decisions,
         string[] Warnings, string Error = "");
 
     private Task<AnalysisBundleResult>? _analysisBundleTask;
@@ -38,7 +38,8 @@ public sealed partial class ForetellEngine
                 MechanicsFinalized = _session.MechanicsFinalized,
                 NewMechanics = _session.NewMechanics,
                 AmbiguousMechanics = _session.AmbiguousMechanics,
-                ReplayFile = Path.GetFileName(_replayPath)
+                ReplayFile = Path.GetFileName(_replayPath),
+                CaptureDirectory = _captureSession == null ? "" : Path.GetFileName(_captureSession.Directory)
             }
             : completed;
         var warnings = new List<string>();
@@ -47,7 +48,7 @@ public sealed partial class ForetellEngine
         else if (string.IsNullOrWhiteSpace(selected.PluginVersion))
             warnings.Add("This session predates per-session version provenance; its capture version is unknown and must not be inferred from the exporter version.");
         if (liveSelected)
-            warnings.Add("This session is still active. The current raw/replay segments are intentionally excluded until the territory changes and their writers seal them.");
+            warnings.Add("This session is still active. Automatic decision capture is sealed through this export request; current raw/readable segments require leaving the duty.");
 
         var rawPaths = AnalysisRawJournals(encounter.TerritoryID, selected, warnings);
         var replayPath = AnalysisReadableReplay(encounter.TerritoryID, selected, warnings);
@@ -201,8 +202,11 @@ public sealed partial class ForetellEngine
             }
         };
         var analysisBytes = JsonSerializer.SerializeToUtf8Bytes(analysis, _diagnosticJson);
-        var outputPath = Path.Combine(_replayDir, $"foretell-analysis-T{encounter.TerritoryID}-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
-        var work = new AnalysisBundleWork(outputPath, analysisBytes, rawPaths, replayPath, warnings.ToArray(),
+        var outputPath = Path.Combine(_replayDir, $"foretell-analysis-T{encounter.TerritoryID}-{DateTime.Now:yyyyMMdd-HHmmss-fff}.zip");
+        var captureTask = _capture == null || string.IsNullOrWhiteSpace(selected?.CaptureDirectory)
+            ? Task.FromResult<ForetellCapture.Snapshot?>(null)
+            : _capture.SnapshotAsync(Path.Combine(Path.GetDirectoryName(_replayDir)!, "foretell-captures", Path.GetFileName(selected.CaptureDirectory)));
+        var work = new AnalysisBundleWork(outputPath, analysisBytes, rawPaths, replayPath, captureTask, warnings.ToArray(),
             encounter.TerritoryID, EncounterDisplayName(encounter), sessionID, sessionPluginVersion, exporterPluginVersion,
             liveSelected ? _lastCollisionSnapshot : null);
         _analysisBundleStatus = $"Packaging {rawPaths.Length} sealed raw journal(s) in the background...";
@@ -246,7 +250,7 @@ public sealed partial class ForetellEngine
         if (session == null || string.IsNullOrWhiteSpace(session.ReplayFile)) return null;
         var path = Path.Combine(_replayDir, Path.GetFileName(session.ReplayFile));
         if (!File.Exists(path) || ParseRawTerritory(path) != territoryID) return null;
-        if (string.Equals(path, _replayPath, StringComparison.OrdinalIgnoreCase))
+        if (_replay != null && string.Equals(path, _replayPath, StringComparison.OrdinalIgnoreCase))
         {
             warnings.Add("The optional readable replay is still active and was not included; the sealed raw journal remains the authoritative capture.");
             return null;
@@ -259,18 +263,55 @@ public sealed partial class ForetellEngine
         return path;
     }
 
-    private AnalysisBundleResult CreateAnalysisBundle(AnalysisBundleWork work, int decisions)
+    internal static AnalysisBundleResult CreateAnalysisBundle(AnalysisBundleWork work, int decisions)
     {
         var temporary = work.OutputPath + ".tmp";
         try
         {
+            using var capture = work.Capture.GetAwaiter().GetResult();
+            var warnings = work.Warnings.ToList();
+            if (capture == null) warnings.Add("No automatic decision capture found for this session (older version or expired cache).");
+            else
+            {
+                using var index = JsonDocument.Parse(capture.Index);
+                if (!index.RootElement.TryGetProperty("complete", out var complete) || !complete.GetBoolean())
+                    warnings.Add("Automatic capture is partial; see capture/index.json for rejected events and limits. Outcome validation must account for missing evidence.");
+            }
+            // One session, never the entire cache. Reserve space for archive metadata; supplemental raw/readable
+            // files are selected within a total input budget, and a final compressed-size check enforces the cap.
+            const long bundleLimit = 128L * 1024 * 1024;
+            long bytes = work.Analysis.LongLength + (capture?.Index.LongLength ?? 0)
+                + (capture?.Parts.Sum(p => new FileInfo(Path.Combine(capture.Directory, p)).Length) ?? 0);
+            if (bytes > bundleLimit - 1024 * 1024) throw new IOException("Required analysis/capture exceeds the 128 MiB export limit");
+            var collision = work.Collision;
+            if (collision != null)
+            {
+                var size = 64L + collision.Triangles.LongLength * 44;
+                if (bytes + size <= bundleLimit - 1024 * 1024) bytes += size;
+                else { collision = null; warnings.Add("Collision snapshot omitted to keep the ZIP below 128 MiB"); }
+            }
+            bool Fits(string path)
+            {
+                var length = new FileInfo(path).Length;
+                if (bytes + length > bundleLimit - 1024 * 1024)
+                { warnings.Add($"Supplemental file omitted to keep ZIP below 128 MiB: {Path.GetFileName(path)}"); return false; }
+                bytes += length; return true;
+            }
+            var rawPaths = work.RawPaths.Where(Fits).ToArray();
+            var replayPath = work.ReplayPath != null && Fits(work.ReplayPath) ? work.ReplayPath : null;
             using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 65536, FileOptions.SequentialScan))
             using (var archive = new ZipArchive(file, ZipArchiveMode.Create))
             {
                 WriteBundleBytes(archive, "foretell-analysis.json", work.Analysis);
+                if (capture != null)
+                {
+                    WriteBundleBytes(archive, "capture/index.json", capture.Index);
+                    foreach (var part in capture.Parts)
+                        CopyBundleFile(archive, Path.Combine(capture.Directory, part), "capture/" + part, CompressionLevel.NoCompression);
+                }
                 var manifest = new
                 {
-                    formatSchema = 1,
+                    formatSchema = 2,
                     generatedAt = DateTime.UtcNow,
                     work.TerritoryID,
                     work.Content,
@@ -280,28 +321,30 @@ public sealed partial class ForetellEngine
                     contents = new
                     {
                         analysis = "foretell-analysis.json",
-                        rawJournals = work.RawPaths.Select(path => $"raw/{Path.GetFileName(path)}").ToArray(),
-                        readableReplay = work.ReplayPath == null ? null : $"replay/{Path.GetFileName(work.ReplayPath)}",
-                        collisionSnapshot = work.Collision == null ? null : "terrain/collision.ftrc"
+                        rawJournals = rawPaths.Select(path => $"raw/{Path.GetFileName(path)}").ToArray(),
+                        readableReplay = replayPath == null ? null : $"replay/{Path.GetFileName(replayPath)}",
+                        decisionCapture = capture == null ? null : "capture/index.json",
+                        collisionSnapshot = collision == null ? null : "terrain/collision.ftrc"
                     },
                     collisionSnapshotMeaning = "Latest completed local capture for the selected live session at export; not the historical terrain of a completed run. Replay with ForetellCoreTests --collision <analysis.zip>.",
-                    semantics = "Raw journals contain exact transport/ActorControl input. foretell-analysis.json contains the learned encounter snapshot and the bounded Detected/Proposed/Classified/Verified decision trail.",
+                    semantics = "Automatic capture contains accepted decision inputs and world context for streaming semantic evaluation. Optional raw journals contain exact transport/ActorControl input. foretell-analysis.json contains the learned encounter snapshot and the bounded Detected/Proposed/Classified/Verified decision trail.",
                     displayEligibleMeaning = "The confidence/mode/settings gate passed when the decision was made; it does not prove a pixel was rendered if the draw surface later failed.",
-                    warnings = work.Warnings
+                    warnings = warnings.ToArray()
                 };
-                WriteBundleBytes(archive, "manifest.json", JsonSerializer.SerializeToUtf8Bytes(manifest, _diagnosticJson));
-                foreach (var raw in work.RawPaths)
+                WriteBundleBytes(archive, "manifest.json", JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions { WriteIndented = true }));
+                foreach (var raw in rawPaths)
                     CopyBundleFile(archive, raw, $"raw/{Path.GetFileName(raw)}", CompressionLevel.NoCompression);
-                if (work.ReplayPath != null)
-                    CopyBundleFile(archive, work.ReplayPath, $"replay/{Path.GetFileName(work.ReplayPath)}", CompressionLevel.Fastest);
-                if (work.Collision != null)
+                if (replayPath != null)
+                    CopyBundleFile(archive, replayPath, $"replay/{Path.GetFileName(replayPath)}", CompressionLevel.Fastest);
+                if (collision != null)
                 {
                     using var output = archive.CreateEntry("terrain/collision.ftrc", CompressionLevel.Fastest).Open();
-                    ForetellCollisionSnapshotIO.Write(output, work.Collision);
+                    ForetellCollisionSnapshotIO.Write(output, collision);
                 }
             }
+            if (new FileInfo(temporary).Length > bundleLimit) throw new IOException("ZIP exceeds its 128 MiB safety limit");
             File.Move(temporary, work.OutputPath, true);
-            return new(work.OutputPath, work.RawPaths.Length, work.ReplayPath != null, decisions, work.Warnings);
+            return new(work.OutputPath, rawPaths.Length, replayPath != null, decisions, warnings.ToArray());
         }
         catch (Exception e)
         {

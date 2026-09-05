@@ -372,6 +372,7 @@ public sealed class SessionSummary
     public int NewMechanics { get; set; }
     public int AmbiguousMechanics { get; set; }
     public string ReplayFile { get; set; } = "";
+    public string CaptureDirectory { get; set; } = "";
 }
 
 // Compact, bounded audit trail for the semantic path that cannot be reconstructed from raw transport alone.
@@ -511,6 +512,15 @@ public sealed class ForetellStore
 
 public sealed class ForetellObservation
 {
+    internal ForetellObservation CopyForRecording()
+    {
+        var copy = (ForetellObservation)MemberwiseClone();
+        copy.Numeric = new(Numeric); copy.Text = new(Text);
+        copy.Binary = Binary.ToDictionary(p => p.Key, p => p.Value.ToArray());
+        // DecisionContextSnapshot and its actor/party arrays are immutable in the live producer.
+        return copy;
+    }
+
     public long ContextID { get; set; }
     public DecisionContextSnapshot? Context { get; set; }
     public ActionGeometryPrior? Prior { get; set; }

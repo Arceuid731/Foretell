@@ -20,7 +20,7 @@ For cast actions, Foretell also consumes useful local FFXIV client metadata as a
 
 The dedicated in-game cockpit provides Overview, Knowledge, Timeline, Recordings, Settings and Diagnostics tabs. The Knowledge explorer is organized as content category → territory/duty → arena/environment/source → mechanic, with confirmed deletion at every useful level. It also exposes learned causal links, raw protocol families, phase transitions and simultaneous patterns individually.
 
-After leaving a duty, expand that content in **Knowledge** and click **Analysis ZIP**. Foretell creates one shareable archive containing the matching sealed raw journal(s), the full cumulative learned encounter snapshot, configuration and health counters, plus a bounded decision audit for the latest completed territory session from accepted trigger through proposed prediction, classification and verification/expiry. The archive records the selected session's plugin version separately from the newer plugin version that may have exported it. The optional readable JSONL replay is included when it was enabled and is safely closed; it is not required for the bundle to contain the authoritative raw input and semantic decisions.
+After testing, expand that content in **Knowledge** and click **Analysis ZIP**. Decision inputs and bounded world context are now captured automatically, independently of the optional readable recording switch. One ZIP contains the selected session's compressed capture, learned encounter snapshot, settings and bounded decision audit, with sealed raw/readable files added when they fit. The export is capped at **128 MiB**; its manifest reports omitted supplements and incomplete captures. Leaving the duty first lets it include the sealed raw journals too. The capture version and exporter version are recorded separately.
 
 ## Confidence visualization
 
@@ -75,11 +75,15 @@ World, radar and text consume one decision frame. Direct movement suggestions ac
 
 ## Replay Lab
 
-Foretell optionally records normalized observations with bounded decision-context snapshots (nearby actors, party, combat/duty state, boss identity, recorded client shape and learning thresholds). Replay now creates a separate managed world and engine, without game-service initialization, native hooks, writers or live-state swaps. Evaluation runs in the background; older recordings without decision context remain readable but cannot establish outcome reliability.
+Foretell automatically records compressed normalized observations with bounded decision-context snapshots (nearby actors, party, combat/duty state, boss identity, recorded client shape and learning thresholds). Replay now creates a separate managed world and engine, without game-service initialization, native hooks, writers or live-state swaps. Evaluation runs in the background; older recordings without decision context remain readable but cannot establish outcome reliability.
 
 The standalone `ForetellRuntimeTests` executable supports chronological training on one recording and frozen evaluation on a later, separate recording. It reports footprint/response outcomes separately from trigger-timing outcomes, counts missing evidence, and hashes the complete decision audit even when the inspectable audit tail is bounded. See [the 0.10 evaluation guide](docs/foretell-0.10.md) for commands and limits. This is a semantic decision replay; it does not reconstruct the rendered game or stream the native collision scene.
 
-The storage page can delete individual inactive recordings or apply a retention/quota cleanup. Automatic cleanup is opt-in, runs outside combat on a background worker, and never deletes the active journal or learned memory.
+The new `foretell-captures/` cache is automatically bounded to **64 MiB compressed per territory session**, **256 MiB total**, and **14 days**. It records the same accepted semantic inputs used by the learner, without trimming features. It seals independently compressed parts at 4 MiB expanded or the next event after one minute, with a 512 MiB expanded session work limit. Oversized events, queue pressure and quota stops are disclosed as missing evidence. Serialization/compression/I/O run on a worker; the capture queue has a 16 MiB estimated payload budget and a 1,024-item bound.
+
+This new quota applies only to the automatic capture cache. Existing raw journals and optional readable JSONL files retain their separate opt-in cleanup policy; learned memory and exported ZIPs are preserved. **Extra readable recording (advanced)** and `/foretell record on` are unnecessary for ordinary analysis capture.
+
+Inspection and evaluation stream through the chosen capture rather than loading/sorting the entire recording. A small index lists time range, event counts, completeness and per-part SHA-256 hashes. The standalone tool reads Analysis ZIPs directly and supports `--inspect capture.zip --out report-directory` for a quick summary. See [automatic capture and analysis](docs/foretell-0.10.1.md).
 
 This makes recorded pulls reusable as a regression corpus while the inference engine evolves.
 

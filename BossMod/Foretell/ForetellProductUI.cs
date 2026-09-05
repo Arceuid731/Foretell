@@ -68,6 +68,7 @@ public sealed partial class ForetellEngine
         ImGui.TextColored(ProductAccent, "HOW MANY OCCURRENCES?");
         ImGui.TextWrapped("A complete shape supplied by the client can be shown on its first cast. That does not prove every consequence or the correct response.");
         ImGui.TextWrapped("An inferred rule needs informative outcomes. Ten identical ambiguous observations may still leave several explanations. Only predictions made before the outcome can be counted as independently tested.");
+        DrawAutomaticCaptureStatus();
         if (ImGui.CollapsingHeader("What the confidence thresholds mean"))
         {
             ImGui.TextWrapped("The visual threshold controls hypotheses. The warning threshold controls stronger learned guidance. A route additionally requires current terrain, timing, complete capture and no unresolved personal constraint.");

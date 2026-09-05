@@ -10,7 +10,6 @@ public sealed partial class ForetellEngine
     private readonly bool _evaluationAllowLearning;
     private Action<DecisionAuditEntry>? _evaluationAuditSink;
     private DateTime _evaluationNow;
-    private long _lastRecordedContext;
     private DecisionContextSnapshot? _decisionContext;
     private DateTime LearningNow => _evaluationNow == default ? DateTime.UtcNow : _evaluationNow.ToUniversalTime();
     private bool DecisionCombat => _isReplay ? _decisionContext?.InCombat == true
@@ -74,7 +73,7 @@ public sealed partial class ForetellEngine
             return;
         }
 
-        if (!_cfg.RecordReplay) return;
+        if (_capture == null && !_cfg.RecordReplay) return;
         var id = _ws.CurrentTime.Ticks;
         if (_decisionContext?.ID != id)
         {
@@ -95,23 +94,27 @@ public sealed partial class ForetellEngine
             };
         }
         observation.ContextID = id;
-        if (_lastRecordedContext != id)
-        {
-            observation.Context = _decisionContext;
-            _lastRecordedContext = id;
-        }
+        // Each writer performs its own deduplication after accepting the event. A dropped event or a newly
+        // sealed part must not strand following observations with a context ID that was never written.
+        observation.Context = _decisionContext;
         observation.Numeric["decision.outcomeGap"] = _outcomeGapGeneration;
     }
 
     public static ForetellReplayEvaluation EvaluateRecordedObservations(IReadOnlyList<ForetellObservation> observations,
         ForetellStore? initialKnowledge = null, bool learn = true, bool captureComplete = true, System.Threading.CancellationToken cancellationToken = default)
+        => EvaluateRecordedStream(observations.OrderBy(o => o.At).ThenBy(o => o.Sequence), initialKnowledge, learn, captureComplete, cancellationToken);
+
+    public static ForetellReplayEvaluation EvaluateRecordedStream(IEnumerable<ForetellObservation> observations,
+        ForetellStore? initialKnowledge = null, bool learn = true, bool captureComplete = true, System.Threading.CancellationToken cancellationToken = default)
     {
-        var options = new JsonSerializerOptions { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
+        using var cursor = observations.GetEnumerator();
+        var hasFirst = cursor.MoveNext();
+        var options = new JsonSerializerOptions { NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
         var knowledge = initialKnowledge == null ? new ForetellStore()
             : JsonSerializer.Deserialize<ForetellStore>(JsonSerializer.Serialize(initialKnowledge, options), options)!;
         knowledge.DecisionAudit ??= [];
         knowledge.DecisionAudit.Clear();
-        var first = observations.Count == 0 ? DateTime.UnixEpoch : observations.Min(o => o.At);
+        var first = hasFirst ? cursor.Current.At : DateTime.UnixEpoch;
         var engine = new ForetellEngine(first, knowledge, learn);
         var report = new ReplayReport { First = first, Last = first };
         var initialAssessed = knowledge.PreImpact.Classes.Values.Sum(c => c.Assessed);
@@ -135,11 +138,13 @@ public sealed partial class ForetellEngine
                 else { ++report.Assessed; if (d.Verified == true) ++report.Correct; else ++report.Incorrect; }
             }
         };
-        foreach (var original in observations.OrderBy(o => o.At).ThenBy(o => o.Sequence))
+        while (hasFirst)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var original = cursor.Current;
             // The reducer normalizes its inputs. Clone each event so callers and repeated evaluations are unchanged.
             var observation = JsonSerializer.Deserialize<ForetellObservation>(JsonSerializer.Serialize(original, options), options)!;
+            hasFirst = cursor.MoveNext();
             if ((observation.Detail ?? "").StartsWith("transport:", StringComparison.Ordinal)) continue;
             if (observation.TerritoryID != engine._territory)
             {
@@ -156,7 +161,8 @@ public sealed partial class ForetellEngine
             engine.ProcessObservation(observation, replaying: true);
             ++report.Parsed;
             report.Counts[observation.Kind] = report.Counts.GetValueOrDefault(observation.Kind) + 1;
-            report.Last = observation.At;
+            if (observation.At < report.First) report.First = observation.At;
+            if (observation.At > report.Last) report.Last = observation.At;
             if (observation.Kind != ObservationKind.GenericFeature && (observation.ContextID == 0 || engine._decisionContext?.ID != observation.ContextID || engine._decisionContext.Complete != true)) ++report.MissingContexts;
         }
         engine.FinalizeDue(DateTime.MaxValue, exhaustive: true);
