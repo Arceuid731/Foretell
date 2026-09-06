@@ -23,9 +23,9 @@
     "IsTestingExclusive": false,
     "Punchline": "Instance guides, current-boss mechanics and observed combat guidance.",
     "AcceptsFeedback": true,
-    "AssemblyVersion": "0.13.3.0",
-    "DownloadLinkInstall": "https://github.com/Arceuid731/Foretell/releases/download/v0.13.3/Foretell.zip",
-    "DownloadLinkUpdate": "https://github.com/Arceuid731/Foretell/releases/download/v0.13.3/Foretell.zip",
-    "DownloadLinkTesting": "https://github.com/Arceuid731/Foretell/releases/download/v0.13.3/Foretell.zip"
+    "AssemblyVersion": "0.13.4.0",
+    "DownloadLinkInstall": "https://github.com/Arceuid731/Foretell/releases/download/v0.13.4/Foretell.zip",
+    "DownloadLinkUpdate": "https://github.com/Arceuid731/Foretell/releases/download/v0.13.4/Foretell.zip",
+    "DownloadLinkTesting": "https://github.com/Arceuid731/Foretell/releases/download/v0.13.4/Foretell.zip"
   }
 ]
