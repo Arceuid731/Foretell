@@ -27,6 +27,7 @@ internal sealed record GuideCaptureOptions(ForetellMode Mode, bool Enabled, bool
     public int ContextTokens { get; init; }
     public int MemoryGiB { get; init; }
     public string ModelID { get; init; } = "";
+    public bool CurrentPhaseOnly { get; init; }
 }
 internal sealed record GuideCaptureLayout(bool Unlocked, float PositionX, float PositionY, float Width, float Height,
     uint TextColor, uint ActiveColor, uint ResolvedColor, uint UnresolvedColor, float AlertPositionX, float AlertPositionY);
@@ -35,6 +36,7 @@ internal sealed record GuideCaptureState(string State, string Error, bool Cached
 {
     public GuideModelRuntime? ModelRuntime { get; init; }
     public string? SummaryIssue { get; init; }
+    public GuidePhaseDefinition? CurrentPhase { get; init; }
 }
 internal sealed record GuideCaptureInput(DateTime At, string SessionID, uint TerritoryID, GuideDuty? Duty, GuideLanguage Language,
     GuideDocument? Document, GuideCaptureState State, GuideCaptureOptions Options, GuideAdaptedBoss[] Adapted, GuideCapturedSignal[] Signals)

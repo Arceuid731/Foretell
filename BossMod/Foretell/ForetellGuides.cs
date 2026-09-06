@@ -167,7 +167,7 @@ public sealed partial class ForetellEngine
         _guideIdentity = default; _guideDuty = null; _liveGuide = null; _guideSampleAt = default;
         _guideMatches.Clear(); _guideBossNames.Clear(); _guideActionNames.Clear();
         _guideSignals.Clear(); _guideInstantSignals.Clear(); _guidePendingActions.Clear(); _guideEncounter.Reset(); _guideFrame = GuideCombatFrame.Empty;
-        _guideEntryDismissed = false; _guideChecklistBoss = null; _guideChecklistPage = 0;
+        _guideEntryDismissed = false; _guideListLayout = null;
     }
 
     private string GuideSheetName(string sheet, uint id, bool localized)

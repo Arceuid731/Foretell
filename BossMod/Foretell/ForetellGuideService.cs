@@ -82,7 +82,12 @@ internal sealed class ForetellGuideCache(string directory)
             if (document.Sources.Length > 0)
             {
                 var rebuilt = GuideSourceAssembly.Combine(duty, new(document.Sources, document.Providers), document.RetrievedAt);
-                if (rebuilt.SourceHash != document.SourceHash || rebuilt.Page != document.Page) return null;
+                if (rebuilt.SourceHash != document.SourceHash || rebuilt.Page != document.Page)
+                {
+                    var legacy = GuideSourceAssembly.CombineLegacy(duty, new(document.Sources, document.Providers), document.RetrievedAt);
+                    if (legacy.SourceHash != document.SourceHash || legacy.Page != document.Page) return null;
+                    document = document with { SourceHash = rebuilt.SourceHash, Page = rebuilt.Page };
+                }
             }
             foreach (var boss in document.Bosses)
             {
@@ -132,6 +137,7 @@ internal sealed class ForetellGuideService : IDisposable
         public DateTime StartedAt { get; } = DateTime.UtcNow;
         public System.Diagnostics.Stopwatch Watch { get; } = System.Diagnostics.Stopwatch.StartNew();
         public bool FromCache;
+        public GuideDocument? Cached { get; init; }
     }
     private readonly object _gate = new();
     private readonly Channel<Request> _queue = Channel.CreateBounded<Request>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.Wait });
@@ -141,6 +147,7 @@ internal sealed class ForetellGuideService : IDisposable
     private readonly ForetellGuideProviders? _sources;
     private readonly Task _worker;
     private Request? _latest;
+    private GuideDocument? _retained;
     private volatile GuideSnapshot _snapshot = new(null, GuideState.Idle);
     private long _serial;
     private bool _disposed;
@@ -148,11 +155,11 @@ internal sealed class ForetellGuideService : IDisposable
     public GuideSnapshot Snapshot => _snapshot;
     internal Task Completion => _worker;
 
-    public ForetellGuideService(string directory, Func<GuideDuty, CancellationToken, Task<string>>? fetch = null)
+    public ForetellGuideService(string directory, Func<GuideDuty, CancellationToken, Task<string>>? fetch = null, ForetellGuideProviders? sources = null)
     {
         _cache = new(directory);
         _timings = new(directory);
-        if (fetch == null) _sources = new(Path.Combine(directory, "providers"));
+        _sources = sources ?? (fetch == null ? new(Path.Combine(directory, "providers")) : null);
         _fetch = fetch ?? ((_, _) => throw new InvalidOperationException("Provider service is not initialized."));
         _worker = Task.Run(Run);
     }
@@ -165,9 +172,11 @@ internal sealed class ForetellGuideService : IDisposable
             if (_disposed) return;
             _latest?.Cancellation.Cancel();
             if (_queue.Reader.TryRead(out var dropped)) dropped.Cancellation.Dispose();
-            var request = new Request(++_serial, duty, refresh, CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token));
+            var request = new Request(++_serial, duty, refresh, CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token))
+            { Cached = _retained?.Duty == duty ? _retained : null };
             _latest = request;
-            _snapshot = new(duty, GuideState.ReadingCache) { StartedAt = request.StartedAt };
+            _snapshot = new(duty, request.Cached == null ? GuideState.ReadingCache : GuideState.Ready, request.Cached)
+            { StartedAt = request.StartedAt, FromCache = request.Cached != null };
             _queue.Writer.TryWrite(request);
         }
     }
@@ -187,12 +196,15 @@ internal sealed class ForetellGuideService : IDisposable
     {
         lock (_gate)
             if (!_disposed && request.Serial == _serial)
+            {
+                if (document != null) _retained = document;
                 _snapshot = new(request.Duty, state, document, error)
                 {
                     StartedAt = request.StartedAt, ElapsedSeconds = request.Watch.Elapsed.TotalSeconds,
                     EstimatedSeconds = request.FromCache ? null : _timings.Estimate,
                     FromCache = request.FromCache
                 };
+            }
     }
 
     private async Task Run()
@@ -205,21 +217,22 @@ internal sealed class ForetellGuideService : IDisposable
                 try
                 {
                     request.Cancellation.Token.ThrowIfCancellationRequested();
-                    document = _cache.Read(request.Duty);
+                    document = request.Cached ?? _cache.Read(request.Duty);
                     if (document?.Page == null) document = null;
                     request.FromCache = document != null;
                     if (document != null) Publish(request, GuideState.Ready, document);
                     if (document == null || request.Refresh || _sources != null || DateTime.UtcNow - document.RetrievedAt > TimeSpan.FromDays(7))
                     {
-                        request.FromCache = false;
-                        Publish(request, GuideState.Downloading, document);
+                        Publish(request, document == null ? GuideState.Downloading : GuideState.Ready, document);
                         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);
                         timeout.CancelAfter(TimeSpan.FromSeconds(25));
                         var fetched = _sources != null
-                            ? GuideSourceAssembly.Combine(request.Duty, await _sources.Fetch(request.Duty, timeout.Token).ConfigureAwait(false), DateTime.UtcNow)
+                            ? GuideSourceAssembly.Combine(request.Duty, GuideSourceAssembly.RetainCachedSources(document,
+                                await _sources.Fetch(request.Duty, timeout.Token, request.Refresh).ConfigureAwait(false)), DateTime.UtcNow)
                             : ForetellGuideParser.ReadPage(await _fetch(request.Duty, timeout.Token).ConfigureAwait(false), request.Duty, DateTime.UtcNow);
                         timeout.Token.ThrowIfCancellationRequested();
-                        Publish(request, GuideState.Preparing, document);
+                        request.FromCache = document?.SourceHash == fetched.SourceHash;
+                        if (!request.FromCache) Publish(request, GuideState.Preparing, document);
                         document = fetched;
                         _timings.Record(request.Watch.Elapsed.TotalSeconds);
                         timeout.Token.ThrowIfCancellationRequested();

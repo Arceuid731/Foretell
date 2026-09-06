@@ -15,6 +15,7 @@ internal static class GuideCombatTests
         OwnedStatusSignals();
         DeferredActionSignals();
         StatusAnnotationTargets();
+        GuidePhaseTests.Run();
         var now = DateTime.UtcNow;
         var first = new GuideBoss("First", "", [new("", "", [new("Blast", "A circular AoE around the boss.", ""), new("Pulse", "Raidwide damage.", "")])]);
         var second = new GuideBoss("Second", "", [new("", "", [new("Blast", "A tankbuster.", "")])]);
@@ -303,16 +304,12 @@ internal static class GuideCombatTests
                 var instruction = GuideChecklistPresentation.Instruction(guidance, language);
                 Check(instruction.Length is > 0 and <= 28 && !instruction.Contains('\n'), "Instruction is no longer a single short line");
             }
-        Check(GuideChecklistPresentation.Page(5, 12, 0) == (0, 1, 0, 5), "Ordinary boss requires pagination");
-        Check(GuideChecklistPresentation.Page(30, 12, 0, 28) == (2, 3, 24, 6), "Active mechanic stayed outside the visible page");
-        Check(GuideChecklistPresentation.Page(2, 12, 7) == (0, 1, 0, 2), "Previous boss page hid a shorter checklist");
-        Check(GuideChecklistPresentation.Page(0, 0, -1) == (0, 1, 0, 0), "Empty/small layout is invalid");
         Check(GuideChecklistPresentation.Fit("Mechanic", 8, value => value.Length) == "Mechanic", "Fitting name was truncated");
         Check(GuideChecklistPresentation.Fit("Mechanic", 5, value => value.Length) == "Mech…", "Long name is not bounded");
         Check(GuideChecklistPresentation.Fit("Mechanic", 0, value => value.Length) == "", "Tiny viewport overflows");
         Check(GuideChecklistPresentation.Fit("é👩‍🚀abcdef", 3, value => System.Globalization.StringInfo.ParseCombiningCharacters(value).Length) == "é👩‍🚀…", "Name truncation split a Unicode grapheme");
         Check(GuideChecklistPresentation.Preview(string.Join(" ", Enumerable.Repeat("description", 90))).Length <= 320, "Hover description is no longer compact");
-        Console.WriteLine("Compact guide cues, spatial/target abstention, automatic active paging and Unicode layout passed.");
+        Console.WriteLine("Compact guide cues, spatial/target abstention and Unicode layout passed.");
     }
 
     private static async Task WaitFor(Func<bool> ready)

@@ -86,6 +86,12 @@ public sealed class ForetellConfig : ConfigNode
     public float GuideWidth = 380;
     public float GuideHeight = 520;
     public float GuideScale = 1;
+    public bool GuideCurrentPhaseOnly = true;
+    public bool GuideRoleIcons = true;
+    public float GuideRowSpacing = 6;
+    public float GuidePanelOpacity;
+    public uint GuideInstructionColor = 0xFFCFE5ED;
+    public uint GuideHeaderColor = 0xFF47D4FF;
     public float GuideAlertScale = 1.4f;
     public float CentralAlertWidth = 620;
     public uint CentralAlertColor = 0xFF47D4FF;

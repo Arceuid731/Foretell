@@ -19,6 +19,7 @@ internal static class WorkbookGuideTests
     public static void Run()
     {
         CompleteRowLayout();
+        CacheIdentity();
         CompleteVerticalLayout();
         IndexedAndScopedNames();
         StaleTarget();
@@ -80,6 +81,30 @@ internal static class WorkbookGuideTests
         Check(page.Text.Contains("FFCC0000") && page.Text.Contains("font") && sheet.GetProperty("MergedRanges")[0].GetString() == "A1:F1", "Heading style signals or merged ranges are missing.");
         var reread = Require(ForetellWorkbookGuide.Read(archive, Duty));
         Check(page.Fingerprint == reread.Fingerprint && page.Original == reread.Original, "Canonical workbook content varies with retrieval time.");
+    }
+
+    private static void CacheIdentity()
+    {
+        var archive = Workbook([new("Guide", [Cell("A1", Duty.EnglishName), Cell("B2", "Sentinel: Mitigate Hammer.")])]);
+        XElement worksheet;
+        using (var input = new MemoryStream(archive))
+        using (var zip = new ZipArchive(input, ZipArchiveMode.Read))
+        using (var stream = zip.GetEntry("xl/worksheets/sheet1.xml")!.Open()) worksheet = XElement.Load(stream);
+        worksheet.AddFirst(new XElement(Spreadsheet + "sheetViews", new XElement(Spreadsheet + "sheetView", new XAttribute("workbookViewId", 0),
+            new XElement(Spreadsheet + "selection", new XAttribute("activeCell", "B1"), new XAttribute("sqref", "B1")))));
+        var first = Require(ForetellWorkbookGuide.Read(ReplaceEntry(archive, "xl/worksheets/sheet1.xml", worksheet.ToString()), Duty));
+        worksheet.Descendants(Spreadsheet + "selection").Single().SetAttributeValue("activeCell", "B3");
+        worksheet.Descendants(Spreadsheet + "selection").Single().SetAttributeValue("sqref", "B3");
+        var second = Require(ForetellWorkbookGuide.Read(ReplaceEntry(archive, "xl/worksheets/sheet1.xml", worksheet.ToString()), Duty));
+        Check(first.Original != second.Original && first.Fingerprint != second.Fingerprint && first.Text == second.Text,
+            "Workbook selection fixture did not reproduce volatile raw XML with identical analysis input.");
+        Check(first.ContentFingerprint == second.ContentFingerprint, "Workbook selection metadata invalidated prepared analysis.");
+        worksheet.Descendants(Spreadsheet + "c").Single(cell => cell.Attribute("r")!.Value == "B2").SetAttributeValue("s", 1);
+        var styled = Require(ForetellWorkbookGuide.Read(ReplaceEntry(archive, "xl/worksheets/sheet1.xml", worksheet.ToString()), Duty));
+        Check(styled.ContentFingerprint != second.ContentFingerprint, "Meaningful worksheet style signals did not invalidate analysis.");
+        worksheet.Descendants(Spreadsheet + "t").Last().Value = "Sentinel: Move behind the boss for Hammer.";
+        var changed = Require(ForetellWorkbookGuide.Read(ReplaceEntry(archive, "xl/worksheets/sheet1.xml", worksheet.ToString()), Duty));
+        Check(changed.ContentFingerprint != styled.ContentFingerprint, "Changed worksheet instructions did not invalidate analysis.");
     }
 
     private static void CompleteVerticalLayout()

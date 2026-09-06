@@ -12,6 +12,7 @@ internal sealed record GuideDuty(uint ContentID, uint TerritoryID, string Englis
 internal sealed class GuideMechanic(string name, string text, string anchor)
 {
     public GuideAdvice? Advice { get; init; }
+    public GuidePhaseMembership[] PhaseMemberships { get; init; } = [];
     public string Name { get; } = name;
     public string Text { get; } = text;
     public string Anchor { get; } = anchor;
@@ -34,6 +35,7 @@ internal sealed record GuidePhase(string Name, string Context, GuideMechanic[] M
 internal sealed record GuideResponse(string When, string Instruction);
 internal sealed record GuideAdvice(GuideLanguage Language, string DisplayName, string Cue, string Description, string TriggerKind, string TriggerName, string[] Evidence)
 {
+    public string ShortCue { get; init; } = "";
     public GuideResponse[] Responses { get; init; } = [];
     public string[] Roles { get; init; } = [];
     public string Conflict { get; init; } = "";
@@ -42,6 +44,17 @@ internal sealed record GuideBoss(string Name, string Anchor, GuidePhase[] Phases
 {
     public string DisplayName { get; init; } = "";
     public string Summary { get; init; } = "";
+    public GuidePhaseDefinition[] PhaseDefinitions { get; init; } = [];
+}
+internal sealed record GuidePhaseDefinition(string ID, string Name, string[] Evidence);
+internal sealed record GuidePhaseMembership(string PhaseID, string[] Evidence);
+
+internal static class GuidePhases
+{
+    public static bool Includes(GuideBoss boss, GuideMechanic mechanic, GuidePhaseDefinition? knownPhase)
+        => knownPhase == null || !boss.PhaseDefinitions.Contains(knownPhase) || mechanic.PhaseMemberships.Length == 0
+            || mechanic.PhaseMemberships.Any(membership => !boss.PhaseDefinitions.Any(phase => phase.ID == membership.PhaseID)
+                || membership.PhaseID == knownPhase.ID);
 }
 internal sealed record GuidePage(string Provider, string Url, string Text, string Html);
 internal sealed record GuideDocument(int Schema, GuideDuty Duty, string Title, long Revision, DateTime RetrievedAt,

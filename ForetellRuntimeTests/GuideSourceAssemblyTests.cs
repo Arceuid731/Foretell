@@ -17,13 +17,26 @@ internal static class GuideSourceAssemblyTests
         Check(source.Page!.Text.Contains(first.Text) && source.Page.Text.Contains(second.Text) && source.Bosses.Length == 0, "Assembly dropped or semantically parsed a source");
         Check(GuideSourceAssembly.Combine(duty, new([first, second with { Text = second.Text + "\nNew condition" }], states), DateTime.UtcNow).SourceHash != source.SourceHash,
             "Changed workbook did not invalidate analysis");
+        var metadataOnly = second with { Original = "<sheet><selection activeCell='B3'/></sheet>", RetrievedAt = DateTime.UtcNow };
+        Check(GuideSourceAssembly.Combine(duty, new([first, metadataOnly], states), DateTime.UtcNow).SourceHash == source.SourceHash,
+            "Unchanged workbook analysis text was invalidated by raw selection metadata");
+        var missingStates = states.Select(state => state.Provider == second.Provider ? state with { Status = "Missing", Error = "No unique worksheet match." } : state).ToArray();
+        var retainedBundle = GuideSourceAssembly.RetainCachedSources(source, new([first], missingStates));
+        var retained = GuideSourceAssembly.Combine(duty, retainedBundle, DateTime.UtcNow);
+        Check(retained.SourceHash == source.SourceHash && retained.Page == source.Page
+            && retained.Sources.Single(page => page.Provider == second.Provider).FromCache
+            && retained.Providers.Single(state => state.Provider == second.Provider) is { Status: "Cached", Error: "No unique worksheet match." },
+            "A transiently missing worksheet invalidated the prepared guide or lost its provider diagnostic");
+        var changedBundle = GuideSourceAssembly.RetainCachedSources(source, new([first, second with { Text = second.Text + "\nNew condition" }], states));
+        Check(GuideSourceAssembly.Combine(duty, changedBundle, DateTime.UtcNow).SourceHash != source.SourceHash,
+            "Verified cache fallback masked a newly available content change");
         var directory = Path.Combine(Path.GetTempPath(), "foretell-sources-" + Guid.NewGuid());
         try
         {
             var cache = new ForetellGuideCache(directory);
             cache.Write(source);
             Check(cache.Read(duty)?.Sources.Length == 2, "Combined source cache cannot round-trip");
-            cache.Write(source with { Sources = [first, second with { Original = "tampered" }] });
+            cache.Write(source with { Sources = [first with { Original = "tampered" }, second] });
             Check(cache.Read(duty) == null, "Source content changed without invalidating its provenance hash");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
@@ -57,6 +70,7 @@ internal static class GuideSourceAssemblyTests
         Check(string.Concat(GuidePageAnalysis.Paragraphs(longText)) == longText, "Physical citations cut source content or a surrogate pair");
         Check(GuidePageAnalysis.RestoreQuote("[\"B3\",1,\"Stay near.\\nIf marked, spread.\"]", "Stay near.\nIf marked, spread.") != null,
             "Decoded multiline workbook quotation lost its source grounding");
+        GuideCacheTests.Run();
         Console.WriteLine("Multi-source refresh, cache integrity, full-content citations, attribution, roles and conflict abstention passed.");
     }
 }

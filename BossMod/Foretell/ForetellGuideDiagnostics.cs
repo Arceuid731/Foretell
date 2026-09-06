@@ -32,14 +32,14 @@ public sealed partial class ForetellEngine
         var options = new GuideCaptureOptions(_cfg.Mode, _cfg.EnableGuides, _cfg.GuideSidebar, _cfg.GuideEntryPopup, _guideEntryDismissed,
             _cfg.GuideCentralAlerts, _cfg.TextHints, _cfg.GuideLocalSummaries, _cfg.GuideSummaryGpu, _cfg.GuideScale, _cfg.GuideAlertScale)
         {
-            ContextTokens = _cfg.GuideContextTokens, MemoryGiB = _cfg.GuideMemoryGiB, ModelID = _cfg.GuideModelID,
+            ContextTokens = _cfg.GuideContextTokens, MemoryGiB = _cfg.GuideMemoryGiB, ModelID = _cfg.GuideModelID, CurrentPhaseOnly = _cfg.GuideCurrentPhaseOnly,
             WorldOverlay = _cfg.WorldOverlay, MiniRadar = _cfg.MiniRadar, VisualThreshold = _cfg.VisualConfidence, WarningThreshold = _cfg.WarningConfidence,
             Layout = new(_cfg.GuideChecklistUnlocked, _cfg.GuidePositionX, _cfg.GuidePositionY, _cfg.GuideWidth, _cfg.GuideHeight,
                 _cfg.GuideTextColor, _cfg.GuideActiveColor, _cfg.GuideResolvedColor, _cfg.GuideUnresolvedColor, _cfg.TextPositionX, _cfg.TextPositionY)
         };
         var signature = string.Join('|', _captureSession.ID, _guideDuty?.Key, document?.SourceHash, GuideContentLanguage, state?.State, state?.Error,
             summary?.Stage, summary?.Completed, summary?.Summaries.Count, summary?.LastIssue, runtime?.Stage, runtime?.ProcessID,
-            _guideFrame.Boss?.Name, _guideFrame.Upcoming, _guideFrame.Ambiguous, _guideCombat,
+            _guideFrame.Boss?.Name, _guideFrame.KnownPhase?.ID, _guideFrame.Upcoming, _guideFrame.Ambiguous, _guideCombat,
             _guideBossNames.Count, _guideActionNames.Count,
             _guideBossNames.Values.Count(id => _guideNames.ContainsKey(("BNpcName", id, true))),
             _guideActionNames.Values.Count(id => _guideNames.ContainsKey(("Action", id, true))), options,
@@ -57,7 +57,7 @@ public sealed partial class ForetellEngine
         var input = new GuideCaptureInput(now, _captureSession.ID, _captureSession.Territory, _guideDuty, GuideContentLanguage, document,
             new(state?.State.ToString() ?? (_cfg.EnableGuides ? "Unavailable" : "Disabled"), state?.Error ?? "", state?.FromCache ?? false, state?.ElapsedSeconds ?? 0,
                 summary?.Stage ?? "Unavailable", summary?.Completed ?? 0, summary?.Total ?? 0, _guideFrame.Boss?.Name, _guideFrame.Upcoming, _guideFrame.Ambiguous, _guideCombat)
-            { ModelRuntime = runtime, SummaryIssue = summary?.LastIssue },
+            { ModelRuntime = runtime, SummaryIssue = summary?.LastIssue, CurrentPhase = _guideFrame.KnownPhase },
             options, adapted, live);
         if (_capture.EnqueueGuide(_captureSession, input)) _guideDiagnosticSignature = signature;
     }

@@ -28,16 +28,6 @@ internal static class GuideChecklistPresentation
         };
     }
 
-    public static (int Page, int Pages, int Start, int Count) Page(int count, int capacity, int requested, int activeIndex = -1)
-    {
-        capacity = Math.Max(1, capacity);
-        count = Math.Max(0, count);
-        var pages = Math.Max(1, (count + capacity - 1) / capacity);
-        var page = activeIndex >= 0 && activeIndex < count ? activeIndex / capacity : Math.Clamp(requested, 0, pages - 1);
-        var start = page * capacity;
-        return (page, pages, start, Math.Min(capacity, count - start));
-    }
-
     public static string Fit(string text, float width, Func<string, float> measure)
     {
         if (measure(text) <= width) return text;
@@ -54,22 +44,6 @@ internal static class GuideChecklistPresentation
         }
         return text[..(lower == boundaries.Length ? text.Length : boundaries[lower])] + "…";
     }
-
-    public static (int Page, int Pages, int Start, int Count) HeightPage(float[] heights, float budget, int requested, int activeIndex = -1)
-    {
-        var starts = new List<int> { 0 };
-        var used = 0f;
-        for (var index = 0; index < heights.Length; ++index)
-        {
-            if (used > 0 && used + heights[index] > budget) { starts.Add(index); used = 0; }
-            used += Math.Max(1, heights[index]);
-        }
-        var page = activeIndex >= 0 && activeIndex < heights.Length ? starts.FindLastIndex(start => start <= activeIndex) : Math.Clamp(requested, 0, starts.Count - 1);
-        return (page, starts.Count, starts[page], (page + 1 < starts.Count ? starts[page + 1] : heights.Length) - starts[page]);
-    }
-
-    public static string Row(string name, string instruction, float width, Func<string, float> measure)
-        => Fit(name, Math.Max(width * .25f, width - measure(" — " + instruction)), measure) + " — " + instruction;
 
     public static string Preview(string text, int limit = 320)
     {

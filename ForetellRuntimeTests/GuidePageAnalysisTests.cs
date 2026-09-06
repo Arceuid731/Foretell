@@ -38,6 +38,7 @@ internal static class GuidePageAnalysisTests
         Check(prepared.Bosses.Single().Name == "Sentinel" && prepared.MechanicCount == 2, "Model-selected boss/mechanic grouping lost an entry");
         var mechanics = prepared.Bosses.Single().Phases.Single().Mechanics;
         Check(mechanics[0].Advice!.Cue == "Tank : prépare ta mitigation" && mechanics[1].Advice!.Cue == "Soigne le groupe", "AI instructions not preserved for list/central display");
+        Check(mechanics[0].Advice!.ShortCue == "Tank : prépare ta mitigation", "The original short cue was not retained");
         Check(GuidePageAnalysis.ValidPrepared(prepared, source, GuideLanguage.French, profile), "Prepared page rejected by cache validation");
         Check(!GuidePageAnalysis.ValidPrepared(prepared with { Coverage = [] }, source, GuideLanguage.French, profile), "Incomplete source coverage accepted");
         Check(!GuidePageAnalysis.ValidPrepared(prepared, source, GuideLanguage.English, profile)
@@ -128,17 +129,18 @@ internal static class GuidePageAnalysisTests
         var parsed = GuidePageAnalysis.Parse(conditionalSource, quote, resolved, GuideLanguage.French, profile);
         var advice = parsed.Bosses[0].Phases[0].Mechanics[0].Advice!;
         Check(advice.Cue == "Arme normale : Éloigne-toi ; Arme agrandie : Rapproche-toi" && advice.Responses.SequenceEqual(alternatives), "Conditional central/list instruction dropped a branch");
+        Check(advice.ShortCue == "Surveille l'arme", "The original short cue replaced the conditional alternatives");
         var cached = parsed with { Coverage = [new(0, conditionalSource.Page!.Text.Length)] };
         Check(GuidePageAnalysis.ValidPrepared(cached, conditionalSource, GuideLanguage.French, profile), "Conditional response cache rejected");
+        var legacyMechanic = new GuideMechanic("Hammer", parsed.Bosses[0].Phases[0].Mechanics[0].Text, "") { Advice = advice with { ShortCue = "" } };
+        var legacy = cached with { Bosses = [cached.Bosses[0] with { Phases = [new("", "", [legacyMechanic])] }] };
+        Check(GuidePageAnalysis.ValidPrepared(legacy, conditionalSource, GuideLanguage.French, profile) && legacyMechanic.Advice!.Cue == advice.Cue,
+            "Adding ShortCue invalidated an old conditional cache or changed its merged cue");
         foreach (var invalid in new[] { "0", "2", "source text" })
         {
             try { GuidePageAnalysis.ResolveEvidence(Response([invalid]), [quote]); throw new Exception("Invalid citation accepted"); }
             catch (InvalidDataException) { }
         }
-        var label = GuideChecklistPresentation.Row("A very long mechanic name", advice.Cue, 30, text => text.Length);
-        Check(label.EndsWith(advice.Cue), "Narrow overlay truncated a conditional instruction");
-        var page = GuideChecklistPresentation.HeightPage([20, 60, 20, 40], 80, 0, 3);
-        Check(page == (1, 2, 2, 2), "Wrapped row paging hid the active mechanic");
     }
 
     private sealed class PageModel : IGuideSummaryModel

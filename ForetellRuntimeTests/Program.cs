@@ -26,6 +26,7 @@ internal static class Program
         else if (args is ["--guide-model-smoke", var modelDirectory, var mode]) GuideCombatTests.ModelSmoke(modelDirectory, mode == "gpu");
         else if (args is ["--guide-pipeline-smoke", var pipelineDirectory]) GuideCombatTests.PipelineSmoke(pipelineDirectory);
         else if (args is ["--guide-ui-smoke"]) GuideOverlayTests.Run();
+        else if (args is ["--guide-cache-check", var cacheRoot, var preparedPath]) GuideCacheTests.VerifyInstalled(cacheRoot, preparedPath);
         else if (args is ["--guide-review", var recording, var guideCache, var gameDirectory, var reportDirectory]) GuideRecordingReview.Run(recording, guideCache, gameDirectory, reportDirectory);
         else EvaluateFiles(args);
     }
@@ -34,6 +35,7 @@ internal static class Program
     private static void Run()
     {
         OverlayDemoTests.Run();
+        GuideListFlowTests.Run();
         var at = new DateTime(2026, 9, 5, 12, 0, 0, DateTimeKind.Utc);
         var context = new DecisionContextSnapshot
         {

@@ -18,6 +18,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
 {
     private sealed record Request(GuideDocument Document, GuideLanguage Language, bool Gpu, int ContextTokens, int MemoryGiB, string ModelID, CancellationTokenSource Cancellation)
     {
+        public GuideDocument Document { get; set; } = Document;
         public bool Finished;
         public string? LastIssue;
         public bool Refresh;
@@ -96,7 +97,17 @@ internal sealed class ForetellGuideSummaries : IDisposable
                 return;
             }
             if (_latest is { } latest && latest.Document.SourceHash == document.SourceHash && latest.Document.Duty == document.Duty && latest.Language == language
-                && latest.Gpu == gpu && latest.ContextTokens == contextTokens && latest.MemoryGiB == memoryGiB && latest.ModelID == modelID && latest.Prepare == enabled) return;
+                && latest.Document.Page?.Text == document.Page?.Text
+                && latest.Gpu == gpu && latest.ContextTokens == contextTokens && latest.MemoryGiB == memoryGiB && latest.ModelID == modelID && latest.Prepare == enabled)
+            {
+                if (!ReferenceEquals(latest.Document, document))
+                {
+                    latest.Document = document;
+                    if (_snapshot is { Prepared: { } prepared } snapshot)
+                        _snapshot = snapshot with { Prepared = WithCurrentSources(prepared, document) };
+                }
+                return;
+            }
             CancelLatest();
             if (_queue.Reader.TryRead(out var dropped)) dropped.Cancellation.Dispose();
             _latest = new(document, language, gpu, contextTokens, memoryGiB, modelID, CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token));
@@ -328,6 +339,9 @@ internal sealed class ForetellGuideSummaries : IDisposable
         var summaries = prepared.Bosses.SelectMany(boss => boss.Phases.SelectMany(phase => phase.Mechanics
             .Where(mechanic => mechanic.Advice != null).Select(mechanic => new KeyValuePair<string, string>(Key(boss, phase, mechanic), mechanic.Advice!.Description))))
             .ToImmutableDictionary();
-        Publish(request, summaries, "Ready", prepared.MechanicCount, prepared.MechanicCount, prepared: prepared);
+        Publish(request, summaries, "Ready", prepared.MechanicCount, prepared.MechanicCount, prepared: WithCurrentSources(prepared, request.Document));
     }
+
+    private static GuideDocument WithCurrentSources(GuideDocument prepared, GuideDocument document)
+        => prepared with { RetrievedAt = document.RetrievedAt, Sources = document.Sources, Providers = document.Providers };
 }

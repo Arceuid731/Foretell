@@ -73,6 +73,14 @@ internal sealed record GuideSignal(GuideBoss Boss, GuidePhase Phase, GuideMechan
 internal sealed record GuideCombatFrame(GuideBoss? Boss, bool Upcoming, bool Ambiguous, GuidePhase? Phase, GuideSignal[] Active, int CompletedBosses)
 {
     public static readonly GuideCombatFrame Empty = new(null, true, false, null, [], 0);
+    public GuidePhaseDefinition? KnownPhase { get; init; }
+}
+internal static class GuidePhaseSelection
+{
+    public static bool Visible(GuideCombatFrame frame, GuidePhase phase, GuideMechanic mechanic)
+        => frame.Boss == null || frame.Upcoming || frame.Ambiguous || !frame.Boss.Phases.Contains(phase)
+            || frame.Active.Any(signal => ReferenceEquals(signal.Boss, frame.Boss) && ReferenceEquals(signal.Mechanic, mechanic))
+            || GuidePhases.Includes(frame.Boss, mechanic, frame.KnownPhase);
 }
 internal sealed record GuideActorState(ulong ID, uint OID, uint NameID, string EnglishName, bool Dead, bool Engaged, float Distance);
 
@@ -181,6 +189,8 @@ internal sealed class GuideEncounterTracker
     private readonly HashSet<string> _completed = [];
     private readonly HashSet<(string Boss, string Phase, string Mechanic)> _resolved = [];
     private readonly Dictionary<ulong, GuideActorState> _participants = [];
+    private readonly Dictionary<(GuideSignalKind Kind, ulong SourceID, uint SourceOID, uint SourceNameID, ulong OwnerID, uint ID, ulong TargetID, string Mechanic), List<DateTime>> _phaseObservations = [];
+    private GuidePhaseDefinition? _knownPhase;
     private GuideBoss? _boss;
     private bool _engaged;
     private string _documentHash = "";
@@ -193,12 +203,14 @@ internal sealed class GuideEncounterTracker
         Frame = GuideCombatFrame.Empty;
         _documentHash = "";
         _waitingForReset = false;
+        ResetPhase();
     }
 
     public void Wipe()
     {
         _resolved.Clear(); _participants.Clear(); _engaged = false;
         _waitingForReset = true;
+        ResetPhase();
         Frame = new(_boss, true, false, null, [], _completed.Count);
     }
 
@@ -211,14 +223,29 @@ internal sealed class GuideEncounterTracker
     public void ObserveDeath(ulong actorID, uint oid, uint nameID)
     {
         if (_participants.TryGetValue(actorID, out var actor) && actor.OID == oid && actor.NameID == nameID)
+        {
             _participants[actorID] = actor with { Dead = true, Engaged = false };
+            ResetPhase();
+        }
+    }
+
+    private void ResetPhase()
+    {
+        _knownPhase = null;
+        _phaseObservations.Clear();
+        Frame = Frame with { KnownPhase = null };
     }
 
     public GuideCombatFrame Update(GuideDocument document, IReadOnlyList<GuideActorState> actors, bool partyWiped)
     {
         var identity = document.SourceHash + document.ModelRevision + document.AnalysisLanguage;
         if (_documentHash != identity) { Reset(); _documentHash = identity; }
-        if (_boss != null) _boss = document.Bosses.FirstOrDefault(boss => boss.Name == _boss.Name);
+        if (_boss != null)
+        {
+            var current = document.Bosses.FirstOrDefault(boss => boss.Name == _boss.Name);
+            if (!ReferenceEquals(current, _boss)) ResetPhase();
+            _boss = current;
+        }
         if (partyWiped) Wipe();
         if (_waitingForReset)
         {
@@ -229,16 +256,33 @@ internal sealed class GuideEncounterTracker
             .Where(entry => entry.Matches.Length == 1).Select(entry => (entry.Actor, Boss: entry.Matches[0])).ToArray();
         if (_boss != null && _engaged)
         {
+            var present = identified.Where(entry => ReferenceEquals(entry.Boss, _boss) && !entry.Actor.Dead).Select(entry => entry.Actor).ToArray();
+            if (present.Length > 0 && _participants.Count > 0
+                && !present.Any(actor => _participants.TryGetValue(actor.ID, out var previous) && previous.OID == actor.OID && previous.NameID == actor.NameID && !previous.Dead))
+            {
+                _participants.Clear(); _resolved.Clear();
+                ResetPhase();
+            }
             foreach (var entry in identified.Where(entry => ReferenceEquals(entry.Boss, _boss)))
                 _participants[entry.Actor.ID] = entry.Actor;
             if (_participants.Count != 0 && _participants.Values.All(actor => actor.Dead) && !partyWiped)
             {
                 _completed.Add(_boss.Name); _participants.Clear(); _engaged = false; _boss = null; _resolved.Clear();
+                ResetPhase();
+            }
+            else if (identified.Any(entry => ReferenceEquals(entry.Boss, _boss) && !entry.Actor.Dead)
+                && !identified.Any(entry => ReferenceEquals(entry.Boss, _boss) && entry.Actor.Engaged && !entry.Actor.Dead))
+            {
+                _participants.Clear(); _engaged = false; _resolved.Clear();
+                ResetPhase();
             }
         }
         var fighting = identified.Where(entry => !entry.Actor.Dead && entry.Actor.Engaged).Select(entry => entry.Boss).Distinct().ToArray();
         if (fighting.Length > 1)
+        {
+            _knownPhase = null;
             return Frame = new(null, false, true, null, [], _completed.Count);
+        }
         var chosen = fighting.Length == 1 ? fighting[0] : _boss != null && _engaged ? _boss
             : identified.Where(entry => !entry.Actor.Dead && !_completed.Contains(entry.Boss.Name) && entry.Actor.Distance <= 80)
                 .OrderBy(entry => entry.Actor.Distance).Select(entry => entry.Boss).FirstOrDefault()
@@ -246,20 +290,55 @@ internal sealed class GuideEncounterTracker
         if (!ReferenceEquals(chosen, _boss))
         {
             _boss = chosen; _participants.Clear(); _resolved.Clear(); _engaged = false;
+            ResetPhase();
         }
         if (fighting.Length == 1 && !partyWiped)
         {
             _engaged = true;
             foreach (var entry in identified.Where(entry => ReferenceEquals(entry.Boss, _boss))) _participants[entry.Actor.ID] = entry.Actor;
         }
-        return Frame = new(_boss, !_engaged, false, null, [], _completed.Count);
+        return Frame = new(_boss, !_engaged, false, null, [], _completed.Count) { KnownPhase = _knownPhase };
     }
 
     public void Synchronize(IEnumerable<GuideSignal> signals)
     {
         var active = signals.Where(signal => ReferenceEquals(signal.Boss, _boss) && !Frame.Upcoming && !Frame.Ambiguous).Take(64).ToArray();
         var phases = active.Select(signal => signal.Phase).Distinct().ToArray();
-        Frame = Frame with { Active = active, Phase = phases.Length == 1 ? phases[0] : null };
+        ObservePhases(active);
+        Frame = Frame with { Active = active, Phase = phases.Length == 1 ? phases[0] : null, KnownPhase = _knownPhase };
+    }
+
+    private void ObservePhases(GuideSignal[] active)
+    {
+        if (_boss == null || _boss.PhaseDefinitions.Length == 0 || Frame.Upcoming || Frame.Ambiguous) return;
+        var fresh = active.Where(signal => signal.Kind is GuideSignalKind.Cast or GuideSignalKind.Status or GuideSignalKind.Action
+            && signal.Mechanic.Advice is { Conflict.Length: 0 } advice
+            && (signal.Kind == GuideSignalKind.Status ? advice.TriggerKind == "status" : advice.TriggerKind == "cast")
+            && signal.Mechanic.PhaseMemberships.Length > 0
+            && _boss.Phases.Any(phase => phase.Mechanics.Contains(signal.Mechanic))
+            && _participants.TryGetValue(signal.OwnerID == 0 ? signal.SourceID : signal.OwnerID, out var owner) && !owner.Dead
+            && (signal.OwnerID != 0 || owner.OID == signal.SourceOID && owner.NameID == signal.SourceNameID)
+            && NewPhaseObservation(signal))
+            .Select(signal => signal.Mechanic.PhaseMemberships).Where(memberships => memberships.Length > 0).ToArray();
+        var exclusive = fresh.Where(memberships => memberships.Length == 1).Select(memberships => memberships[0].PhaseID).Distinct().ToArray();
+        if (exclusive.Length > 1 || fresh.Any(memberships => memberships.Any(membership => !_boss.PhaseDefinitions.Any(phase => phase.ID == membership.PhaseID))))
+        {
+            _knownPhase = null;
+            return;
+        }
+        if (exclusive.Length == 1) _knownPhase = _boss.PhaseDefinitions.FirstOrDefault(phase => phase.ID == exclusive[0]);
+        if (_knownPhase != null && fresh.Any(memberships => !memberships.Any(membership => membership.PhaseID == _knownPhase.ID)))
+            _knownPhase = null;
+    }
+
+    private bool NewPhaseObservation(GuideSignal signal)
+    {
+        var key = (signal.Kind, signal.SourceID, signal.SourceOID, signal.SourceNameID, signal.OwnerID, signal.ID,
+            signal.Kind == GuideSignalKind.Status ? signal.TargetID : 0, signal.Mechanic.Name);
+        if (!_phaseObservations.TryGetValue(key, out var occurrences)) _phaseObservations[key] = occurrences = [];
+        if (occurrences.Any(until => Math.Abs((until - signal.Until).TotalSeconds) < .4)) return false;
+        occurrences.Add(signal.Until);
+        return true;
     }
 }
 

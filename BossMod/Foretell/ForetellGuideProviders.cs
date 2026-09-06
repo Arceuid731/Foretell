@@ -52,7 +52,7 @@ internal sealed class ForetellGuideProviders : IDisposable
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Foretell/0.11 (+https://github.com/Arceuid731/Foretell)");
     }
 
-    public async Task<GuideSourceBundle> Fetch(GuideDuty duty, CancellationToken cancellation)
+    public async Task<GuideSourceBundle> Fetch(GuideDuty duty, CancellationToken cancellation, bool refresh = false)
     {
         cancellation.ThrowIfCancellationRequested();
         if (!duty.Valid || string.IsNullOrWhiteSpace(duty.EnglishName)) throw new InvalidDataException("Instance identity is missing.");
@@ -62,8 +62,8 @@ internal sealed class ForetellGuideProviders : IDisposable
         var results = await Task.WhenAll(
             Isolated(WikiProvider, wikiUrl, () => Wiki(WikiProvider, wikiUrl, duty, cancellation), cancellation),
             Isolated(GamerProvider, gamerUrl, () => Wiki(GamerProvider, gamerUrl, duty, cancellation), cancellation),
-            Isolated(RavenProvider, RavenIndex, () => Raven(duty, cancellation), cancellation),
-            Isolated(WorkbookProvider, WorkbookUrl, () => Workbook(duty, cancellation), cancellation)).ConfigureAwait(false);
+            Isolated(RavenProvider, RavenIndex, () => Raven(duty, cancellation, refresh), cancellation),
+            Isolated(WorkbookProvider, WorkbookUrl, () => Workbook(duty, cancellation, refresh), cancellation)).ConfigureAwait(false);
         cancellation.ThrowIfCancellationRequested();
         return new(results.Where(result => result.Page != null).Select(result => result.Page!).ToArray(), results.Select(result => result.State).ToArray());
     }
@@ -102,14 +102,14 @@ internal sealed class ForetellGuideProviders : IDisposable
         return Result(provider, download);
     }
 
-    private async Task<ProviderResult> Raven(GuideDuty duty, CancellationToken cancellation)
+    private async Task<ProviderResult> Raven(GuideDuty duty, CancellationToken cancellation, bool refresh)
     {
         var index = await Read(RavenIndex, MaximumPageBytes, SharedLifetime, "html", bytes =>
         {
             var html = Encoding.UTF8.GetString(bytes);
             if (!Catalog(html).Any()) throw new InvalidDataException("Raven guide catalog contains no guide links.");
             return html;
-        }, cancellation).ConfigureAwait(false);
+        }, cancellation, refresh).ConfigureAwait(false);
         var url = MatchRavenGuide(index.Value, duty);
         if (url == null) return new(null, new(RavenProvider, "Missing", RavenIndex, "No unique catalog entry matches this duty and variant."));
         return await Isolated(RavenProvider, url, async () =>
@@ -128,10 +128,10 @@ internal sealed class ForetellGuideProviders : IDisposable
         }, cancellation).ConfigureAwait(false);
     }
 
-    private async Task<ProviderResult> Workbook(GuideDuty duty, CancellationToken cancellation)
+    private async Task<ProviderResult> Workbook(GuideDuty duty, CancellationToken cancellation, bool refresh)
     {
         var download = await Read(WorkbookUrl, MaximumWorkbookBytes, SharedLifetime, "xlsx",
-            bytes => ForetellWorkbookGuide.Read(bytes, duty), cancellation).ConfigureAwait(false);
+            bytes => ForetellWorkbookGuide.Read(bytes, duty), cancellation, refresh).ConfigureAwait(false);
         return Result(WorkbookProvider, download);
     }
 
@@ -196,7 +196,7 @@ internal sealed class ForetellGuideProviders : IDisposable
         => Attributes.Matches(attributes).Cast<Match>().Where(attribute => attribute.Groups["name"].Value.Equals(name, StringComparison.OrdinalIgnoreCase))
             .Select(attribute => WebUtility.HtmlDecode(attribute.Groups["value"].Value)).FirstOrDefault() ?? "";
 
-    private async Task<Download<T>> Read<T>(string url, int limit, TimeSpan lifetime, string format, Func<byte[], T> parse, CancellationToken cancellation)
+    private async Task<Download<T>> Read<T>(string url, int limit, TimeSpan lifetime, string format, Func<byte[], T> parse, CancellationToken cancellation, bool refresh = false)
     {
         var key = GuideNames.Hash(url);
         var gate = lifetime > TimeSpan.Zero ? url == RavenIndex ? IndexGate : WorkbookGate : null;
@@ -210,7 +210,7 @@ internal sealed class ForetellGuideProviders : IDisposable
                 try { cachedValue = parse(cached.Bytes); }
                 catch (Exception error) when (error is not OperationCanceledException) { cached = null; }
             }
-            if (cached != null && lifetime > TimeSpan.Zero && DateTime.UtcNow - cached.CheckedAt < lifetime)
+            if (cached != null && !refresh && lifetime > TimeSpan.Zero && DateTime.UtcNow - cached.CheckedAt < lifetime)
                 return new(cachedValue!, cached, true);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             timeout.CancelAfter(TimeSpan.FromSeconds(20));

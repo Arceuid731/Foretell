@@ -20,6 +20,7 @@ internal static class OverlayDemoTests
             Check(hazard.Prediction.Label.StartsWith("DEMO") && hazard.AdvisoryOnly && !frame.Frame.EvidenceComplete && !frame.Frame.TerrainFresh,
                 "Demo can be mistaken for assessed live evidence");
             Check(frame.Guide.Active.Length == 1 && frame.Guide.Boss!.Phases[0].Mechanics.Length == 8, "Demo list not synchronized");
+            Check(frame.Guide.KnownPhase != null && frame.Guide.Boss!.Phases[0].Mechanics.Count(mechanic => GuidePhaseSelection.Visible(frame.Guide, frame.Guide.Boss.Phases[0], mechanic)) == 4, "Demo phase filter is not reflected in the mechanic list");
             Check(names.Add(frame.Guide.Active[0].Mechanic.Name), "Demo did not cover all examples before repeating");
             Check(!ForetellDecisionCore.AssessRoute(frame.Frame, Vector2.Zero, Vector2.One, (_, _) => true).Eligible, "Demo enabled a real movement recommendation");
         }

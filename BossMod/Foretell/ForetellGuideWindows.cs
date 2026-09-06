@@ -71,14 +71,20 @@ public sealed partial class ForetellEngine
         var changed = ImGui.Checkbox(GuideText("Mechanic list overlay", "Liste des mécaniques en surimpression", "Mechaniklisten-Overlay", "ギミック一覧表示"), ref _cfg.GuideSidebar);
         changed |= ImGui.Checkbox(GuideText("Entry popup", "Panneau à l’entrée", "Fenster beim Betreten", "入場時の案内"), ref _cfg.GuideEntryPopup);
         changed |= ImGui.Checkbox(GuideText("Unlock mechanic list (drag / resize)", "Déverrouiller la liste (déplacer / redimensionner)", "Mechanikliste entsperren (bewegen / skalieren)", "ギミック一覧の移動・サイズ変更を許可"), ref _cfg.GuideChecklistUnlocked);
-        changed |= ImGui.SliderFloat(GuideText("Width", "Largeur", "Breite", "幅"), ref _cfg.GuideWidth, 260, 1000, "%.0f");
+        changed |= ImGui.Checkbox(GuideText("Follow the current phase", "Suivre la phase actuelle", "Aktueller Phase folgen", "現在のフェーズに追従"), ref _cfg.GuideCurrentPhaseOnly);
+        changed |= ImGui.Checkbox(GuideText("Role icons", "Icônes de rôle", "Rollensymbole", "ロールアイコン"), ref _cfg.GuideRoleIcons);
+        changed |= ImGui.SliderFloat(GuideText("Column width", "Largeur des colonnes", "Spaltenbreite", "列の幅"), ref _cfg.GuideWidth, 260, 1000, "%.0f");
         changed |= ImGui.SliderFloat(GuideText("Maximum height (automatic when locked)", "Hauteur maximale (automatique une fois verrouillée)", "Maximale Höhe (gesperrt automatisch)", "最大高さ（ロック中は自動）"), ref _cfg.GuideHeight, 180, 1000, "%.0f");
-        changed |= ImGui.SliderFloat(GuideText("Text scale", "Échelle du texte", "Textgröße", "文字倍率"), ref _cfg.GuideScale, .7f, 1.8f, "%.2f");
-        changed |= EditGuideColor(GuideText("Editing background only", "Fond en édition uniquement", "Hintergrund nur beim Bearbeiten", "編集中のみの背景"), ref _cfg.GuideBackgroundColor);
-        changed |= EditGuideColor(GuideText("Text", "Texte", "Text", "文字"), ref _cfg.GuideTextColor);
+        changed |= ImGui.SliderFloat(GuideText("Text size", "Taille du texte", "Textgröße", "文字倍率"), ref _cfg.GuideScale, .7f, 2, "%.2f");
+        changed |= ImGui.SliderFloat(GuideText("Row spacing", "Espacement des lignes", "Zeilenabstand", "行間"), ref _cfg.GuideRowSpacing, 0, 18, "%.0f");
+        changed |= ImGui.SliderFloat(GuideText("Background opacity", "Opacité du fond", "Hintergrunddeckkraft", "背景の不透明度"), ref _cfg.GuidePanelOpacity, 0, 1, "%.2f");
+        changed |= EditGuideColor(GuideText("Background", "Fond", "Hintergrund", "背景"), ref _cfg.GuideBackgroundColor);
+        changed |= EditGuideColor(GuideText("Boss / phase heading", "Titre du boss / phase", "Boss- / Phasentitel", "ボス・フェーズ見出し"), ref _cfg.GuideHeaderColor);
+        changed |= EditGuideColor(GuideText("Mechanic names", "Noms des mécaniques", "Mechaniknamen", "ギミック名"), ref _cfg.GuideTextColor);
+        changed |= EditGuideColor(GuideText("Instructions", "Consignes", "Anweisungen", "指示"), ref _cfg.GuideInstructionColor);
         changed |= EditGuideColor(GuideText("Active mechanic", "Mécanique active", "Aktive Mechanik", "発動中のギミック"), ref _cfg.GuideActiveColor);
         if (ImGui.Button(GuideText("Reset layout", "Réinitialiser la disposition", "Layout zurücksetzen", "配置をリセット")))
-        { _cfg.GuidePositionX = _cfg.GuidePositionY = -1; _cfg.GuideWidth = 380; _cfg.GuideHeight = 520; _cfg.GuideScale = 1; _guideChecklistWasUnlocked = false; changed = true; }
+        { _cfg.GuidePositionX = _cfg.GuidePositionY = -1; _cfg.GuideWidth = 380; _cfg.GuideHeight = 520; _cfg.GuideScale = 1; _cfg.GuideRowSpacing = 6; _guideChecklistWasUnlocked = false; changed = true; }
         if (_guideDuty != null && ImGui.Button(GuideText("Show entry summary again", "Revoir le résumé d’entrée", "Zusammenfassung erneut anzeigen", "入場時の要約を再表示")))
         { _guideEntryDismissed = false; }
         if (changed) { _guideChecklistWasUnlocked = false; _cfg.Modified.Fire(); }

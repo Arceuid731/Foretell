@@ -23,6 +23,7 @@ internal static class GuideProviderTests
         EmptyAndWrongWiki().GetAwaiter().GetResult();
         ConditionalAndFallback().GetAwaiter().GetResult();
         SharedDownloads().GetAwaiter().GetResult();
+        ExplicitRefresh().GetAwaiter().GetResult();
         Cancellation().GetAwaiter().GetResult();
         Redirects().GetAwaiter().GetResult();
         ByteBounds().GetAwaiter().GetResult();
@@ -194,6 +195,32 @@ internal static class GuideProviderTests
         var refreshed = await first.Fetch(Duty, CancellationToken.None);
         Check(counts[ForetellGuideProviders.RavenIndex] == 2 && counts[ForetellGuideProviders.WorkbookUrl] == 2, "Expired global cache did not refresh conditionally.");
         Check(State(refreshed, ForetellGuideProviders.WorkbookProvider) is { Status: "Cached", Error.Length: 0 }, "Workbook 304 was not reused.");
+    }
+
+    private static async Task ExplicitRefresh()
+    {
+        using var directory = new TestDirectory();
+        var refresh = false;
+        var sharedRequests = 0;
+        using var handler = new FakeHandler((request, _) =>
+        {
+            if (!Index(request) && !Workbook(request)) return Task.FromResult(Status(HttpStatusCode.NotFound));
+            Interlocked.Increment(ref sharedRequests);
+            if (refresh)
+            {
+                CheckConditional(request);
+                return Task.FromResult(Status(HttpStatusCode.NotModified));
+            }
+            return Task.FromResult(Validated(Index(request) ? Text(CatalogHtml) : WorkbookResponse()));
+        });
+        using var providers = new ForetellGuideProviders(directory.Path, handler);
+        var original = await providers.Fetch(Duty, CancellationToken.None);
+        refresh = true;
+        await providers.Fetch(Duty, CancellationToken.None);
+        Check(sharedRequests == 2, "Ordinary entry ignored the shared provider cache lifetime.");
+        var refreshed = await providers.Fetch(Duty, CancellationToken.None, true);
+        Check(sharedRequests == 4 && Page(refreshed, ForetellGuideProviders.WorkbookProvider).ContentFingerprint
+            == Page(original, ForetellGuideProviders.WorkbookProvider).ContentFingerprint, "Explicit refresh skipped conditional provider checks or changed unchanged workbook identity.");
     }
 
     private static async Task Cancellation()

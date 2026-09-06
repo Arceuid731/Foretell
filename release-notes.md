@@ -1,9 +1,9 @@
-# Foretell 0.13.1 — overlay customization and preview
+# Foretell 0.13.2 — readable mechanic lists and boss phases
 
-- Customize central alert text size, width, instruction/name/timer colors and cast bar color in Display. Guide and detected-mechanic alerts share these settings; the mechanic list keeps its own colors.
-- Customize 3D outline thickness, opacity and color, plus label size and color. Appearance changes preserve the actual attack footprint.
-- Preview eight example mechanics with synchronized central alerts, cast countdowns, list highlights, radar and 3D. Start/stop and Next mechanic controls are in Display. The demo stops after two minutes, on combat, death or changing area, and never enters encounter learning or guide caches.
-- Show model/engine download requirements or files on disk instead of a permanent first-download label. Local AI also shows analysis elapsed time, backend and the current/last prompt token count.
-- Recognize guide boss headings with a title prefix, while keeping exact boss-name and difficulty checks.
+- Remove mechanic-list pagination. Rows flow into balanced columns, with separate name/action lines, role icons, text shadows and repeatable active highlights. Very constrained layouts scroll automatically and bring active rows into view; conditional alternatives are not truncated.
+- Customize list text size, column width, spacing, heading/name/instruction/highlight colors and optional background opacity under Display.
+- Let local AI identify documented phases and phase-specific mechanics from complete guides. Follow phases established by observed boss mechanics; retain common and active mechanics, and keep the full reference when the phase is unknown. Matching continues across the entire boss reference so transitions remain detectable. Demo mode also previews phase filtering.
+- Reuse a prepared guide when entering its instance. Ignore workbook view/selection metadata when deciding whether analysis content changed, retain verified sources through temporary provider failures, and check for source updates in the background. Real content changes and explicit reanalysis remain supported.
+- Preserve older source and prepared caches after integrity checks. Existing guides are not automatically reanalyzed just to add phase metadata: use Reanalyze once if you want phases for an older guide. Guides without documented phases remain usable.
 
-Generated guide instructions can still be incomplete or mistaken. This update improves presentation and identification, not the reliability of every generated strategy.
+Generated instructions and phase assignments can still be incomplete or mistaken. This update does not certify every strategy.

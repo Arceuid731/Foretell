@@ -69,6 +69,29 @@ internal static class GuideOverlayTests
             Check(ImGui.GetItemRectMax().X <= io.DisplaySize.X, "Central bar extends beyond viewport after moving");
             ImGui.End();
             ImGui.Render();
+            foreach (var count in new[] { 15, 64 })
+            {
+                ImGui.NewFrame();
+                ImGui.SetNextWindowPos(new(10, 10));
+                ImGui.SetNextWindowSize(new(1260, 690));
+                ImGui.Begin("Controller-friendly mechanic list", flags);
+                var instruction = "If marked: move away from other players; otherwise: stay close to the boss.";
+                var layout = GuideListFlow.Build(count, 380, 500, new(1230, 640), 1,
+                    (_, width, scale, compact) => ForetellEngine.MeasureGuideListRow("A long mechanic name", instruction, 2, width, scale, compact, 6));
+                Check(layout.Width <= 1230 && layout.Top.Length == count, "Native list layout loses mechanics");
+                var origin = ImGui.GetCursorScreenPos();
+                for (var index = 0; index < count; ++index)
+                {
+                    var position = origin + new Vector2(layout.Column[index] * (layout.ColumnWidth + GuideListFlow.Gap), layout.Top[index]);
+                    ForetellEngine.DrawGuideListRow(new(), position, layout.ColumnWidth, layout.Heights[index], layout.Scale, layout.Compact,
+                        "A long mechanic name", instruction, ["tank", "healer"], index == count - 1, index == count - 1 ? 3.5 : null);
+                    var offset = GuideListFlow.Offset(layout, 640, 0, index);
+                    Check(layout.Top[index] - offset >= -.1f && layout.Top[index] + layout.Heights[index] - offset <= 640.1f, "Active mechanic is not visible without mouse input");
+                }
+                ImGui.End();
+                ImGui.Render();
+                Check(ImGui.GetDrawData().TotalVtxCount > 0, "Mechanic list and role icons did not render");
+            }
             for (var frame = 0; frame < 4; ++frame)
             {
                 ImGui.NewFrame();

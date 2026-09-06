@@ -37,6 +37,14 @@ internal static class GuideRolePresentation
         return selected is RoleSet.None or RoleSet.All || playerRole == RoleSet.None || (selected & playerRole) != 0;
     }
 
+    public static string[] Icons(IEnumerable<string> roles)
+    {
+        var selected = Read(roles);
+        if (selected is RoleSet.None or RoleSet.All) return [];
+        return new[] { (RoleSet.Tank, "tank"), (RoleSet.Healer, "healer"), (RoleSet.Melee, "melee"), (RoleSet.Ranged, "ranged") }
+            .Where(role => (selected & role.Item1) != 0).Select(role => role.Item2).ToArray();
+    }
+
     private static RoleSet Read(IEnumerable<string> roles)
     {
         var selected = RoleSet.None;

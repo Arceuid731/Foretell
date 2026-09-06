@@ -35,11 +35,14 @@ internal sealed class ForetellDemo
         _player = player;
         _order = Enumerable.Range(0, Examples.Length).ToArray();
         new Random(seed).Shuffle(_order);
-        var mechanics = Examples.Select(example => new GuideMechanic(example.Name, example.Cue, "demo")
+        var mechanics = Examples.Select((example, index) => new GuideMechanic(example.Name, example.Cue, "demo")
         {
             Advice = new(GuideLanguage.English, example.Name, example.Cue, "Demo · " + example.Cue, "manual", "", [])
+            { Roles = example.Guidance == GuidanceKind.Tankbuster ? ["tank"] : [] },
+            PhaseMemberships = [new(index < 4 ? "shapes" : "markers", [])]
         }).ToArray();
-        _boss = new("DEMO", "demo", [new("", "", mechanics)]);
+        _boss = new("DEMO", "demo", [new("", "", mechanics)])
+        { PhaseDefinitions = [new("shapes", "Phase 1 · Area attacks", []), new("markers", "Phase 2 · Personal mechanics", [])] };
     }
 
     public void Next(DateTime now)
@@ -67,7 +70,7 @@ internal sealed class ForetellDemo
         var phase = _boss.Phases[0];
         var signal = new GuideSignal(_boss, phase, phase.Mechanics[index], GuideSignalKind.Cast, player, 0, 0, 0, player, until, example.Guidance, "Demo");
         return new(new(now, [new(-1, prediction, until, example.Geometry != GeometryKind.Unknown, true, "Demo")], false, false),
-            new(_boss, false, false, phase, [signal], 0), example.Cue, remaining);
+            new(_boss, false, false, phase, [signal], 0) { KnownPhase = _boss.PhaseDefinitions[index < 4 ? 0 : 1] }, example.Cue, remaining);
     }
 }
 
