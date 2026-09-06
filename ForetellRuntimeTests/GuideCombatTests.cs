@@ -10,6 +10,7 @@ internal static class GuideCombatTests
     public static void Run()
     {
         HeadingBossIdentity();
+        LateGuideProgress();
         ChecklistPresentation();
         CentralSignalSelection();
         OwnedStatusSignals();
@@ -124,6 +125,68 @@ internal static class GuideCombatTests
         tracker.Synchronize([new(boss, boss.Phases[0], boss.Phases[0].Mechanics[0], GuideSignalKind.Cast,
             10, 20, 30, 40, 0, now.AddSeconds(5), GuidanceKind.Raidwide, "fixture")]);
         Check(tracker.Frame.Active.Length == 0, "Colliding titles produced a live signal");
+    }
+
+    private static void LateGuideProgress()
+    {
+        var now = new DateTime(2026, 9, 6, 20, 18, 0, DateTimeKind.Utc);
+        var first = new GuideBoss("Towering Oliphant", "", [new("", "", [new("Rear", "A cone attack.", "")])]);
+        var second = new GuideBoss("Ser Yuhelmeric", "", []);
+        var third = new GuideBoss("Opinicus", "", []);
+        var document = new GuideDocument(GuideDocument.CurrentSchema, new(36, 1366, "the Dusk Vigil"), "the Dusk Vigil", 1,
+            now, GuideNames.Hash("late-guide-progress"), [first, second, third]);
+        var firstActor = new GuideActorState(10, 3721, 3405, first.Name, false, true, 5);
+        var secondActor = new GuideActorState(11, 3722, 3406, second.Name, false, true, 5);
+        var thirdActor = new GuideActorState(12, 3725, 3409, third.Name, false, true, 5);
+        var vignette = new GuideActorState(13, 3819, 3409, third.Name, false, false, 20);
+        var tracker = new GuideEncounterTracker();
+        Check(tracker.Update(null, [firstActor], false) == GuideCombatFrame.Empty, "An unprepared guide produced a boss overlay");
+        tracker.ObserveDeath(firstActor.ID, firstActor.OID, firstActor.NameID);
+        tracker.Update(null, [], false);
+        Check(tracker.Update(document, [], false) is { Boss.Name: "Ser Yuhelmeric", Upcoming: true, CompletedBosses: 1 },
+            "Preparing the guide after the first boss forgot its observed death");
+        tracker.Update(document, [secondActor], false);
+        tracker.ObserveDeath(secondActor.ID, secondActor.OID, secondActor.NameID);
+        Check(tracker.Update(document, [], false) is { Boss.Name: "Opinicus", Upcoming: true, CompletedBosses: 2 },
+            "The second boss death sent the overlay back to an earlier boss");
+        tracker.Update(document, [vignette], false);
+        Check(tracker.Update(document, [], false) is { Boss.Name: "Opinicus", Upcoming: true, CompletedBosses: 2 },
+            "A non-combat vignette despawn changed encounter progress");
+        Check(tracker.Update(document, [thirdActor], false) is { Boss.Name: "Opinicus", Upcoming: false },
+            "An unfinished boss preparation prevented current boss identification");
+        var refreshed = document with { SourceHash = GuideNames.Hash("refreshed-guide-progress") };
+        Check(tracker.Update(refreshed, [thirdActor], false) is { Boss.Name: "Opinicus", Upcoming: false, CompletedBosses: 2 },
+            "A source refresh erased actual encounter progress");
+        tracker.ObserveDeath(thirdActor.ID, thirdActor.OID, thirdActor.NameID);
+        Check(tracker.Update(refreshed, [], false) is { Boss: null, CompletedBosses: 3 }, "The final boss death left an earlier boss upcoming");
+        Check(tracker.Update(document with { Duty = new(37, 1367, "Another duty") }, [], false) is { Boss.Name: "Towering Oliphant", CompletedBosses: 0 },
+            "Observed deaths crossed duty boundaries");
+
+        tracker.Reset();
+        tracker.Update(null, [firstActor], false);
+        tracker.ObserveDeath(firstActor.ID, firstActor.OID + 1, firstActor.NameID);
+        Check(tracker.Update(document, [], false).CompletedBosses == 0, "A recycled actor ID completed another enemy");
+        tracker.Update(null, [firstActor], false);
+        Check(tracker.Update(document, [], false).CompletedBosses == 0, "Pre-guide despawn was inferred to mean death");
+        tracker.Reset();
+        tracker.Update(null, [firstActor with { Engaged = false, Dead = true }], false);
+        Check(tracker.Update(document, [], false).CompletedBosses == 0, "An unrelated dead non-combat actor completed a boss");
+        tracker.Reset();
+        tracker.Update(null, [firstActor], false);
+        tracker.Wipe();
+        Check(tracker.Update(document, [firstActor], false).Upcoming, "The first prepared guide re-armed a wiped pull before combat reset");
+        tracker.ObserveDeath(firstActor.ID, firstActor.OID, firstActor.NameID);
+        Check(tracker.Update(document, [], false).CompletedBosses == 0, "A wiped pre-guide pull retained stale death ownership");
+        tracker.Reset();
+        tracker.Update(null, [firstActor], false);
+        tracker.ObserveDeath(firstActor.ID, firstActor.OID, firstActor.NameID);
+        var recycled = firstActor with { OID = 99, NameID = 99, EnglishName = "Another enemy" };
+        tracker.Update(document, [recycled], false);
+        Check(tracker.Update(refreshed, [recycled], false) is { Boss.Name: "Ser Yuhelmeric", CompletedBosses: 1 },
+            "An actor ID reused by another enemy erased a confirmed boss death after source refresh");
+        Check(ForetellEngine.GuidanceInstruction(GuidanceKind.None, MechanicKind.Unknown, GeometryKind.Unknown).Length == 0
+            && ForetellEngine.GuidanceInstruction(GuidanceKind.Avoid, MechanicKind.GroundAOE, GeometryKind.Unknown).Length == 0,
+            "Unknown attacks produced generic WATCH guidance rather than the observed spell name");
     }
 
     private static (GuideDocument Document, GuideBoss Boss, Actor Owner, Actor Helper, Actor Player, DateTime Now) SignalFixture()

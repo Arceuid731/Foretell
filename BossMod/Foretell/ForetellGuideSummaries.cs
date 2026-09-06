@@ -24,6 +24,8 @@ internal sealed class ForetellGuideSummaries : IDisposable
         public bool Refresh;
         public bool Prepare;
         public GuideDocument? Partial;
+        public int AnalysisCompleted;
+        public int AnalysisTotal = 1;
         public readonly GuideAnalysisMemory Analysis = new();
         public GuideAnalysisTiming AnalysisTiming = new();
     }
@@ -75,7 +77,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
         _worker = Task.Run(Run);
     }
 
-    public void Update(GuideDocument? document, GuideLanguage language, bool enabled, bool combat, bool gpu, string preferredBoss,
+    public void Update(GuideDocument? document, GuideLanguage language, bool enabled, bool paused, bool gpu, string preferredBoss,
         int contextTokens = GuideModelLimits.DefaultContext, int memoryGiB = GuideModelLimits.DefaultMemoryGiB, string modelID = GuideModelCatalog.DefaultID)
     {
         contextTokens = GuideModelLimits.Context(contextTokens);
@@ -85,10 +87,10 @@ internal sealed class ForetellGuideSummaries : IDisposable
         {
             if (_disposed) return;
             _preferredBoss = preferredBoss;
-            if (_paused != combat)
+            if (_paused != paused)
             {
-                _paused = combat;
-                if (combat) _activity.Cancel();
+                _paused = paused;
+                if (paused) _activity.Cancel();
                 else { _activity.Dispose(); _activity = new(); }
             }
             if (document == null || !enabled && document.Page == null)
@@ -303,7 +305,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
             if (_paused)
             {
                 _activeModel?.Dispose();
-                Publish(request, ImmutableDictionary<string, string>.Empty, "PausedInCombat", 0, 1);
+                Publish(request, ImmutableDictionary<string, string>.Empty, "PausedInCombat", request.AnalysisCompleted, request.AnalysisTotal);
                 await Task.Delay(300, request.Cancellation.Token).ConfigureAwait(false);
                 continue;
             }
@@ -315,13 +317,22 @@ internal sealed class ForetellGuideSummaries : IDisposable
                 {
                     _activeModel ??= CreateModel(request);
                     await _activeModel.Start(transfer => Publish(request, ImmutableDictionary<string, string>.Empty,
-                        "InstallingOrStarting", 0, 1, transfer), active.Token).ConfigureAwait(false);
+                        "InstallingOrStarting", request.AnalysisCompleted, request.AnalysisTotal, transfer), active.Token).ConfigureAwait(false);
                     var watch = System.Diagnostics.Stopwatch.StartNew();
+                    var resumed = request.Analysis.Responses.Count > 0;
                     var resumable = new GuideResumableModel(_activeModel, request.Analysis);
                     prepared = await GuidePageAnalysis.Compile(request.Document, request.Language, profile, request.ContextTokens, resumable,
-                        (done, total) => Publish(request, ImmutableDictionary<string, string>.Empty, "Analyzing", done, total,
-                            remaining: done > 0 ? watch.Elapsed.TotalSeconds / done * (total - done) : null), active.Token,
-                        partial => request.Partial = partial).ConfigureAwait(false);
+                        (done, total) =>
+                        {
+                            request.AnalysisCompleted = Math.Max(done, request.Partial?.Bosses.Count(boss => boss.Phases.Length > 0) ?? 0);
+                            request.AnalysisTotal = Math.Max(total, request.Partial?.Bosses.Length ?? 0);
+                            Publish(request, ImmutableDictionary<string, string>.Empty, "Analyzing", request.AnalysisCompleted, request.AnalysisTotal,
+                                remaining: !resumed && done > 0 ? watch.Elapsed.TotalSeconds / done * (total - done) : null);
+                        }, active.Token, partial =>
+                        {
+                            if (request.Partial == null || partial.Bosses.Count(boss => boss.Phases.Length > 0) >= request.Partial.Bosses.Count(boss => boss.Phases.Length > 0))
+                                request.Partial = partial;
+                        }).ConfigureAwait(false);
                     active.Token.ThrowIfCancellationRequested();
                     _activeModel.Dispose();
                     try { cache.Write(prepared); }

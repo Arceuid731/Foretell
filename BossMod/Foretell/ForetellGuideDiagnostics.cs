@@ -33,6 +33,7 @@ public sealed partial class ForetellEngine
             _cfg.GuideCentralAlerts, _cfg.TextHints, _cfg.GuideLocalSummaries, _cfg.GuideSummaryGpu, _cfg.GuideScale, _cfg.GuideAlertScale)
         {
             ContextTokens = _cfg.GuideContextTokens, MemoryGiB = _cfg.GuideMemoryGiB, ModelID = _cfg.GuideModelID, CurrentPhaseOnly = _cfg.GuideCurrentPhaseOnly,
+            PauseAnalysisInCombat = _cfg.GuidePauseInCombat,
             WorldOverlay = _cfg.WorldOverlay, MiniRadar = _cfg.MiniRadar, VisualThreshold = _cfg.VisualConfidence, WarningThreshold = _cfg.WarningConfidence,
             Layout = new(_cfg.GuideChecklistUnlocked, _cfg.GuidePositionX, _cfg.GuidePositionY, _cfg.GuideWidth, _cfg.GuideHeight,
                 _cfg.GuideTextColor, _cfg.GuideActiveColor, _cfg.GuideResolvedColor, _cfg.GuideUnresolvedColor, _cfg.TextPositionX, _cfg.TextPositionY)

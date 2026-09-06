@@ -320,7 +320,9 @@ public sealed partial class ForetellEngine
                 var prediction = active[i];
                 if (i != 0) ImGui.Separator();
                 var remain = Math.Max(0, (prediction.Activation - _ws.CurrentTime).TotalSeconds);
-                DrawCentralAlert(_cfg, GuidanceInstruction(prediction.Guidance, prediction.Kind, prediction.Geometry), UserFacingPredictionLabel(prediction), remain,
+                var cue = GuidanceInstruction(prediction.Guidance, prediction.Kind, prediction.Geometry);
+                var label = UserFacingPredictionLabel(prediction);
+                DrawCentralAlert(_cfg, cue.Length > 0 ? cue : label, cue.Length > 0 ? label : "", remain,
                     _ws.Actors.Find(prediction.CasterID)?.CastInfo?.TotalTime ?? 0);
             }
             if (terrainCue)
@@ -337,9 +339,9 @@ public sealed partial class ForetellEngine
         return new((packed & 0xFF) / 255f, ((packed >> 8) & 0xFF) / 255f, ((packed >> 16) & 0xFF) / 255f, 1);
     }
 
-    private static string GuidanceInstruction(GuidanceKind guidance, MechanicKind kind, GeometryKind geometry) => guidance switch
+    internal static string GuidanceInstruction(GuidanceKind guidance, MechanicKind kind, GeometryKind geometry) => guidance switch
     {
-        GuidanceKind.Avoid => geometry == GeometryKind.Unknown ? GuideText("WATCH AOE", "SURVEILLE LA ZONE", "FLÄCHE BEACHTEN", "範囲攻撃に注意") : GuideText("AVOID", "ÉVITE", "AUSWEICHEN", "回避"),
+        GuidanceKind.Avoid => geometry == GeometryKind.Unknown ? "" : GuideText("AVOID", "ÉVITE", "AUSWEICHEN", "回避"),
         GuidanceKind.Stack => GuideText("STACK", "REGROUPE-TOI", "SAMMELN", "頭割り"),
         GuidanceKind.Spread => GuideText("SPREAD", "ÉCARTE-TOI", "VERTEILEN", "散開"),
         GuidanceKind.Soak => GuideText("SOAK TOWER", "PRENDS LA TOUR", "TURM BESCHREITEN", "塔に入る"),
@@ -352,7 +354,7 @@ public sealed partial class ForetellEngine
         GuidanceKind.Move => GuideText("MOVE", "BOUGE", "BEWEGEN", "移動"),
         GuidanceKind.Marker => GuideText("MARKER", "MARQUEUR", "MARKIERUNG", "マーカー"),
         _ when geometry != GeometryKind.Unknown || kind is MechanicKind.GroundAOE or MechanicKind.TargetedAOE => GuideText("AVOID", "ÉVITE", "AUSWEICHEN", "回避"),
-        _ => GuideText("WATCH", "SURVEILLE", "BEOBACHTEN", "注意")
+        _ => ""
     };
 
     private static string FriendlyMechanicLabel(MechanicKind kind, GeometryKind geometry) => kind switch

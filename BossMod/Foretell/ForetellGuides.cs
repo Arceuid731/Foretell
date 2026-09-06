@@ -51,7 +51,7 @@ public sealed partial class ForetellEngine
         }
         if (!_cfg.EnableGuides)
         {
-            _guideSummaries?.Update(null, GuideContentLanguage, false, inCombat, _cfg.GuideSummaryGpu, "");
+            _guideSummaries?.Update(null, GuideContentLanguage, false, inCombat && _cfg.GuidePauseInCombat, _cfg.GuideSummaryGpu, "");
             if (_guideIdentity != default || _guides.Snapshot.State != GuideState.Idle) { _guides.Cancel(); ResetGuideContext(); }
             return;
         }
@@ -70,12 +70,12 @@ public sealed partial class ForetellEngine
         if ((now - _guideSampleAt).TotalMilliseconds < 200 && now >= _guideSampleAt) return;
         _guideSampleAt = now; _guideMatches.Clear();
         _guideSummaries?.Update(pageSource?.Duty == _guideDuty || _guideDuty == null ? pageSource : null, GuideContentLanguage,
-            _cfg.GuideLocalSummaries, inCombat, _cfg.GuideSummaryGpu, _guideFrame.Boss?.Name ?? "", _cfg.GuideContextTokens, _cfg.GuideMemoryGiB, _cfg.GuideModelID);
+            _cfg.GuideLocalSummaries, inCombat && _cfg.GuidePauseInCombat, _cfg.GuideSummaryGpu, _guideFrame.Boss?.Name ?? "", _cfg.GuideContextTokens, _cfg.GuideMemoryGiB, _cfg.GuideModelID);
         _liveGuide = _guideSummaries?.Snapshot is { Prepared: { } prepared } analysis && prepared.Duty == _guideDuty
             && prepared.SourceHash == pageSource?.SourceHash && analysis.Language == GuideContentLanguage && analysis.ModelID == GuideModelCatalog.Get(_cfg.GuideModelID).ID
             ? prepared : null;
         if (_liveGuide == null) { _guideFrame = GuideCombatFrame.Empty; _guideSignals.Clear(); _guideInstantSignals.Clear(); _guidePendingActions.Clear(); }
-        if (_liveGuide == null || _guideDuty == null) return;
+        if (_guideDuty == null) return;
         ResolvePendingGuideActions(now);
         var player = _ws.Party[PartyState.PlayerSlot];
         List<GuideActorState> actors = [];
@@ -84,16 +84,18 @@ public sealed partial class ForetellEngine
             if (actor.Type != ActorType.Enemy || actor.IsAlly || actor.NameID == 0 || actor.IsDestroyed && !actor.IsDead) continue;
             var bossName = GuideSheetName("BNpcName", actor.NameID, false);
             if (bossName.Length == 0) continue;
+            actors.Add(new(actor.InstanceID, actor.OID, actor.NameID, bossName, actor.IsDead,
+                actor.InCombat || actor.CastInfo != null, player == null ? float.MaxValue : (actor.Position - player.Position).Length()));
+            if (_liveGuide == null) continue;
             var bosses = _liveGuide.Bosses.Where(boss => GuideNames.Boss(boss.Name) == GuideNames.Boss(bossName)).ToArray();
             if (bosses.Length != 1) continue;
             _guideBossNames[bosses[0].Name] = actor.NameID;
-            actors.Add(new(actor.InstanceID, actor.OID, actor.NameID, bossName, actor.IsDead,
-                actor.InCombat || actor.CastInfo != null, player == null ? float.MaxValue : (actor.Position - player.Position).Length()));
             if (MatchGuideActor(_liveGuide, _guideDuty, actor, now, (sheet, id) => GuideSheetName(sheet, id, false)) is not { } match) continue;
             _guideMatches.Add(match);
             _guideActionNames[(match.Boss.Name, match.Mechanic.Name)] = match.Cast.ActionID;
         }
         _guideEncounter.Update(_liveGuide, actors, false);
+        if (_liveGuide == null) return;
         if (_guideEncounter.Frame is { Boss: { } ownerBoss, Upcoming: false, Ambiguous: false })
         {
             var owners = actors.Where(actor => !actor.Dead && GuideNames.Boss(actor.EnglishName) == GuideNames.Boss(ownerBoss.Name)).Select(actor => actor.ID).ToHashSet();

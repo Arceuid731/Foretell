@@ -17,6 +17,7 @@ internal static class GuidePageAnalysisTests
         Check(GuideModelCatalog.Profiles.Select(profile => profile.ID).Distinct().Count() == 3 && GuideModelCatalog.Profiles.All(profile => profile.Asset.Hash.Length == 64 && profile.MaximumContext >= 32768), "Model catalog lacks three pinned profiles");
         var profile = GuideModelCatalog.Get(GuideModelCatalog.DefaultID);
         VerifyEvidenceAndConditions(source, profile);
+        await VerifyDuskVigilSources(profile);
         using var model = new PageModel();
         GuideDocument? partial = null;
         var prepared = await GuidePageAnalysis.Compile(source, GuideLanguage.French, profile, 32768, model, (_, _) => { }, CancellationToken.None, ready => partial = ready);
@@ -104,6 +105,102 @@ internal static class GuidePageAnalysisTests
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (!condition()) await Task.Delay(10, timeout.Token);
+    }
+
+    private static async Task VerifyDuskVigilSources(GuideModelProfile profile)
+    {
+        var duty = new GuideDuty(1, 1366, "The Dusk Vigil");
+        var wiki = string.Join('\n', DuskVigilModel.Names.Zip(DuskVigilModel.Passages, (name, passages) => name + "\n" + string.Join('\n', passages)));
+        var workbook = """
+            {"Worksheet":"HW Leveling","CellFields":["coordinate","visualStyle","text","formula (if present)"]}
+            ["E2",5,"First Boss"]
+            ["G2",5,"Second Boss"]
+            ["I2",5,"Third Boss"]
+            ["A3",16,"Dusk Vigil"]
+            ["I3",8,"* When the Whirlwind spawns in the middle, run behind a pile of rubble (LoS the Whirlwind)"]
+            """;
+        var source = GuideSourceAssembly.Combine(duty, new(
+            [new("Console Games Wiki", "https://ffxiv.consolegameswiki.com/mediawiki/index.php?title=The%20Dusk%20Vigil&oldid=1490396", wiki, wiki, "html"),
+                new("Community Workbook", "https://docs.google.com/spreadsheets/d/1MX0RjPS4gtT6YI5Szxlsin9hcaohnEQQC7zNdrDHBrQ/edit", workbook, workbook, "xlsx")],
+            [new("Console Games Wiki", "Ready", "https://ffxiv.consolegameswiki.com/"),
+                new("Community Workbook", "Ready", "https://docs.google.com/"),
+                new("Raven's Reminders", "Unavailable", "https://ravensreminders.com/tldr-guides/", "403 (Forbidden)")]), DateTime.UtcNow);
+        using var model = new DuskVigilModel();
+        var partials = new List<GuideDocument>();
+        var prepared = await GuidePageAnalysis.Compile(source, GuideLanguage.English, profile, 32768, model, (_, _) => { }, CancellationToken.None, partials.Add);
+        Check(model.OutlineCalls == 1 && model.DetailCalls == 6, "Multiple source excerpts created separate bosses or repeated detail analysis");
+        Check(prepared.Bosses.Select(boss => boss.Name).SequenceEqual(DuskVigilModel.Names), "Ordinal source mapping changed the named encounter roster/order");
+        Check(partials.Count == 3 && partials.All(document => document.Bosses.Select(boss => boss.Name).SequenceEqual(DuskVigilModel.Names)),
+            "Partial analysis lost/reordered unprepared boss placeholders");
+        Check(partials[0].Bosses[0].Phases.Sum(phase => phase.Mechanics.Length) == 1 && partials[0].Bosses[2].Phases.Length == 0
+            && !GuidePageAnalysis.ValidPrepared(partials[0], source, GuideLanguage.English, profile), "First completed boss was mistaken for a fully prepared guide");
+        Check(GuidePageAnalysis.ValidPrepared(prepared, source, GuideLanguage.English, profile), "Complete mixed-source Dusk Vigil fixture failed cache validation");
+        var opinicus = prepared.Bosses[2];
+        var mechanics = opinicus.Phases.SelectMany(phase => phase.Mechanics).ToArray();
+        Check(mechanics.Select(mechanic => mechanic.Name).SequenceEqual(DuskVigilModel.Abilities[2]), "Third boss lost a named ability or merged two rubble mechanics");
+        var whirl = mechanics.Single(mechanic => mechanic.Name == "Whirling Gaol");
+        Check(whirl.Advice!.Cue == "Hide behind a pile of rubble" && whirl.Advice.Evidence.Contains(DuskVigilModel.WorkbookWhirlwind),
+            "Anonymous Third Boss strategy did not survive in the named boss instruction");
+        Check(GuideSourceAssembly.EvidenceSources(prepared, whirl.Advice).Select(page => page.Provider).ToHashSet()
+            .SetEquals(["Console Games Wiki", "Community Workbook"]), "Combined third-boss instruction lost its separate source provenance");
+        var now = DateTime.UtcNow;
+        foreach (var mechanic in mechanics)
+        {
+            var cast = new GuideCast(duty, 1, 2, 3, "Opinicus", 4, mechanic.Name, now.AddSeconds(4));
+            Check(GuideSynchronization.Match(prepared, cast, now)?.Mechanic == mechanic
+                && GuideSynchronization.Match(prepared, cast with { BossName = "Ser Yuhelmeric" }, now) == null,
+                "Third-boss source mechanics failed exact live matching or leaked to another boss");
+        }
+        Console.WriteLine("Dusk Vigil source contract: ordinal workbook context, named roster, partial coverage and distinct third-boss cast cues passed (stub model).");
+    }
+
+    private sealed class DuskVigilModel : IGuideSummaryModel
+    {
+        public static readonly string[] Names = ["Towering Oliphant", "Ser Yuhelmeric", "Opinicus"];
+        public static readonly string[][] Abilities = [["Trunk Tawse"], ["Skullsplinter"], ["Golden Talons", "Alpine Draft", "Freefall", "Whirling Gaol", "Winds of Winter"]];
+        public static readonly string[][] Passages =
+        [
+            ["Trunk Tawse: Telegraphed physical tankbuster."],
+            ["Skullsplinter: Telegraphed physical tankbuster."],
+            ["Golden Talons: Telegraphed physical tankbuster.",
+                "[Alpine Draft] [Alpine Draft] [Alpine Draft] Alpine Draft: Telegraphed line AoE at a random player.",
+                "Freefall: Opinicus turns to face one player and jumps on them in a large telegraphed AoE.",
+                "Whirling Gaol: the outer sides of the room will start pushing you in towards the center, where you will be inflicted with Fetters, then receive a [Wind Resistance Down] [Wind Resistance Down] Wind Resistance Down stack and some damage. Hiding behind some of the crumbled masonry in the room will prevent you from being pushed into the center.",
+                "Winds of Winter: Room-wide AoE attack for moderate damage, and stacks [Wind Resistance Down] [Wind Resistance Down] Wind Resistance Down on anyone struck. Avoid by standing so there is a pile of rubble between you and the boss. This attack will destroy all piles of rubble, and new ones will fall from the ceiling."]
+        ];
+        public const string WorkbookWhirlwind = "* When the Whirlwind spawns in the middle, run behind a pile of rubble (LoS the Whirlwind)";
+        public int OutlineCalls;
+        public int DetailCalls;
+        public GuideModelRuntime Runtime => new();
+        public Task Start(Action<GuideModelProgress> progress, CancellationToken cancellation) => Task.CompletedTask;
+        public Task<string> Summarize(string source, GuideLanguage language, CancellationToken cancellation) => throw new Exception("Legacy source cutting used");
+        public Task<string> Analyze(string system, string source, object schema, int outputTokens, CancellationToken cancellation)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if (system.StartsWith("Read the ENTIRE"))
+            {
+                ++OutlineCalls;
+                Check(Names.All(source.Contains) && source.Contains("[\"I2\",5,\"Third Boss\"]")
+                    && source.Contains("[\"I3\",8,\"" + WorkbookWhirlwind + "\"]"), "Outline model did not receive named roster and untouched ordinal worksheet context together");
+                var bosses = Names.Select((name, index) => new { name, passages = Passages[index] })
+                    .Append(new { name = "Opinicus", passages = new[] { WorkbookWhirlwind } });
+                return Task.FromResult(JsonSerializer.Serialize(new { bosses }));
+            }
+            ++DetailCalls;
+            var bossIndex = Array.FindIndex(Names, name => source.StartsWith("Boss: " + name + "\n", StringComparison.Ordinal));
+            Check(bossIndex >= 0, "Detail analysis received an anonymous/unknown boss");
+            Check(source.Contains(WorkbookWhirlwind) == (bossIndex == 2), "Ordinal Third Boss passage was omitted or passed to another boss");
+            var name = Names[bossIndex];
+            var cues = bossIndex == 2 ? new[] { "Tank: mitigate", "Dodge the line", "Move out of the marked area", "Hide behind a pile of rubble", "Hide behind rubble from the boss" } : ["Tank: mitigate"];
+            var mechanics = Abilities[bossIndex].Select((ability, index) => new
+            {
+                name = ability, displayName = ability, cue = cues[index], description = cues[index], triggerKind = "cast", triggerName = ability,
+                evidence = bossIndex == 2 && ability == "Whirling Gaol" ? new[] { "4", "6" } : [(index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)],
+                responses = Array.Empty<GuideResponse>()
+            });
+            return Task.FromResult(JsonSerializer.Serialize(new { summary = "Prepare for the next boss.", bosses = new[] { new { name, displayName = name, summary = "Prepare for the next boss.", mechanics } } }));
+        }
+        public void Dispose() { }
     }
 
     private static void VerifyEvidenceAndConditions(GuideDocument source, GuideModelProfile profile)

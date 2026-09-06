@@ -36,6 +36,7 @@ internal static class Program
     {
         OverlayDemoTests.Run();
         GuideListFlowTests.Run();
+        GuidePauseTests.Run();
         var at = new DateTime(2026, 9, 5, 12, 0, 0, DateTimeKind.Utc);
         var context = new DecisionContextSnapshot
         {

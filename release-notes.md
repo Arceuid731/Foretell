@@ -1,9 +1,9 @@
-# Foretell 0.13.2 — readable mechanic lists and boss phases
+# Foretell 0.13.3 — guide preparation and boss tracking
 
-- Remove mechanic-list pagination. Rows flow into balanced columns, with separate name/action lines, role icons, text shadows and repeatable active highlights. Very constrained layouts scroll automatically and bring active rows into view; conditional alternatives are not truncated.
-- Customize list text size, column width, spacing, heading/name/instruction/highlight colors and optional background opacity under Display.
-- Let local AI identify documented phases and phase-specific mechanics from complete guides. Follow phases established by observed boss mechanics; retain common and active mechanics, and keep the full reference when the phase is unknown. Matching continues across the entire boss reference so transitions remain detectable. Demo mode also previews phase filtering.
-- Reuse a prepared guide when entering its instance. Ignore workbook view/selection metadata when deciding whether analysis content changed, retain verified sources through temporary provider failures, and check for source updates in the background. Real content changes and explicit reanalysis remain supported.
-- Preserve older source and prepared caches after integrity checks. Existing guides are not automatically reanalyzed just to add phase metadata: use Reanalyze once if you want phases for an older guide. Guides without documented phases remain usable.
+- Guide analysis now continues during combat by default. Enable **Pause analysis during combat** under Local AI if preferred.
+- When pausing, keep completed bosses, responses and progress. Only an interrupted request needs to restart.
+- Remember defeated enemies even while the guide is still preparing. The mechanic list follows the remaining bosses instead of returning to a boss already defeated.
+- Show preparation status for bosses whose mechanics are not ready yet, rather than displaying an empty mechanic count.
+- Display the observed spell name instead of a generic “WATCH” alert when no specific instruction is available. Prepared guide instructions still take priority.
 
-Generated instructions and phase assignments can still be incomplete or mistaken. This update does not certify every strategy.
+Validated with automated source, combat-lifecycle, pause/resume and overlay tests. Live in-game acceptance remains to be checked.

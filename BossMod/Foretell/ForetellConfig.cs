@@ -76,6 +76,7 @@ public sealed class ForetellConfig : ConfigNode
     public bool GuideChecklistUnlocked;
     public bool GuideCentralAlerts = true;
     public bool GuideLocalSummaries = true;
+    public bool GuidePauseInCombat;
     public bool GuideSummaryGpu = true;
     public string GuideModelID = GuideModelCatalog.DefaultID;
     public int GuideContextTokens = GuideModelLimits.DefaultContext;

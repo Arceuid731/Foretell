@@ -93,6 +93,11 @@ public sealed partial class ForetellEngine
             DrawGuideOverlayLine((frame.Upcoming ? GuideText("Upcoming: ", "À venir : ", "Als Nächstes: ", "次：") : "") + GuideBossName(boss), _cfg.GuideHeaderColor);
             if (ImGui.IsItemHovered()) DrawGuideHeaderTooltip(boss);
             if (ImGui.IsItemClicked() && _demoFrame == null) _guideEntryDismissed = false;
+            if (_demoFrame == null && boss.Phases.Length == 0 && _guideSummaries?.Snapshot is { Stage: not "Ready" })
+            {
+                DrawGuideSummaryProgress();
+                return;
+            }
             var phaseName = frame.KnownPhase?.Name ?? "";
             DrawGuideOverlayLine((phaseName.Length > 0 ? phaseName + " · " : "") + GuideText($"{rows.Length} mechanics", $"{rows.Length} mécaniques", $"{rows.Length} Mechaniken", $"{rows.Length}ギミック")
                 + (layout.Height > available.Y ? " · " + GuideText("auto-scroll", "défilement auto", "automatischer Bildlauf", "自動スクロール") : ""), _cfg.GuideTextColor);

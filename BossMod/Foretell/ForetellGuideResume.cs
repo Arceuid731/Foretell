@@ -20,12 +20,12 @@ internal sealed class GuideResumableModel(IGuideSummaryModel model, GuideAnalysi
         var key = GuideNames.Hash(JsonSerializer.Serialize(new { system, source, schema, outputTokens }));
         if (memory.Responses.TryGetValue(key, out var response)) return response;
         response = await model.Analyze(system, source, schema, outputTokens, cancellation).ConfigureAwait(false);
-        cancellation.ThrowIfCancellationRequested();
         if (memory.Responses.Count < 512 && memory.Characters + response.Length <= 4 * 1024 * 1024)
         {
             memory.Responses[key] = response;
             memory.Characters += response.Length;
         }
+        cancellation.ThrowIfCancellationRequested();
         return response;
     }
     public void Dispose() => model.Dispose();

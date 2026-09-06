@@ -34,6 +34,8 @@ public sealed partial class ForetellEngine
         && snapshot.SourceHash == _guides?.Snapshot.Document?.SourceHash && snapshot.Language == GuideContentLanguage
         && snapshot.ModelID == GuideModelCatalog.Get(_cfg.GuideModelID).ID ? document : null;
 
+    private bool GuideAnalysisPaused => _guideCombat && _cfg.GuidePauseInCombat;
+
     internal static string GuideModelStageLabel(GuideModelStage stage, GuideLanguage language) => GuidePreparation.Local(language,
         stage switch
         {
@@ -136,14 +138,15 @@ public sealed partial class ForetellEngine
             ImGui.TextDisabled(GuideText($"Analysis time: {elapsed:F0}s", $"Temps d’analyse : {elapsed:F0}s", $"Analysezeit: {elapsed:F0}s", $"解析時間：{elapsed:F0}秒"));
         }
         changed |= ImGui.Checkbox(GuideText("Prepare guides automatically", "Préparer les guides automatiquement", "Anleitungen automatisch vorbereiten", "攻略を自動準備"), ref _cfg.GuideLocalSummaries);
+        changed |= ImGui.Checkbox(GuideText("Pause analysis during combat", "Mettre l’analyse en pause en combat", "Analyse im Kampf pausieren", "戦闘中は解析を一時停止"), ref _cfg.GuidePauseInCombat);
         changed |= ImGui.Checkbox(GuideText("Use graphics card", "Utiliser la carte graphique", "Grafikkarte verwenden", "GPUを使用"), ref _cfg.GuideSummaryGpu);
-        ImGui.BeginDisabled(_guideCombat || _guides?.Snapshot.Document == null);
+        ImGui.BeginDisabled(GuideAnalysisPaused || _guides?.Snapshot.Document == null);
         if (ImGui.Button(GuideText("Analyze again", "Relancer l’analyse", "Erneut analysieren", "再解析"))) _guideSummaries?.Retry(true);
         ImGui.EndDisabled();
-        if (_guideCombat) ImGui.TextDisabled(GuideText("Analysis resumes after combat.", "L’analyse reprend après le combat.", "Analyse wird nach dem Kampf fortgesetzt.", "戦闘後に解析を再開。"));
+        if (GuideAnalysisPaused) ImGui.TextDisabled(GuideText("Analysis resumes after combat.", "L’analyse reprend après le combat.", "Analyse wird nach dem Kampf fortgesetzt.", "戦闘後に解析を再開。"));
         if (ImGui.CollapsingHeader(GuideText("Performance", "Performances", "Leistung", "性能")))
         {
-            ImGui.BeginDisabled(_guideCombat);
+            ImGui.BeginDisabled(GuideAnalysisPaused);
             changed |= ImGui.SliderInt(GuideText("Maximum RAM (GiB)", "RAM maximale (Gio)", "Maximaler RAM (GiB)", "最大RAM（GiB）"), ref _cfg.GuideMemoryGiB, 4, 12);
             if (ImGui.BeginCombo(GuideText("Maximum context", "Contexte maximal", "Maximaler Kontext", "最大コンテキスト"), $"{_cfg.GuideContextTokens / 1024}K"))
             {

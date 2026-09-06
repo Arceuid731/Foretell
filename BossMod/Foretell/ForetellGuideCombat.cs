@@ -186,6 +186,8 @@ internal static class GuideCentralPresentation
 
 internal sealed class GuideEncounterTracker
 {
+    private readonly GuideEncounterProgress _progress = new();
+    private GuideDuty? _duty;
     private readonly HashSet<string> _completed = [];
     private readonly HashSet<(string Boss, string Phase, string Mechanic)> _resolved = [];
     private readonly Dictionary<ulong, GuideActorState> _participants = [];
@@ -199,6 +201,12 @@ internal sealed class GuideEncounterTracker
 
     public void Reset()
     {
+        _progress.Reset(); _duty = null;
+        ResetDocument();
+    }
+
+    private void ResetDocument()
+    {
         _completed.Clear(); _resolved.Clear(); _participants.Clear(); _boss = null; _engaged = false;
         Frame = GuideCombatFrame.Empty;
         _documentHash = "";
@@ -208,6 +216,7 @@ internal sealed class GuideEncounterTracker
 
     public void Wipe()
     {
+        _progress.Wipe();
         _resolved.Clear(); _participants.Clear(); _engaged = false;
         _waitingForReset = true;
         ResetPhase();
@@ -222,6 +231,7 @@ internal sealed class GuideEncounterTracker
 
     public void ObserveDeath(ulong actorID, uint oid, uint nameID)
     {
+        _progress.ObserveDeath(actorID, oid, nameID);
         if (_participants.TryGetValue(actorID, out var actor) && actor.OID == oid && actor.NameID == nameID)
         {
             _participants[actorID] = actor with { Dead = true, Engaged = false };
@@ -236,11 +246,20 @@ internal sealed class GuideEncounterTracker
         Frame = Frame with { KnownPhase = null };
     }
 
-    public GuideCombatFrame Update(GuideDocument document, IReadOnlyList<GuideActorState> actors, bool partyWiped)
+    public GuideCombatFrame Update(GuideDocument? document, IReadOnlyList<GuideActorState> actors, bool partyWiped)
     {
-        var identity = document.SourceHash + document.ModelRevision + document.AnalysisLanguage;
-        if (_documentHash != identity) { Reset(); _documentHash = identity; }
-        if (_boss != null)
+        if (document != null)
+        {
+            var identity = document.SourceHash + document.ModelRevision + document.AnalysisLanguage;
+            if (_duty != null && _duty != document.Duty) Reset();
+            if (_documentHash != identity)
+            {
+                var waitingForReset = _waitingForReset;
+                ResetDocument(); _documentHash = identity; _waitingForReset = waitingForReset;
+            }
+            _duty = document.Duty;
+        }
+        if (_boss != null && document != null)
         {
             var current = document.Bosses.FirstOrDefault(boss => boss.Name == _boss.Name);
             if (!ReferenceEquals(current, _boss)) ResetPhase();
@@ -252,6 +271,9 @@ internal sealed class GuideEncounterTracker
             if (actors.Any(actor => actor.Engaged && !actor.Dead)) return Frame;
             _waitingForReset = false;
         }
+        _progress.Observe(actors);
+        if (document == null) return Frame = GuideCombatFrame.Empty;
+        _completed.UnionWith(_progress.Completed(document));
         var identified = actors.Select(actor => (Actor: actor, Matches: document.Bosses.Where(boss => GuideNames.Boss(boss.Name) == GuideNames.Boss(actor.EnglishName)).ToArray()))
             .Where(entry => entry.Matches.Length == 1).Select(entry => (entry.Actor, Boss: entry.Matches[0])).ToArray();
         if (_boss != null && _engaged)

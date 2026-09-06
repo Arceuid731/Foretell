@@ -28,6 +28,7 @@ internal sealed record GuideCaptureOptions(ForetellMode Mode, bool Enabled, bool
     public int MemoryGiB { get; init; }
     public string ModelID { get; init; } = "";
     public bool CurrentPhaseOnly { get; init; }
+    public bool PauseAnalysisInCombat { get; init; }
 }
 internal sealed record GuideCaptureLayout(bool Unlocked, float PositionX, float PositionY, float Width, float Height,
     uint TextColor, uint ActiveColor, uint ResolvedColor, uint UnresolvedColor, float AlertPositionX, float AlertPositionY);
