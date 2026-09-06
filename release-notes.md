@@ -1,9 +1,9 @@
-# Foretell 0.13.3 — guide preparation and boss tracking
+# Foretell 0.13.4 — analysis logs and reliable phase fallback
 
-- Guide analysis now continues during combat by default. Enable **Pause analysis during combat** under Local AI if preferred.
-- When pausing, keep completed bosses, responses and progress. Only an interrupted request needs to restart.
-- Remember defeated enemies even while the guide is still preparing. The mechanic list follows the remaining bosses instead of returning to a boss already defeated.
-- Show preparation status for bosses whose mechanics are not ready yet, rather than displaying an empty mechanic count.
-- Display the observed spell name instead of a generic “WATCH” alert when no specific instruction is available. Prepared guide instructions still take priority.
+- Open **Local AI → Analysis log** to inspect prompts, responses, request durations, tokens, retries, validation errors and engine messages. Recording is enabled by default and can be disabled.
+- Keep recent logs across restarts, including manual preparation outside an instance. Export a standalone diagnostic ZIP directly from the log window.
+- Show the current analysis step and a useful error message when preparation fails. The log window is resizable.
+- Keep validated mechanics when the model supplies invalid optional phase references, instead of repeatedly rebuilding and rejecting the whole boss guide. Uncertain phase filtering is disabled; mechanic evidence and instructions still require validation.
+- Preserve partial failed responses and HTTP errors in diagnostics; enforce request timeouts through the complete response read.
 
-Validated with automated source, combat-lifecycle, pause/resume and overlay tests. Live in-game acceptance remains to be checked.
+Existing prepared guides remain usable. Retry a previously failed analysis after updating.

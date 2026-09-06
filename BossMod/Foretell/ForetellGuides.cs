@@ -40,6 +40,7 @@ public sealed partial class ForetellEngine
     private void UpdateGuides(DateTime now, bool inCombat)
     {
         if (_guides == null) return;
+        if (_guideSummaries != null) _guideSummaries.CaptureConversation = _cfg.GuideDebugConversation;
         _guideCombat = inCombat;
         if ((now - _guideNameBudgetAt).TotalMilliseconds >= 200 || now < _guideNameBudgetAt)
         {

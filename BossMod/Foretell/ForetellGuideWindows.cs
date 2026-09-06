@@ -100,18 +100,31 @@ public sealed partial class ForetellEngine
     private void DrawGuideSummaryProgress(GuideDocument? document = null)
     {
         document ??= _guides?.Snapshot.Document;
-        if (_guideSummaries?.Snapshot is not { } snapshot || snapshot.SourceHash != document?.SourceHash || snapshot.Language != GuideContentLanguage) return;
+        if (document == null || _guideSummaries?.Snapshot is not { } snapshot || snapshot.SourceHash != document.SourceHash || snapshot.Language != GuideContentLanguage) return;
+        var report = _guideSummaries.Diagnostics.Reports.FirstOrDefault(candidate => candidate.Duty == document.Duty
+            && candidate.ModelID == snapshot.ModelID && candidate.SourceHash == snapshot.SourceHash);
+        var failed = snapshot.Stage is "Failed" or "CacheWriteFailed" || snapshot.Stage.StartsWith("Unavailable", StringComparison.Ordinal);
         var stage = snapshot.Stage switch
         {
             "Ready" => GuideText("Guide ready", "Guide prêt", "Anleitung bereit", "攻略準備完了"),
+            "ReadyWithUnresolved" => GuideText("Guide partly ready", "Guide partiellement prêt", "Anleitung teilweise bereit", "攻略の一部が準備完了"),
             "PausedInCombat" => GuideText("Analysis paused during combat", "Analyse en pause pendant le combat", "Analyse im Kampf pausiert", "戦闘中は解析を一時停止"),
             "InstallingOrStarting" => GuideModelStageLabel(_guideSummaries.Runtime.Stage, GuideClientLanguage),
-            "Analyzing" or "Summarizing" => GuideText("Analyzing guide…", "Analyse du guide…", "Anleitung analysieren…", "攻略を解析中…"),
-            "Queued" => GuideText("Waiting to analyze", "Analyse en attente", "Analyse vorgemerkt", "解析待ち"),
             "PreparationDisabled" => GuideText("Enable preparation in Local AI to read this guide.", "Active la préparation dans IA locale pour lire ce guide.", "Vorbereitung unter Lokale KI aktivieren.", "ローカルAIで準備を有効にしてください。"),
-            _ => GuideText("Analysis failed. Retry in Local AI.", "L’analyse a échoué. Relance-la dans IA locale.", "Analyse fehlgeschlagen. Unter Lokale KI erneut versuchen.", "解析に失敗。ローカルAIで再試行。")
+            _ when failed => GuideText("Analysis failed. Retry in Local AI.", "L’analyse a échoué. Relance-la dans IA locale.", "Analyse fehlgeschlagen. Unter Lokale KI erneut versuchen.", "解析に失敗。ローカルAIで再試行。"),
+            "Analyzing" or "Summarizing" when report is { FinishedAt: null, Stage: not "Interrupted" } => GuideAnalysisStepLabel(report.Stage)
+                + (report.Boss.Length > 0 ? " · " + report.Boss : "") + (report.Attempt > 1 ? " · " + GuideAnalysisAttemptLabel(report.Attempt) : ""),
+            _ => GuideAnalysisStepLabel(snapshot.Stage)
         };
         ImGui.TextWrapped(stage);
+        if (failed && snapshot.LastIssue is { Length: > 0 } issue)
+            DrawGuideJournalText(GuideJournalShortText(issue, 200));
+        if (failed && report != null && ImGui.SmallButton(GuideText("View analysis log", "Voir le journal d’analyse", "Analyseprotokoll anzeigen", "解析ログを表示") + "###FailedGuideJournal"))
+        {
+            _guideJournalReportID = report.ID;
+            _guideJournalCallIndex = -1;
+            _guideJournalOpen = true;
+        }
         if (snapshot.Stage == "Analyzing" && snapshot.Total > 0) ImGui.ProgressBar((float)snapshot.Completed / snapshot.Total, new(-1, 0));
         if (snapshot.RemainingSeconds is { } remaining && remaining > 1) ImGui.TextDisabled(GuideText($"About {remaining:F0}s remaining", $"Encore environ {remaining:F0}s", $"Noch etwa {remaining:F0}s", $"残り約{remaining:F0}秒"));
         if (snapshot.Transfer is { Total: > 0 } transfer)

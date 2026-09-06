@@ -68,6 +68,7 @@ public sealed partial class ForetellEngine
 
     private void DrawGuideModelStatus(bool details)
     {
+        DrawGuideJournalWindow();
         var runtime = _guideSummaries?.Runtime ?? new();
         var active = runtime.Stage is not (GuideModelStage.Unloaded or GuideModelStage.Failed);
         if (!details && !active && runtime.ModelID != GuideModelCatalog.Get(_cfg.GuideModelID).ID)
@@ -144,6 +145,7 @@ public sealed partial class ForetellEngine
         if (ImGui.Button(GuideText("Analyze again", "Relancer l’analyse", "Erneut analysieren", "再解析"))) _guideSummaries?.Retry(true);
         ImGui.EndDisabled();
         if (GuideAnalysisPaused) ImGui.TextDisabled(GuideText("Analysis resumes after combat.", "L’analyse reprend après le combat.", "Analyse wird nach dem Kampf fortgesetzt.", "戦闘後に解析を再開。"));
+        DrawGuideAnalysisLogSettings();
         if (ImGui.CollapsingHeader(GuideText("Performance", "Performances", "Leistung", "性能")))
         {
             ImGui.BeginDisabled(GuideAnalysisPaused);

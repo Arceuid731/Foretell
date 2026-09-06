@@ -46,6 +46,9 @@ internal static class GuideOverlayTests
                 if (frame > 0) Check(ImGui.GetDrawData().TotalVtxCount > 0, "Overlay submitted no text geometry");
             }
             Check(!ForetellEngine.GuideEntryFlags.HasFlag(ImGuiWindowFlags.NoSavedSettings), "Entry summary cannot retain its layout");
+            Check(ForetellEngine.GuideJournalFlags.HasFlag(ImGuiWindowFlags.NoFocusOnAppearing)
+                && !ForetellEngine.GuideJournalFlags.HasFlag(ImGuiWindowFlags.AlwaysAutoResize)
+                && !ForetellEngine.GuideJournalFlags.HasFlag(ImGuiWindowFlags.NoResize), "Analysis journal steals focus or prevents resizing");
             foreach (var scale in new[] { .7f, 1.4f, 3f })
             {
                 ImGui.NewFrame();

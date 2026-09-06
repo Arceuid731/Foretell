@@ -12,10 +12,16 @@ namespace BossMod.Foretell;
 
 internal sealed record GuideModelProgress(string Stage, long Received = 0, long Total = 0, double? RemainingSeconds = null);
 internal sealed record GuideModelAsset(string Name, string Url, long Bytes, string Hash);
+internal sealed record GuideModelExchange(string System, string Source, string Response, string Reasoning, string FinishReason,
+    int? PromptTokens, int? OutputTokens, string Error, double Seconds, string State)
+{
+    public string RequestJson { get; init; } = "";
+}
 
 internal interface IGuideSummaryModel : IDisposable
 {
     GuideModelRuntime Runtime { get; }
+    Action<GuideModelExchange>? ExchangeTrace { get => null; set { } }
     Task Start(Action<GuideModelProgress> progress, CancellationToken cancellation);
     Task<string> Summarize(string source, GuideLanguage language, CancellationToken cancellation);
     Task<string> Analyze(string system, string source, object schema, int outputTokens, CancellationToken cancellation)
@@ -36,12 +42,21 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
     private Process? _process;
     private GuideProcessBudget? _budget;
     private HttpClient? _client;
+    private string _authorizationSecret = "";
     private bool _useGpu = gpu;
     private readonly GuideModelProfile _profile = GuideModelCatalog.Get(modelID);
     private readonly int _contextTokens = Math.Min(GuideModelLimits.Context(contextTokens), GuideModelCatalog.Get(modelID).MaximumContext);
     private volatile GuideModelRuntime _runtime = new(ModelID: GuideModelCatalog.Get(modelID).ID);
     public GuideModelRuntime Runtime => _runtime;
+    public Action<GuideModelExchange>? ExchangeTrace { get; set; }
     internal int? ProcessID => _process?.Id;
+
+    internal ForetellGuideLocalModel(HttpClient client, int contextTokens = GuideModelLimits.DefaultContext)
+        : this("", false, contextTokens)
+    {
+        _client = client;
+        _authorizationSecret = client.DefaultRequestHeaders.Authorization?.Parameter ?? "";
+    }
 
     private void UpdateRuntime(Func<GuideModelRuntime, GuideModelRuntime> update)
     {
@@ -201,6 +216,7 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         var key = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        _authorizationSecret = key;
         var start = new ProcessStartInfo(executable)
         {
             WorkingDirectory = Path.GetDirectoryName(executable)!, UseShellExecute = false, CreateNoWindow = true,
@@ -221,8 +237,8 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
             _process.EnableRaisingEvents = true;
             _budget = new(_process, GuideModelLimits.MemoryGiB(memoryGiB));
             _process.PriorityClass = ProcessPriorityClass.BelowNormal;
-            _process.OutputDataReceived += (_, data) => TraceRuntime(data.Data);
-            _process.ErrorDataReceived += (_, data) => TraceRuntime(data.Data);
+            _process.OutputDataReceived += (_, data) => TraceRuntime(data.Data, key);
+            _process.ErrorDataReceived += (_, data) => TraceRuntime(data.Data, key);
             _process.BeginOutputReadLine(); _process.BeginErrorReadLine();
             _client = new(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false })
             { BaseAddress = new($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromMinutes(4) };
@@ -272,104 +288,180 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
             temperature = 0, max_tokens = GuideModelLimits.OutputTokens, stream = false,
             response_format = new { type = "json_object", schema = new { type = "object", properties = new { summary = new { type = "string", maxLength = 1600 } }, required = new[] { "summary" }, additionalProperties = false } }
         };
-        Stage(GuideModelStage.Tokenizing);
-        var promptTokens = await CountPromptTokens(_client, body.messages, cancellation).ConfigureAwait(false);
-        UpdateRuntime(previous => previous with { PromptTokens = promptTokens });
-        if (!GuideModelLimits.Fits(promptTokens, _contextTokens))
-        {
-            Stage(GuideModelStage.Loaded);
-            throw new InvalidDataException($"Context overflow: {promptTokens} prompt + {GuideModelLimits.OutputTokens + GuideModelLimits.TemplateReserve} reserved > {_contextTokens}. Source retained without truncation.");
-        }
-        Stage(GuideModelStage.Generating);
-        using var request = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
-        using var response = await _client.PostAsync("v1/chat/completions", request, cancellation).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        if (response.Content.Headers.ContentLength > 65536) throw new InvalidDataException("Oversized local summary response.");
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellation).ConfigureAwait(false);
-        using var limited = new MemoryStream();
-        var chunk = new byte[4096];
-        while (true)
-        {
-            var read = await stream.ReadAsync(chunk, cancellation).ConfigureAwait(false);
-            if (read == 0) break;
-            if (limited.Length + read > 65536) throw new InvalidDataException("Oversized local summary response.");
-            limited.Write(chunk, 0, read);
-        }
-        using var envelope = JsonDocument.Parse(limited.ToArray());
-        var choice = envelope.RootElement.GetProperty("choices")[0];
-        if (choice.GetProperty("finish_reason").GetString() != "stop") throw new InvalidDataException("Truncated summary rejected.");
-        using var parsed = JsonDocument.Parse(choice.GetProperty("message").GetProperty("content").GetString()!);
+        var output = await Complete(body.messages[0].content, source, body.messages, body, GuideModelLimits.OutputTokens, 65536, cancellation).ConfigureAwait(false);
+        using var parsed = JsonDocument.Parse(output);
         var summary = parsed.RootElement.GetProperty("summary").GetString() ?? "";
-        Stage(GuideModelStage.Loaded);
         if (!GuideSummaryValidation.Accept(summary, source) || !GuideSummaryValidation.LanguageAndConditions(summary, source, language))
             throw new InvalidDataException("Ungrounded or untranslated summary rejected.");
         return summary;
     }
 
-    internal static async Task<int> CountPromptTokens(HttpClient client, object messages, CancellationToken cancellation)
+    internal static async Task<int> CountPromptTokens(HttpClient client, object messages, CancellationToken cancellation, Action<string>? failureTrace = null)
     {
-        using var template = await PostJson(client, "apply-template", new { messages, add_generation_prompt = true }, 2 * 1024 * 1024, cancellation).ConfigureAwait(false);
-        var prompt = template.RootElement.GetProperty("prompt").GetString();
-        if (string.IsNullOrEmpty(prompt)) throw new InvalidDataException("Empty model chat template.");
-        using var tokens = await PostJson(client, "tokenize", new { content = prompt, add_special = true, parse_special = true }, 8 * 1024 * 1024, cancellation).ConfigureAwait(false);
-        return tokens.RootElement.GetProperty("tokens").GetArrayLength();
+        var response = "";
+        void Capture(string body) => response = body.Length <= 16384 ? body : body[..16384];
+        try
+        {
+            using var template = await PostJson(client, "apply-template", new { messages, add_generation_prompt = true }, 2 * 1024 * 1024, cancellation, Capture).ConfigureAwait(false);
+            if (template.RootElement.ValueKind != JsonValueKind.Object || !template.RootElement.TryGetProperty("prompt", out var promptValue) || promptValue.ValueKind != JsonValueKind.String
+                || string.IsNullOrEmpty(promptValue.GetString())) throw new InvalidDataException("Local model apply-template returned an empty or invalid prompt.");
+            using var tokens = await PostJson(client, "tokenize", new { content = promptValue.GetString(), add_special = true, parse_special = true }, 8 * 1024 * 1024, cancellation, Capture).ConfigureAwait(false);
+            if (tokens.RootElement.ValueKind != JsonValueKind.Object || !tokens.RootElement.TryGetProperty("tokens", out var tokenValues) || tokenValues.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("Local model tokenize returned no token array.");
+            return tokenValues.GetArrayLength();
+        }
+        catch
+        {
+            try { failureTrace?.Invoke(response); }
+            catch (Exception) { }
+            throw;
+        }
     }
 
     internal Action<string, string>? AnalysisTrace { get; set; }
     internal Action<string>? RuntimeTrace { get; set; }
 
-    private void TraceRuntime(string? line)
+    private void TraceRuntime(string? line, string secret)
     {
         if (line == null) return;
-        try { RuntimeTrace?.Invoke(line); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        try { RuntimeTrace?.Invoke(Redact(line, secret)); }
+        catch (Exception) { }
     }
 
     public async Task<string> Analyze(string system, string source, object schema, int outputTokens, CancellationToken cancellation)
     {
-        if (_client == null) throw new InvalidOperationException("Model is not loaded.");
         if (_profile.Reasoning) outputTokens += 2560;
         system += "\nRequired JSON schema:\n" + JsonSerializer.Serialize(schema);
         var messages = new[] { new { role = "system", content = system }, new { role = "user", content = source } };
-        Stage(GuideModelStage.Tokenizing);
-        var count = await CountPromptTokens(_client, messages, cancellation).ConfigureAwait(false);
-        UpdateRuntime(previous => previous with { PromptTokens = count });
-        if (!GuideModelLimits.Fits(count, _contextTokens, outputTokens)) throw new GuideContextException(count, _contextTokens);
-        Stage(GuideModelStage.Generating);
+        return await Complete(system, source, messages, new
+        {
+            messages, temperature = 0, top_p = .95, top_k = 20, seed = 42, max_tokens = outputTokens, stream = false,
+            response_format = new { type = "json_object", schema }
+        }, outputTokens, 1024 * 1024, cancellation).ConfigureAwait(false);
+    }
+
+    private async Task<string> Complete(string system, string source, object messages, object body, int outputTokens, int responseLimit, CancellationToken cancellation)
+    {
+        var watch = Stopwatch.StartNew();
+        var exchange = new GuideModelExchange(system, source, "", "", "", null, null, "", 0, "Started") { RequestJson = JsonSerializer.Serialize(body) };
+        void Publish(string state, string error = "")
+        {
+            exchange = exchange with { State = state, Error = error, Seconds = watch.Elapsed.TotalSeconds };
+            try { ExchangeTrace?.Invoke(exchange with { Response = Redact(exchange.Response, _authorizationSecret), Reasoning = Redact(exchange.Reasoning, _authorizationSecret) }); }
+            catch (Exception) { }
+        }
+        Publish("Started");
         try
         {
-            using var envelope = await PostJson(_client, "v1/chat/completions", new
+            cancellation.ThrowIfCancellationRequested();
+            var client = _client ?? throw new InvalidOperationException("Model is not loaded.");
+            Stage(GuideModelStage.Tokenizing);
+            var count = await CountPromptTokens(client, messages, cancellation, response => exchange = exchange with { Response = response }).ConfigureAwait(false);
+            UpdateRuntime(previous => previous with { PromptTokens = count });
+            exchange = exchange with { PromptTokens = count };
+            Publish("Tokenized");
+            if (!GuideModelLimits.Fits(count, _contextTokens, outputTokens)) throw new GuideContextException(count, _contextTokens);
+            Stage(GuideModelStage.Generating);
+            using var envelope = await PostJson(client, "v1/chat/completions", body, responseLimit, cancellation,
+                response => exchange = exchange with { Response = response }).ConfigureAwait(false);
+            var root = envelope.RootElement;
+            exchange = exchange with { PromptTokens = UsageTokens(root, "prompt_tokens"), OutputTokens = UsageTokens(root, "completion_tokens") };
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0)
+                throw new InvalidDataException("Local model v1/chat/completions returned no completion choice.");
+            var choice = choices[0];
+            if (choice.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Local model v1/chat/completions returned an invalid completion choice.");
+            exchange = exchange with { FinishReason = StringValue(choice, "finish_reason") };
+            if (!choice.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Local model v1/chat/completions returned no completion message.");
+            var hasContent = message.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.String;
+            exchange = exchange with
             {
-                messages, temperature = 0, top_p = .95, top_k = 20, seed = 42, max_tokens = outputTokens, stream = false,
-                response_format = new { type = "json_object", schema }
-            }, 1024 * 1024, cancellation).ConfigureAwait(false);
-            var choice = envelope.RootElement.GetProperty("choices")[0];
-            if (choice.GetProperty("finish_reason").GetString() != "stop") throw new GuideOutputException();
-            var output = choice.GetProperty("message").GetProperty("content").GetString() ?? throw new InvalidDataException("Empty guide analysis.");
-            AnalysisTrace?.Invoke(system + "\n" + source, output);
-            return output;
+                Response = hasContent ? content.GetString() ?? "" : exchange.Response,
+                Reasoning = StringValue(message, "reasoning_content") is { Length: > 0 } reasoning ? reasoning : StringValue(message, "reasoning")
+            };
+            if (exchange.FinishReason != "stop") throw new GuideOutputException();
+            if (!hasContent || exchange.Response.Length == 0) throw new InvalidDataException("Local model v1/chat/completions returned empty or invalid content.");
+            try { AnalysisTrace?.Invoke(system + "\n" + source, Redact(exchange.Response, _authorizationSecret)); }
+            catch (Exception) { }
+            Publish("Completed");
+            return exchange.Response;
+        }
+        catch (Exception error)
+        {
+            var detail = error is OperationCanceledException && cancellation.IsCancellationRequested ? "Request canceled." : error.GetType().Name + ": " + error.Message;
+            Publish("Failed", Redact(detail, _authorizationSecret));
+            throw;
         }
         finally { Stage(GuideModelStage.Loaded); }
     }
 
-    private static async Task<JsonDocument> PostJson(HttpClient client, string endpoint, object body, int limit, CancellationToken cancellation)
+    private static string StringValue(JsonElement element, string property)
+        => element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
+
+    private static int? UsageTokens(JsonElement root, string property)
+        => root.ValueKind == JsonValueKind.Object && root.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object
+            && usage.TryGetProperty(property, out var count) && count.ValueKind == JsonValueKind.Number && count.TryGetInt32(out var tokens) && tokens >= 0 ? tokens : null;
+
+    private static string Redact(string text, string? secret) => string.IsNullOrEmpty(secret) ? text : text.Replace(secret, "[redacted]", StringComparison.Ordinal);
+
+    internal static async Task<JsonDocument> PostJson(HttpClient client, string endpoint, object body, int limit, CancellationToken cancellation,
+        Action<string>? responseTrace = null, TimeSpan? requestTimeout = null)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        var timeout = requestTimeout ?? TimeSpan.FromMinutes(4);
+        deadline.CancelAfter(timeout);
         using var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
-        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-        if (response.Content.Headers.ContentLength > limit) throw new InvalidDataException("Oversized local tokenizer response.");
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellation).ConfigureAwait(false);
         using var output = new MemoryStream();
-        var buffer = new byte[8192];
-        while (true)
+        var secret = client.DefaultRequestHeaders.Authorization?.Parameter;
+        try
         {
-            var read = await stream.ReadAsync(buffer, cancellation).ConfigureAwait(false);
-            if (read == 0) break;
-            if (output.Length + read > limit) throw new InvalidDataException("Oversized local tokenizer response.");
-            output.Write(buffer, 0, read);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            var responseLimit = response.IsSuccessStatusCode ? limit : 16384;
+            if (response.IsSuccessStatusCode && response.Content.Headers.ContentLength > responseLimit)
+                throw new InvalidDataException($"Local model {endpoint}: response exceeds {responseLimit} bytes.");
+            await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+            var buffer = new byte[8192];
+            while (true)
+            {
+                var read = await stream.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, responseLimit - output.Length + 1)), deadline.Token).ConfigureAwait(false);
+                if (read == 0) break;
+                var retained = (int)Math.Min(read, responseLimit - output.Length);
+                output.Write(buffer, 0, retained);
+                if (!response.IsSuccessStatusCode && output.Length >= responseLimit) break;
+                if (retained != read)
+                {
+                    if (response.IsSuccessStatusCode) throw new InvalidDataException($"Local model {endpoint}: response exceeds {responseLimit} bytes.");
+                    break;
+                }
+            }
+            if (!response.IsSuccessStatusCode)
+            {
+                var detail = Redact(Encoding.UTF8.GetString(output.ToArray()), secret);
+                if (detail.Length > 1024) detail = detail[..1024] + "…";
+                throw new HttpRequestException($"Local model {endpoint}: HTTP {(int)response.StatusCode} ({response.StatusCode}). {detail}", null, response.StatusCode);
+            }
+            try { return JsonDocument.Parse(output.ToArray()); }
+            catch (JsonException error) { throw new InvalidDataException($"Local model {endpoint}: invalid JSON response. {error.Message}", error); }
         }
-        return JsonDocument.Parse(output.ToArray());
+        catch (OperationCanceledException error) when (!cancellation.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Local model {endpoint}: request timed out after {timeout.TotalSeconds:0.###} seconds.", error);
+        }
+        catch (HttpRequestException error) when (error.StatusCode == null)
+        {
+            throw new HttpRequestException(Redact($"Local model {endpoint}: {error.Message}", secret), error);
+        }
+        catch (IOException error)
+        {
+            throw new IOException(Redact($"Local model {endpoint}: {error.Message}", secret), error);
+        }
+        finally
+        {
+            try { responseTrace?.Invoke(Redact(Encoding.UTF8.GetString(output.ToArray()), secret)); }
+            catch (Exception) { }
+        }
     }
 
     public void Dispose()

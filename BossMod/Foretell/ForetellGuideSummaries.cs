@@ -28,6 +28,8 @@ internal sealed class ForetellGuideSummaries : IDisposable
         public int AnalysisTotal = 1;
         public readonly GuideAnalysisMemory Analysis = new();
         public GuideAnalysisTiming AnalysisTiming = new();
+        public GuideAnalysisSession? Journal;
+        public string JournalStage = "";
     }
     private sealed record Cache(string Revision, string SourceHash, GuideLanguage Language, Dictionary<string, string> Summaries);
     private readonly string _directory;
@@ -48,6 +50,8 @@ internal sealed class ForetellGuideSummaries : IDisposable
     private (string ModelID, bool Gpu, long CheckedAt, GuideModelStorage Storage)? _storage;
     public GuideSummarySnapshot? Snapshot => _snapshot;
     public GuideModelRuntime Runtime => _activeModel?.Runtime ?? _lastRuntime;
+    public GuideAnalysisJournal Diagnostics { get; }
+    public bool CaptureConversation { get; set; } = true;
 
     public GuideModelStorage Storage(string modelID, bool gpu)
     {
@@ -74,6 +78,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
     {
         _directory = directory;
         _modelFactory = modelFactory;
+        Diagnostics = new(Path.Combine(directory, "diagnostics"));
         _worker = Task.Run(Run);
     }
 
@@ -141,6 +146,12 @@ internal sealed class ForetellGuideSummaries : IDisposable
     private void Publish(Request request, ImmutableDictionary<string, string> summaries, string stage, int completed, int total,
         GuideModelProgress? transfer = null, double? remaining = null, GuideDocument? prepared = null)
     {
+        if (request.JournalStage != stage)
+        {
+            request.JournalStage = stage;
+            if (stage != "Analyzing" && request.Journal is { } journal)
+                journal.Step(new(stage, journal.Report.Boss, journal.Report.Attempt));
+        }
         lock (_gate)
             if (!_disposed && _latest == request && !request.Cancellation.IsCancellationRequested)
             {
@@ -190,11 +201,13 @@ internal sealed class ForetellGuideSummaries : IDisposable
     {
         try
         {
+            Diagnostics.Load();
             await foreach (var request in _queue.Reader.ReadAllAsync(_lifetime.Token).ConfigureAwait(false))
             {
                 var summaries = ImmutableDictionary<string, string>.Empty;
                 try
                 {
+                    request.Journal = Diagnostics.Begin(request.Document, request.ModelID, request.Gpu, request.ContextTokens, request.MemoryGiB, CaptureConversation);
                     if (request.Document.Page != null) { await AnalyzePage(request).ConfigureAwait(false); continue; }
                     var entries = request.Document.Bosses.SelectMany(boss => boss.Phases.SelectMany(phase =>
                         (phase.Context.Length > 0 ? new[] { (Boss: boss.Name, Key: ContextKey(boss, phase), Source: phase.Context) } : [])
@@ -244,14 +257,16 @@ internal sealed class ForetellGuideSummaries : IDisposable
                     model.Dispose();
                     Publish(request, summaries, skipped == 0 ? "Ready" : "ReadyWithUnresolved", summaries.Count + skipped, entries.Length);
                 }
-                catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
+                catch (OperationCanceledException error) when (request.Cancellation.IsCancellationRequested) { request.Journal?.Finish("Cancelled", error); }
                 catch (Exception error)
                 {
-                    request.LastIssue = error is InvalidDataException ? error.Message[..Math.Min(error.Message.Length, 400)] : error.GetType().Name;
+                    request.Journal?.Finish("Failed", error);
+                    request.LastIssue = error.GetType().Name + ": " + error.Message[..Math.Min(error.Message.Length, 1000)];
                     Publish(request, summaries, "Unavailable: " + error.GetType().Name, summaries.Count, ItemCount(request.Document));
                 }
                 finally
                 {
+                    request.Journal?.Finish(request.Cancellation.IsCancellationRequested ? "Cancelled" : request.JournalStage);
                     if (_activeModel is { } model)
                     {
                         model.Dispose();
@@ -281,8 +296,17 @@ internal sealed class ForetellGuideSummaries : IDisposable
         }
     }
 
-    private IGuideSummaryModel CreateModel(Request request) => _modelFactory?.Invoke(request.Gpu)
-        ?? new ForetellGuideLocalModel(Path.Combine(_directory, "runtime"), request.Gpu, request.ContextTokens, request.MemoryGiB, request.ModelID);
+    private IGuideSummaryModel CreateModel(Request request)
+    {
+        var model = _modelFactory?.Invoke(request.Gpu)
+            ?? new ForetellGuideLocalModel(Path.Combine(_directory, "runtime"), request.Gpu, request.ContextTokens, request.MemoryGiB, request.ModelID);
+        if (request.Journal is { } journal)
+        {
+            model.ExchangeTrace = journal.Exchange;
+            if (model is ForetellGuideLocalModel local) local.RuntimeTrace = journal.Runtime;
+        }
+        return model;
+    }
 
     private async Task AnalyzePage(Request request)
     {
@@ -291,6 +315,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
         var prepared = cache.Read(request.Document.Duty);
         if (!request.Refresh && prepared != null && GuidePageAnalysis.ValidPrepared(prepared, request.Document, request.Language, profile))
         {
+            request.Journal?.Step(new("Cache", Detail: "Prepared guide reused."));
             PublishPrepared(request, prepared with { RetrievedAt = request.Document.RetrievedAt, Sources = request.Document.Sources, Providers = request.Document.Providers });
             return;
         }
@@ -332,7 +357,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
                         {
                             if (request.Partial == null || partial.Bosses.Count(boss => boss.Phases.Length > 0) >= request.Partial.Bosses.Count(boss => boss.Phases.Length > 0))
                                 request.Partial = partial;
-                        }).ConfigureAwait(false);
+                        }, step => request.Journal?.Step(step)).ConfigureAwait(false);
                     active.Token.ThrowIfCancellationRequested();
                     _activeModel.Dispose();
                     try { cache.Write(prepared); }

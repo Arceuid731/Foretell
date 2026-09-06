@@ -62,6 +62,7 @@ internal static class GuidePhaseTests
     {
         MetadataAndCache();
         GroundingRejections();
+        OptionalMetadataFailure();
         ObservedPhases();
         Lifecycle();
     }
@@ -188,6 +189,34 @@ internal static class GuidePhaseTests
         tracker.Synchronize([Signal(boss, "Spark", 70)]);
         tracker.Synchronize([Signal(boss, "Burn", 60, GuideSignalKind.Status)]);
         Check(tracker.Frame.KnownPhase?.ID == "opening", "A lingering status regressed the known phase");
+    }
+
+    private static void OptionalMetadataFailure()
+    {
+        var draft = JsonNode.Parse(Draft())!;
+        var boss = draft["bosses"]![0]!;
+        var evidenceArrays = boss["phaseDefinitions"]!.AsArray().Select(phase => phase!["evidence"]!)
+            .Concat(boss["mechanics"]!.AsArray().Select(mechanic => mechanic!["evidence"]!))
+            .Concat(boss["mechanics"]!.AsArray().SelectMany(mechanic => mechanic!["phaseMemberships"]!.AsArray().Select(membership => membership!["evidence"]!)));
+        foreach (var evidence in evidenceArrays)
+            for (var index = 0; index < evidence.AsArray().Count; ++index)
+                evidence[index] = (Array.IndexOf(Paragraphs, evidence[index]!.GetValue<string>()) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var original = draft.ToJsonString();
+        Check(GuidePageAnalysis.PreparePhaseMetadata(original, Paragraphs) == original, "Valid generated phase metadata was changed");
+        boss["mechanics"]![0]!["phaseMemberships"]![0]!["evidence"]![0] = "999";
+        var warnings = new List<string>();
+        var repaired = GuidePageAnalysis.PreparePhaseMetadata(draft.ToJsonString(), Paragraphs, warnings.Add);
+        var resolved = GuidePageAnalysis.ResolveEvidence(repaired, Paragraphs);
+        var parsed = GuidePageAnalysis.Parse(Source(), Source().Page!.Text, resolved, GuideLanguage.English, GuideModelCatalog.Get(GuideModelCatalog.DefaultID));
+        Check(warnings.Count == 1 && parsed.MechanicCount == 6 && parsed.Bosses.Single().PhaseDefinitions.Length == 0
+            && parsed.Bosses.Single().Phases.Single().Mechanics.All(mechanic => mechanic.PhaseMemberships.Length == 0),
+            "An invalid optional phase reference rejected usable mechanics or kept unsafe filtering");
+        boss["mechanics"]![0]!["evidence"]![0] = "999";
+        Reject(() => GuidePageAnalysis.PreparePhaseMetadata(draft.ToJsonString(), Paragraphs), "Phase fallback bypassed invalid mechanic evidence");
+        var invalidCue = JsonNode.Parse(repaired)!;
+        invalidCue["Bosses"]![0]!["Mechanics"]![0]!["Cue"] = "Move 999 yalms away";
+        Reject(() => GuidePageAnalysis.Parse(Source(), Source().Page!.Text, GuidePageAnalysis.ResolveEvidence(invalidCue.ToJsonString(), Paragraphs),
+            GuideLanguage.English, GuideModelCatalog.Get(GuideModelCatalog.DefaultID)), "Phase fallback bypassed unsupported player instructions");
     }
 
     private static void Lifecycle()
