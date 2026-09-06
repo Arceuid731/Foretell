@@ -3,7 +3,7 @@
   "Name": "Foretell",
   "InternalName": "Foretell",
   "RepoUrl": "https://github.com/Arceuid731/Foretell",
-  "Description": "Guide-informed encounter assistance built on BossMod Reborn. Automatic instance guides, current-boss mechanics, local summaries and observed world/radar/text guidance while preserving BMR.",
+  "Description": "Automatic instance guides, concise boss mechanics and central combat alerts. Combines community sources with live observations, a 2D radar and a 3D overlay. Customizable layout and local AI model selection.",
   "ApplicableVersion": "any",
   "Tags": [
     "combat",

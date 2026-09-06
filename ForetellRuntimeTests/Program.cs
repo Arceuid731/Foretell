@@ -18,7 +18,11 @@ internal static class Program
         };
         if (args.Length == 0) Run();
         else if (args[0] == "--wiki-smoke") GuideTests.Smoke(args);
-        else if (args is ["--guide-sheets", var directory]) GuideTests.SheetSmoke(directory);
+        else if (args is ["--guide-analysis-smoke", var runtimeDirectory, var outputDirectory, var profile, .. var titles])
+            GuidePageAnalysisTests.Smoke(runtimeDirectory, outputDirectory, profile, titles);
+        else if (args is ["--guide-aggregate-smoke", var aggregateRuntime, var aggregateOutput, var aggregateProfile, .. var aggregateTitles])
+            GuidePageAnalysisTests.Smoke(aggregateRuntime, aggregateOutput, aggregateProfile, aggregateTitles, true);
+        else if (args is ["--guide-sheets", var directory, .. var names]) GuideTests.SheetSmoke(directory, names);
         else if (args is ["--guide-model-smoke", var modelDirectory, var mode]) GuideCombatTests.ModelSmoke(modelDirectory, mode == "gpu");
         else if (args is ["--guide-pipeline-smoke", var pipelineDirectory]) GuideCombatTests.PipelineSmoke(pipelineDirectory);
         else if (args is ["--guide-ui-smoke"]) GuideOverlayTests.Run();

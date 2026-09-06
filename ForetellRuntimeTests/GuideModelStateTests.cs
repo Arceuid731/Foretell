@@ -9,7 +9,7 @@ internal static class GuideModelStateTests
 
     public static void Run()
     {
-        Check(GuideModelLimits.Context(int.MinValue) == 4096 && GuideModelLimits.Context(int.MaxValue) == 32768, "Invalid context bounds");
+        Check(GuideModelLimits.Context(int.MinValue) == 4096 && GuideModelLimits.Context(int.MaxValue) == 131072, "Invalid context bounds");
         Check(GuideModelLimits.MemoryGiB(int.MinValue) == 4 && GuideModelLimits.MemoryGiB(int.MaxValue) == 12, "Invalid RAM bounds");
         Check(!GuideModelLimits.Fits(0, 4096) && !GuideModelLimits.Fits(int.MaxValue, 32768), "Invalid prompt count accepted");
         var boundary = 16384 - GuideModelLimits.OutputTokens - GuideModelLimits.TemplateReserve;

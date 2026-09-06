@@ -10,6 +10,10 @@ internal static class GuideCombatTests
     public static void Run()
     {
         ChecklistPresentation();
+        CentralSignalSelection();
+        OwnedStatusSignals();
+        DeferredActionSignals();
+        StatusAnnotationTargets();
         var now = DateTime.UtcNow;
         var first = new GuideBoss("First", "", [new("", "", [new("Blast", "A circular AoE around the boss.", ""), new("Pulse", "Raidwide damage.", "")])]);
         var second = new GuideBoss("Second", "", [new("", "", [new("Blast", "A tankbuster.", "")])]);
@@ -84,11 +88,180 @@ internal static class GuideCombatTests
             using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create)) zip.CreateEntry("../escape.exe");
             try { ForetellGuideLocalModel.ExtractRuntime(zipPath, Path.Combine(directory, "runtime")); throw new Exception("Zip traversal accepted"); }
             catch (InvalidDataException) { }
+            var validZip = Path.Combine(directory, "valid.zip");
+            using (var zip = ZipFile.Open(validZip, ZipArchiveMode.Create))
+            using (var writer = new StreamWriter(zip.CreateEntry("llama-server.exe").Open())) writer.Write("fixture runtime");
+            var installed = ForetellGuideLocalModel.ExtractRuntime(validZip, Path.Combine(directory, "installed"));
+            using (var locked = new FileStream(installed, FileMode.Open, FileAccess.Read, FileShare.Read))
+                Check(ForetellGuideLocalModel.ExtractRuntime(validZip, Path.Combine(directory, "installed")) == installed,
+                    "Starting another analysis tried to overwrite an unchanged in-use runtime");
+            File.WriteAllText(installed, "corrupt runtime");
+            ForetellGuideLocalModel.ExtractRuntime(validZip, Path.Combine(directory, "installed"));
+            Check(File.ReadAllText(installed) == "fixture runtime", "Corrupted runtime was not repaired");
         }
         finally { Directory.Delete(directory, true); }
         SummaryWorker().GetAwaiter().GetResult();
         GuideModelStateTests.Run();
         Console.WriteLine("Guide boss lifecycle, synchronized decision bridge, conditional rules, summary guardrails, measured ETA and archive safety passed.");
+    }
+
+    private static (GuideDocument Document, GuideBoss Boss, Actor Owner, Actor Helper, Actor Player, DateTime Now) SignalFixture()
+    {
+        var now = new DateTime(2026, 9, 6, 12, 0, 0, DateTimeKind.Utc);
+        var doom = new GuideMechanic("Doom", "If you have Doom, spread out.", "")
+        { Advice = new(GuideLanguage.English, "Doom", "Spread out", "Spread while afflicted with Doom.", "status", "Doom", ["If you have Doom, spread out."]) };
+        var boss = new GuideBoss("First", "", [new("", "", [new("Blast", "A circular AoE around the boss.", ""), doom])]);
+        var document = new GuideDocument(GuideDocument.CurrentSchema, new(1, 2, "Test"), "Test", 1, now, GuideNames.Hash("signal-fixture"), [boss]);
+        var owner = new Actor(10, 20, 0, 0, "First", 30, ActorType.Enemy, Class.None, 1, Vector4.Zero, resolveGameMetadata: false);
+        var helper = new Actor(12, 22, 0, 0, "Helper", 32, ActorType.Helper, Class.None, 1, Vector4.Zero, ownerID: 10, resolveGameMetadata: false);
+        var player = new Actor(1, 1, 0, 0, "Player", 1, ActorType.Player, Class.PCT, 100, new(10, 0, 20, 0), resolveGameMetadata: false);
+        return (document, boss, owner, helper, player, now);
+    }
+
+    private static string SignalName(string sheet, uint id) => (sheet, id) switch
+    {
+        ("BNpcName", 30) => "First",
+        ("BNpcName", 32) => "Helper",
+        ("Action", 40) => "Blast",
+        ("Status", 60) => "Doom",
+        _ => ""
+    };
+
+    private static void CentralSignalSelection()
+    {
+        var fixture = SignalFixture();
+        var phase = fixture.Boss.Phases[0];
+        var first = new GuideSignal(fixture.Boss, phase, phase.Mechanics[0], GuideSignalKind.Cast, 10, 20, 30, 40, 0, fixture.Now.AddSeconds(3), GuidanceKind.Avoid, "fixture");
+        var second = first with { SourceID = 12, ID = 41, Until = first.Until.AddSeconds(1) };
+        var third = first with { SourceID = 13, ID = 42, Until = first.Until.AddSeconds(2) };
+        var displayed = GuideCentralPresentation.Select([third, second, first], fixture.Player.InstanceID);
+        Check(displayed.SequenceEqual([first, second]), "Central alert selection lost its two-signal limit or time ordering");
+        var prediction = new ActivePrediction(first.SourceID, first.ID, GeometryKind.Circle, MechanicKind.GroundAOE,
+            Vector2.Zero, Vector2.Zero, 0, 8, 0, first.Until, .95f, "fixture", Guidance: GuidanceKind.Avoid);
+        Check(GuideCentralPresentation.Owns(prediction, displayed), "A displayed guide alert no longer suppresses its duplicate prediction");
+        Check(!GuideCentralPresentation.Owns(prediction with { CasterID = third.SourceID, ActionID = third.ID, Activation = third.Until }, displayed),
+            "The third simultaneous cast lost its fallback alert without being displayed");
+        Check(!GuideCentralPresentation.Owns(prediction with { Activation = first.Until.AddSeconds(2) }, displayed)
+            && !GuideCentralPresentation.Owns(prediction with { CasterID = 99 }, displayed), "Central suppression crossed cast occurrence or caster identity");
+        var status = first with { Kind = GuideSignalKind.Status, ID = 60, TargetID = fixture.Player.InstanceID, Until = fixture.Now.AddSeconds(20) };
+        displayed = GuideCentralPresentation.Select([third, second, first, status], fixture.Player.InstanceID);
+        Check(displayed.SequenceEqual([status, first])
+            && !GuideCentralPresentation.Owns(prediction with { CasterID = second.SourceID, ActionID = second.ID, Activation = second.Until }, displayed),
+            "A personal status displaced a cast while still suppressing its fallback alert");
+        Check(GuideCentralPresentation.Select([first], 0).Length == 0 && !GuideCentralPresentation.Owns(prediction, []),
+            "Missing player or disabled guide display still owns predictions");
+    }
+
+    private static void OwnedStatusSignals()
+    {
+        var fixture = SignalFixture();
+        var status = new ActorStatus(60, 0, fixture.Now.AddSeconds(10), fixture.Helper.InstanceID);
+        GuideSignal? Match(Actor? owner) => GuideSignalMatching.Status(fixture.Boss, fixture.Player, status, fixture.Helper, owner, fixture.Now, SignalName);
+        var matched = Match(fixture.Owner);
+        Check(matched is { Kind: GuideSignalKind.Status, ID: 60, Guidance: GuidanceKind.Spread } && matched.SourceID == fixture.Helper.InstanceID
+            && matched.OwnerID == fixture.Owner.InstanceID && matched.TargetID == fixture.Player.InstanceID, "Boss-owned helper status was not matched to its actual source and player target");
+        Check(Match(null) == null, "A helper status matched without its owner");
+        fixture.Helper.OwnerID = 99;
+        Check(Match(fixture.Owner) == null, "An unrelated helper inherited the current boss status");
+        fixture.Helper.OwnerID = fixture.Owner.InstanceID;
+        fixture.Owner.IsAlly = true;
+        Check(Match(fixture.Owner) == null, "An allied owner supplied an enemy guide status");
+        fixture.Owner.IsAlly = false;
+        fixture.Owner.IsDead = true;
+        Check(Match(fixture.Owner) == null, "A dead owner supplied an enemy guide status");
+        fixture.Owner.IsDead = false;
+        Check(GuideSignalMatching.Status(fixture.Boss, fixture.Player, status, fixture.Helper, fixture.Owner, fixture.Now,
+            (sheet, id) => sheet == "Status" ? "Doom II" : SignalName(sheet, id)) == null, "Status trigger matching accepted a partial name");
+        Check(GuideSignalMatching.Status(fixture.Boss, fixture.Player, status, fixture.Helper, fixture.Owner, status.ExpireAt, SignalName) == null,
+            "An expired helper status stayed active");
+        var directStatus = new ActorStatus(60, 0, status.ExpireAt, fixture.Owner.InstanceID);
+        Check(GuideSignalMatching.Status(fixture.Boss, fixture.Player, directStatus, fixture.Owner, null, fixture.Now, SignalName) is { OwnerID: 0 },
+            "Direct boss status matching regressed");
+        Check(GuideSignalMatching.Status(fixture.Boss, fixture.Player, directStatus, fixture.Helper, fixture.Owner, fixture.Now, SignalName) == null,
+            "A status with a different source ID matched the helper");
+        var duplicateBoss = fixture.Boss with { Phases = [new("", "", [fixture.Boss.Phases[0].Mechanics[1], fixture.Boss.Phases[0].Mechanics[1]])] };
+        Check(GuideSignalMatching.Status(duplicateBoss, fixture.Player, status, fixture.Helper, fixture.Owner, fixture.Now, SignalName) == null,
+            "Ambiguous status triggers selected an arbitrary mechanic");
+    }
+
+    private static void DeferredActionSignals()
+    {
+        var fixture = SignalFixture();
+        var frame = new GuideCombatFrame(fixture.Boss, false, false, null, [], 0);
+        var queue = new GuideActionQueue();
+        Actor? ActorByID(ulong id) => id == fixture.Owner.InstanceID ? fixture.Owner : id == fixture.Helper.InstanceID ? fixture.Helper : null;
+        void Enqueue() => queue.Enqueue(fixture.Document.Duty, fixture.Boss, fixture.Helper, fixture.Owner, 40, fixture.Player.InstanceID, fixture.Now);
+        var budget = 0;
+        string BudgetName(string sheet, uint id)
+        {
+            if (budget <= 0) return "";
+            --budget;
+            return SignalName(sheet, id);
+        }
+        Enqueue();
+        Check(queue.Resolve(fixture.Document, fixture.Document.Duty, frame, fixture.Now, ActorByID, BudgetName).Length == 0 && queue.Count == 1,
+            "Name budget exhaustion permanently discarded an ActionEffect");
+        budget = 2;
+        var resolved = queue.Resolve(fixture.Document, fixture.Document.Duty, frame, fixture.Now.AddMilliseconds(200), ActorByID, BudgetName);
+        Check(resolved is [{ Kind: GuideSignalKind.Action, ID: 40 } action] && action.SourceID == fixture.Helper.InstanceID
+            && action.OwnerID == fixture.Owner.InstanceID && action.TargetID == fixture.Player.InstanceID && action.Until == fixture.Now.AddSeconds(4),
+            "Deferred ActionEffect lost source, owner, target or original expiry");
+        Check(queue.Count == 0 && queue.Resolve(fixture.Document, fixture.Document.Duty, frame, fixture.Now.AddSeconds(1), ActorByID, SignalName).Length == 0,
+            "A resolved ActionEffect was emitted twice");
+        Enqueue();
+        Check(queue.Resolve(fixture.Document, fixture.Document.Duty, frame, fixture.Now.AddSeconds(4), ActorByID, SignalName).Length == 0 && queue.Count == 0,
+            "Deferred name resolution revived an expired action");
+        foreach (var invalidFrame in new[] { frame with { Upcoming = true }, frame with { Ambiguous = true }, frame with { Boss = fixture.Boss with { Name = "Second" } } })
+        {
+            Enqueue();
+            Check(queue.Resolve(fixture.Document, fixture.Document.Duty, invalidFrame, fixture.Now, ActorByID, SignalName).Length == 0 && queue.Count == 0,
+                "Pending actions survived a wipe, ambiguity or boss change");
+        }
+        Enqueue();
+        var otherDuty = new GuideDuty(3, 4, "Other");
+        Check(queue.Resolve(fixture.Document with { Duty = otherDuty }, otherDuty, frame, fixture.Now, ActorByID, SignalName).Length == 0 && queue.Count == 0,
+            "Pending actions crossed duty identity");
+        Enqueue();
+        fixture.Helper.OwnerID = 99;
+        Check(queue.Resolve(fixture.Document, fixture.Document.Duty, frame, fixture.Now, ActorByID, SignalName).Length == 0 && queue.Count == 0,
+            "Pending helper action survived changed ownership");
+        fixture.Helper.OwnerID = fixture.Owner.InstanceID;
+        Enqueue();
+        ++fixture.Owner.NameID;
+        Check(queue.Resolve(fixture.Document, fixture.Document.Duty, frame, fixture.Now, ActorByID, SignalName).Length == 0 && queue.Count == 0,
+            "Pending helper action inherited a replacement owner");
+        --fixture.Owner.NameID;
+        Enqueue();
+        ++fixture.Helper.OID;
+        Check(queue.Resolve(fixture.Document, fixture.Document.Duty, frame, fixture.Now, ActorByID, SignalName).Length == 0 && queue.Count == 0,
+            "Pending action inherited a replacement source actor");
+        --fixture.Helper.OID;
+        Enqueue();
+        Check(queue.Resolve(fixture.Document, fixture.Document.Duty, frame, fixture.Now, ActorByID,
+            (sheet, id) => sheet == "Action" ? "Blast II" : SignalName(sheet, id)).Length == 0 && queue.Count == 0, "Deferred action matching guessed a partial ability name");
+        for (uint actionID = 1; actionID <= 40; ++actionID)
+            queue.Enqueue(fixture.Document.Duty, fixture.Boss, fixture.Helper, fixture.Owner, actionID, fixture.Player.InstanceID, fixture.Now);
+        Check(queue.Count == 32, "Deferred action queue is unbounded");
+        queue.Clear();
+        Check(queue.Count == 0, "Context reset retained pending actions");
+    }
+
+    private static void StatusAnnotationTargets()
+    {
+        var fixture = SignalFixture();
+        var phase = fixture.Boss.Phases[0];
+        var signal = new GuideSignal(fixture.Boss, phase, phase.Mechanics[1], GuideSignalKind.Status, fixture.Helper.InstanceID,
+            fixture.Helper.OID, fixture.Helper.NameID, 60, fixture.Player.InstanceID, fixture.Now.AddSeconds(10), GuidanceKind.Spread, "fixture");
+        var position = new Vector2(10, 20);
+        var annotation = GuideDecisionBridge.Annotation(signal, Vector2.Zero, "Doom", fixture.Document.SourceUrl, position);
+        Check(annotation.Prediction.TargetID == fixture.Player.InstanceID && annotation.Prediction.Origin == position && annotation.Prediction.Target == position
+            && annotation.Prediction.CasterID == fixture.Helper.InstanceID, "Status annotation points its radar/world marker at the boss instead of the player");
+        Check(annotation is { SpatiallyKnown: false, AdvisoryOnly: true } && annotation.Prediction.Geometry == GeometryKind.Unknown
+            && annotation.Prediction.P1 == 0 && !ForetellDecisionCore.Contains(annotation.Prediction, position, signal.Until), "Status target annotation fabricated an AoE footprint");
+        var cast = GuideDecisionBridge.Annotation(signal with { Kind = GuideSignalKind.Cast }, Vector2.Zero, "Blast", fixture.Document.SourceUrl, position);
+        Check(cast.Prediction.TargetID == signal.SourceID && cast.Prediction.Origin == Vector2.Zero, "An arbitrary cast target became a guide marker target");
+        var invalid = GuideDecisionBridge.Annotation(signal, Vector2.Zero, "Doom", fixture.Document.SourceUrl, new(float.NaN, 20));
+        Check(invalid.Prediction.TargetID == signal.SourceID && ForetellDecisionCore.Valid(invalid.Prediction), "Invalid status target coordinates reached the renderer");
     }
 
     private static void ChecklistPresentation()

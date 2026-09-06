@@ -45,6 +45,17 @@ internal static class GuideOverlayTests
                 ImGui.Render();
                 if (frame > 0) Check(ImGui.GetDrawData().TotalVtxCount > 0, "Overlay submitted no text geometry");
             }
+            Check(!ForetellEngine.GuideEntryFlags.HasFlag(ImGuiWindowFlags.NoSavedSettings), "Entry summary cannot retain its layout");
+            for (var frame = 0; frame < 4; ++frame)
+            {
+                ImGui.NewFrame();
+                ForetellEngine.SetGuideEntryLayout(Vector2.Zero, io.DisplaySize);
+                ImGui.Begin("Entry summary resize test", ForetellEngine.GuideEntryFlags);
+                if (frame == 1) ImGui.SetWindowSize(new(670, 410));
+                if (frame > 1) Check(Vector2.Distance(ImGui.GetWindowSize(), new(670, 410)) < 1, "Entry popup snaps back after resizing");
+                ImGui.End();
+                ImGui.Render();
+            }
         }
         finally { ImGui.DestroyContext(context); }
         Console.WriteLine("Native ImGui compact row, transparent/locked flags, editing flags, hover and tooltip smoke passed.");

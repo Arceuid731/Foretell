@@ -33,8 +33,8 @@ public enum ForetellRadarTerrainStyle
 [ConfigDisplay(Name = "Foretell", Order = 0)]
 public sealed class ForetellConfig : ConfigNode
 {
-    [PropertyDisplay("Presentation mode", tooltip: "Recommended path: Observe -> Hybrid. Legacy shows BMR only. Observe learns silently while BMR guides you. Hybrid shows the complete BMR and Foretell presentations together. Foretell hides legacy encounter presentation and shows the adaptive layer only. Use /foretell for the guided dashboard.")]
-    public ForetellMode Mode = ForetellMode.Observe;
+    [PropertyDisplay("Presentation mode", tooltip: "Foretell: standard display. Hybrid: also show BMR. Observe: only show BMR while learning. Legacy: BMR only.")]
+    public ForetellMode Mode = ForetellMode.Foretell;
 
     public override void Deserialize(JsonElement json, JsonSerializerOptions options)
     {
@@ -67,17 +67,19 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("Local ML classifier", tooltip: "Small dependency-free local classifier used only as an additional signal for ambiguous mechanic types. No cloud or remote inference is used.")]
     public bool EnableML = true;
 
-    [PropertyDisplay("Automatic wiki guides", tooltip: "Retrieve the current instance's guide from Console Games Wiki on a bounded background worker. Prepared cache works offline. Complex responses and ambiguous variants remain explicitly unresolved.")]
+    [PropertyDisplay("Automatic guides", tooltip: "Prepare the instance guide when entering. Saved guides work offline.")]
     public bool EnableGuides = true;
 
-    [PropertyDisplay("Encounter guide sidebar", tooltip: "Show documented bosses and mechanics, and highlight uniquely matched live casts. Guide extraction does not establish tactical or geometry coverage.")]
+    [PropertyDisplay("Boss mechanics", tooltip: "Show the current boss mechanics and highlight the active one.")]
     public bool GuideSidebar = true;
     public bool GuideEntryPopup = true;
     public bool GuideChecklistUnlocked;
     public bool GuideCentralAlerts = true;
     public bool GuideLocalSummaries = true;
     public bool GuideSummaryGpu = true;
+    public string GuideModelID = GuideModelCatalog.DefaultID;
     public int GuideContextTokens = GuideModelLimits.DefaultContext;
+    public int GuidePipelineVersion;
     public int GuideMemoryGiB = GuideModelLimits.DefaultMemoryGiB;
     public float GuidePositionX = -1;
     public float GuidePositionY = -1;
@@ -104,7 +106,7 @@ public sealed class ForetellConfig : ConfigNode
     public float RadarPositionX = -1;
     public float RadarPositionY = -1;
 
-    [PropertyDisplay("Radar arena frame", tooltip: "Auto keeps a world-aligned, double-buffered collision map prefetched beyond the visible radar, including barriers that close at pull start. Complete contours swap atomically so movement never exposes scan chunks. The map is local and independent from authored BMR arena data. Circle and Square force the presentation frame without changing learned mechanics.")]
+    [PropertyDisplay("Radar arena frame", tooltip: "Auto follows the room. Circle and Square use a fixed frame.")]
     public ForetellRadarShape RadarShape = ForetellRadarShape.Auto;
 
     [PropertyDisplay("Radar zoom mode", tooltip: "Automatic fits compact observed rooms or focuses on the boss, party and attack sources. Open areas use the configured local radius. Manual always uses the selected visible radius.")]

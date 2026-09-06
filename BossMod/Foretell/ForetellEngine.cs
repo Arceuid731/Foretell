@@ -521,7 +521,7 @@ public sealed partial class ForetellEngine : IDisposable
         // Numeric configs from the short-lived v0.8.1 Hybrid mode used value 3; both old presentation variants
         // intentionally converge on the new combined BMR + Foretell Hybrid mode.
         if ((int)_cfg.Mode == 3) { _cfg.Mode = ForetellMode.Hybrid; changed = true; }
-        changed |= NormalizeEnum(ref _cfg.Mode, ForetellMode.Observe);
+        changed |= NormalizeEnum(ref _cfg.Mode, ForetellMode.Foretell);
         changed |= NormalizeEnum(ref _cfg.RadarShape, ForetellRadarShape.Auto);
         changed |= NormalizeEnum(ref _cfg.RadarZoom, ForetellRadarZoom.Automatic);
         changed |= NormalizeEnum(ref _cfg.RadarTerrainStyle, ForetellRadarTerrainStyle.Outline);
@@ -536,7 +536,15 @@ public sealed partial class ForetellEngine : IDisposable
         changed |= NormalizeFinite(ref _cfg.GuideHeight, 520, 180, 1000);
         changed |= NormalizeFinite(ref _cfg.GuideScale, 1, .7f, 1.8f);
         changed |= NormalizeFinite(ref _cfg.GuideAlertScale, 1.4f, 1, 2.5f);
+        if (_cfg.GuidePipelineVersion < 1)
+        {
+            if (_cfg.GuideContextTokens == 16384) _cfg.GuideContextTokens = GuideModelLimits.DefaultContext;
+            _cfg.GuidePipelineVersion = 1;
+            changed = true;
+        }
         var contextTokens = GuideModelLimits.Context(_cfg.GuideContextTokens);
+        var modelID = GuideModelCatalog.Get(_cfg.GuideModelID).ID;
+        if (_cfg.GuideModelID != modelID) { _cfg.GuideModelID = modelID; changed = true; }
         if (_cfg.GuideContextTokens != contextTokens) { _cfg.GuideContextTokens = contextTokens; changed = true; }
         var memoryGiB = GuideModelLimits.MemoryGiB(_cfg.GuideMemoryGiB);
         if (_cfg.GuideMemoryGiB != memoryGiB) { _cfg.GuideMemoryGiB = memoryGiB; changed = true; }

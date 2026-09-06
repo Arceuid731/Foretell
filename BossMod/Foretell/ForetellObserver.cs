@@ -65,7 +65,7 @@ public sealed partial class ForetellEngine
 
     private void OnCastEvent(Actor actor, ActorCastEvent ev)
     {
-        ResolveGuideAction(actor, ev.Action.ID);
+        ResolveGuideAction(actor, ev);
         var action = ev.Action.ID;
         if (action == 0) return;
         var resolved = Observation(ObservationKind.ActionResolved, actor, action, target: ev.MainTargetID, value1: ev.Targets.Count);

@@ -73,7 +73,12 @@ internal static class GuideTests
         NarrativeGuides();
         Synchronization(document);
         GuideCombatTests.Run();
-        AsyncChecks(document).GetAwaiter().GetResult();
+        GuidePageAnalysisTests.Run();
+        GuideSourceAssemblyTests.Run();
+        GuideRoleTests.Run();
+        GuideProviderTests.Run();
+        WorkbookGuideTests.Run();
+        AsyncChecks(ForetellGuideParser.ReadPage(Response(Duty), Duty, Now)).GetAwaiter().GetResult();
         Console.WriteLine("Guide parsing, preserved conditions, ambiguous contexts, localization, bounded HTTP, cache and cancellation tests passed.");
     }
 
@@ -169,7 +174,7 @@ internal static class GuideTests
                 service.RequestGuide(narrativeDuty);
                 await WaitFor(() => service.Snapshot.State is GuideState.Ready or GuideState.Failed);
                 Check(service.Snapshot is { State: GuideState.Ready, Error.Length: 0, Document.MechanicCount: 0 }
-                    && cache.Read(narrativeDuty)?.Bosses.Length == 3, "Narrative guide did not prepare/cache successfully");
+                    && cache.Read(narrativeDuty)?.Page?.Text.Contains("War Cry") == true, "Whole narrative guide was not retained for model analysis");
             }
             using (var service = new ForetellGuideService(directory, (_, _) => throw new Exception("Narrative cache requested network")))
             {
@@ -183,7 +188,7 @@ internal static class GuideTests
             {
                 service.RequestGuide(narrativeDuty);
                 await WaitFor(() => service.Snapshot.State == GuideState.Offline);
-                Check(service.Snapshot.Document?.SourceHash == narrative.SourceHash && service.Snapshot.Error.Contains("No supported boss sections"),
+                Check(service.Snapshot.Document?.SourceHash == narrative.SourceHash && service.Snapshot.Error.Contains("no usable text"),
                     "Failed refresh discarded narrative advice or hid the parser diagnostic");
             }
             cache.Write(narrative with { Bosses = [new("Empty", "", [])] });
@@ -194,7 +199,7 @@ internal static class GuideTests
             {
                 service.RequestGuide(narrativeDuty);
                 await WaitFor(() => service.Snapshot.State == GuideState.Failed);
-                Check(service.Snapshot.Error.StartsWith("InvalidDataException: No supported boss sections"), "Failed preparation lost the specific parser error");
+                Check(service.Snapshot.Error.StartsWith("InvalidDataException: Guide page contains no usable text"), "Failed download lost the specific error");
                 service.RequestGuide(narrativeDuty with { ContentID = 21, TerritoryID = 121, EnglishName = "Different Narrative Chamber" });
                 await WaitFor(() => service.Snapshot.State == GuideState.Failed);
                 Check(service.Snapshot.Error.Contains("identity does not match"), "Failure diagnostics conflate missing structure and wrong duty");
@@ -281,7 +286,7 @@ internal static class GuideTests
         }
     }
 
-    public static void SheetSmoke(string directory)
+    public static void SheetSmoke(string directory, string[]? names = null)
     {
         using var data = new Lumina.GameData(directory);
         var duties = data.GetExcelSheet<Lumina.Excel.Sheets.ContentFinderCondition>(Lumina.Data.Language.English) ?? throw new InvalidDataException("Missing English duty sheet");
@@ -300,7 +305,7 @@ internal static class GuideTests
         Console.WriteLine("Action candidates only; no encounter binding from names: " + string.Join(", ", repeated.Select(action => $"{action.RowId} → {frenchActions.GetRow(action.RowId).Name}")));
         var npcs = data.GetExcelSheet<Lumina.Excel.Sheets.BNpcName>(Lumina.Data.Language.English) ?? throw new InvalidDataException("Missing English NPC sheet");
         var frenchNpcs = data.GetExcelSheet<Lumina.Excel.Sheets.BNpcName>(Lumina.Data.Language.French) ?? throw new InvalidDataException("Missing French NPC sheet");
-        foreach (var name in new[] { "Mustadio", "Nero tol Scaeva" })
+        foreach (var name in names is { Length: > 0 } ? names : ["Mustadio", "Nero tol Scaeva"])
         {
             var candidates = npcs.Where(npc => GuideNames.Boss(npc.Singular.ToString()) == GuideNames.Boss(name)).ToArray();
             Check(candidates.Length > 0, "Official NPC name unavailable: " + name);

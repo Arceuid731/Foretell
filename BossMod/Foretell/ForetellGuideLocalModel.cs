@@ -18,15 +18,15 @@ internal interface IGuideSummaryModel : IDisposable
     GuideModelRuntime Runtime { get; }
     Task Start(Action<GuideModelProgress> progress, CancellationToken cancellation);
     Task<string> Summarize(string source, GuideLanguage language, CancellationToken cancellation);
+    Task<string> Analyze(string system, string source, object schema, int outputTokens, CancellationToken cancellation)
+        => throw new NotSupportedException("Whole-page analysis is not supported by this model adapter.");
 }
 
 internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int contextTokens = GuideModelLimits.DefaultContext,
-    int memoryGiB = GuideModelLimits.DefaultMemoryGiB) : IGuideSummaryModel
+    int memoryGiB = GuideModelLimits.DefaultMemoryGiB, string modelID = GuideModelCatalog.DefaultID) : IGuideSummaryModel
 {
-    internal const string Revision = "qwen3-1.7b-q8-b10809-v2";
-    internal static readonly GuideModelAsset Model = new("Qwen3-1.7B-Q8_0.gguf",
-        "https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/90862c4b9d2787eaed51d12237eafdfe7c5f6077/Qwen3-1.7B-Q8_0.gguf",
-        1834426016, "061b54daade076b5d3362dac252678d17da8c68f07560be70818cace6590cb1a");
+    internal static readonly string Revision = GuideModelCatalog.Profiles[0].Revision;
+    internal static GuideModelAsset Model => GuideModelCatalog.Profiles[0].Asset;
     internal static readonly GuideModelAsset Cpu = new("llama-b10809-bin-win-cpu-x64.zip",
         "https://github.com/ggml-org/llama.cpp/releases/download/b10809/llama-b10809-bin-win-cpu-x64.zip",
         18407457, "9df3158ed228a641a4b127942d7f459f24c9e13f04682659d05c00c80099b6b5");
@@ -37,8 +37,9 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
     private GuideProcessBudget? _budget;
     private HttpClient? _client;
     private bool _useGpu = gpu;
-    private readonly int _contextTokens = GuideModelLimits.Context(contextTokens);
-    private volatile GuideModelRuntime _runtime = new();
+    private readonly GuideModelProfile _profile = GuideModelCatalog.Get(modelID);
+    private readonly int _contextTokens = Math.Min(GuideModelLimits.Context(contextTokens), GuideModelCatalog.Get(modelID).MaximumContext);
+    private volatile GuideModelRuntime _runtime = new(ModelID: GuideModelCatalog.Get(modelID).ID);
     public GuideModelRuntime Runtime => _runtime;
     internal int? ProcessID => _process?.Id;
 
@@ -149,7 +150,14 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
             if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Unsafe archive path.");
             if (entry.Name.Length == 0) { Directory.CreateDirectory(path); continue; }
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            entry.ExtractToFile(path, true);
+            var unchanged = false;
+            if (File.Exists(path) && new FileInfo(path).Length == entry.Length)
+            {
+                using var installed = File.OpenRead(path);
+                using var packaged = entry.Open();
+                unchanged = SHA256.HashData(installed).AsSpan().SequenceEqual(SHA256.HashData(packaged));
+            }
+            if (!unchanged) entry.ExtractToFile(path, true);
             if (entry.Name.Equals("llama-server.exe", StringComparison.OrdinalIgnoreCase))
             {
                 if (server != null) throw new InvalidDataException("Ambiguous runtime executable.");
@@ -165,7 +173,7 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
         Dispose();
         var runtime = _useGpu ? Vulkan : Cpu;
         var archive = await Download(runtime, progress, cancellation).ConfigureAwait(false);
-        var model = await Download(Model, progress, cancellation).ConfigureAwait(false);
+        var model = await Download(_profile.Asset, progress, cancellation).ConfigureAwait(false);
         UpdateRuntime(previous => previous with { VerifiedThisSession = true, ContextTokens = _contextTokens, Backend = _useGpu ? "Vulkan" : "CPU" });
         cancellation.ThrowIfCancellationRequested();
         var executable = ExtractRuntime(archive, Path.Combine(directory, _useGpu ? "vulkan-b10809" : "cpu-b10809"));
@@ -180,9 +188,9 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
             WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true, RedirectStandardError = true
         };
         foreach (var argument in new[] { "--model", model, "--host", "127.0.0.1", "--port", port.ToString(), "--api-key", key,
-            "--ctx-size", _contextTokens.ToString(System.Globalization.CultureInfo.InvariantCulture), "--no-context-shift", "--parallel", "1", "--threads", "2", "--threads-batch", "2", "--threads-http", "1", "--batch-size", "128", "--ubatch-size", "128",
-            "--n-gpu-layers", _useGpu ? "29" : "0", "--no-mmap", "--no-warmup", "--no-webui", "--no-slots", "--reasoning", "off",
-            "--chat-template-kwargs", "{\"enable_thinking\":false}" }) start.ArgumentList.Add(argument);
+            "--ctx-size", _contextTokens.ToString(System.Globalization.CultureInfo.InvariantCulture), "--no-context-shift", "--cache-ram", "0", "--parallel", "1", "--threads", "2", "--threads-batch", "2", "--threads-http", "1", "--batch-size", "128", "--ubatch-size", "128",
+            "--n-gpu-layers", _useGpu ? "999" : "0", "--no-mmap", "--no-warmup", "--no-webui", "--no-slots", "--reasoning", _profile.Reasoning ? "on" : "off", "--reasoning-budget", "2048",
+            "--chat-template-kwargs", _profile.ChatOptions }) start.ArgumentList.Add(argument);
         foreach (var variable in start.Environment.Keys.Where(name => name.StartsWith("LLAMA_", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(variable);
         progress(new("Starting bounded local model · " + (_useGpu ? "Vulkan" : "CPU")));
         try
@@ -194,11 +202,11 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
             _process.EnableRaisingEvents = true;
             _budget = new(_process, GuideModelLimits.MemoryGiB(memoryGiB));
             _process.PriorityClass = ProcessPriorityClass.BelowNormal;
-            _process.OutputDataReceived += (_, _) => { };
-            _process.ErrorDataReceived += (_, _) => { };
+            _process.OutputDataReceived += (_, data) => TraceRuntime(data.Data);
+            _process.ErrorDataReceived += (_, data) => TraceRuntime(data.Data);
             _process.BeginOutputReadLine(); _process.BeginErrorReadLine();
             _client = new(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false })
-            { BaseAddress = new($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromSeconds(90) };
+            { BaseAddress = new($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromMinutes(4) };
             _client.DefaultRequestHeaders.Authorization = new("Bearer", key);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             deadline.CancelAfter(TimeSpan.FromSeconds(60));
@@ -288,6 +296,43 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
         return tokens.RootElement.GetProperty("tokens").GetArrayLength();
     }
 
+    internal Action<string, string>? AnalysisTrace { get; set; }
+    internal Action<string>? RuntimeTrace { get; set; }
+
+    private void TraceRuntime(string? line)
+    {
+        if (line == null) return;
+        try { RuntimeTrace?.Invoke(line); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+
+    public async Task<string> Analyze(string system, string source, object schema, int outputTokens, CancellationToken cancellation)
+    {
+        if (_client == null) throw new InvalidOperationException("Model is not loaded.");
+        if (_profile.Reasoning) outputTokens += 2560;
+        system += "\nRequired JSON schema:\n" + JsonSerializer.Serialize(schema);
+        var messages = new[] { new { role = "system", content = system }, new { role = "user", content = source } };
+        Stage(GuideModelStage.Tokenizing);
+        var count = await CountPromptTokens(_client, messages, cancellation).ConfigureAwait(false);
+        UpdateRuntime(previous => previous with { PromptTokens = count });
+        if (!GuideModelLimits.Fits(count, _contextTokens, outputTokens)) throw new GuideContextException(count, _contextTokens);
+        Stage(GuideModelStage.Generating);
+        try
+        {
+            using var envelope = await PostJson(_client, "v1/chat/completions", new
+            {
+                messages, temperature = 0, top_p = .95, top_k = 20, seed = 42, max_tokens = outputTokens, stream = false,
+                response_format = new { type = "json_object", schema }
+            }, 1024 * 1024, cancellation).ConfigureAwait(false);
+            var choice = envelope.RootElement.GetProperty("choices")[0];
+            if (choice.GetProperty("finish_reason").GetString() != "stop") throw new GuideOutputException();
+            var output = choice.GetProperty("message").GetProperty("content").GetString() ?? throw new InvalidDataException("Empty guide analysis.");
+            AnalysisTrace?.Invoke(system + "\n" + source, output);
+            return output;
+        }
+        finally { Stage(GuideModelStage.Loaded); }
+    }
+
     private static async Task<JsonDocument> PostJson(HttpClient client, string endpoint, object body, int limit, CancellationToken cancellation)
     {
         using var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
@@ -354,7 +399,7 @@ internal sealed class GuideProcessBudget : IDisposable
     public unsafe GuideProcessBudget(Process process, int memoryGiB = GuideModelLimits.DefaultMemoryGiB)
     {
         _job = CreateJobObjectW(0, 0);
-        var limits = new ExtendedLimits { Basic = new() { Flags = 0x2000 | 0x100 | 0x8, ActiveProcesses = 1 }, ProcessMemory = unchecked((nuint)(GuideModelLimits.MemoryGiB(memoryGiB) * 1024L * 1024 * 1024)) };
+        var limits = new ExtendedLimits { Basic = new() { Flags = 0x2000 | 0x400 | 0x100 | 0x8, ActiveProcesses = 1 }, ProcessMemory = unchecked((nuint)(GuideModelLimits.MemoryGiB(memoryGiB) * 1024L * 1024 * 1024)) };
         var cpu = new CpuLimits { Flags = 1 | 4, Rate = 1500 };
         if (_job == 0 || !SetInformationJobObject(_job, 9, (nint)(&limits), (uint)sizeof(ExtendedLimits))
             || !SetInformationJobObject(_job, 15, (nint)(&cpu), (uint)sizeof(CpuLimits)) || !AssignProcessToJobObject(_job, process.Handle))

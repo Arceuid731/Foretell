@@ -6,14 +6,22 @@ using System.Threading.Channels;
 namespace BossMod.Foretell;
 
 internal sealed record GuideSummarySnapshot(string SourceHash, GuideLanguage Language, ImmutableDictionary<string, string> Summaries,
-    string Stage, int Completed, int Total, GuideModelProgress? Transfer = null, double? RemainingSeconds = null, string? LastIssue = null);
+    string Stage, int Completed, int Total, GuideModelProgress? Transfer = null, double? RemainingSeconds = null, string? LastIssue = null)
+{
+    public GuideDocument? Prepared { get; init; }
+    public string ModelID { get; init; } = GuideModelCatalog.DefaultID;
+}
 
 internal sealed class ForetellGuideSummaries : IDisposable
 {
-    private sealed record Request(GuideDocument Document, GuideLanguage Language, bool Gpu, int ContextTokens, int MemoryGiB, CancellationTokenSource Cancellation)
+    private sealed record Request(GuideDocument Document, GuideLanguage Language, bool Gpu, int ContextTokens, int MemoryGiB, string ModelID, CancellationTokenSource Cancellation)
     {
         public bool Finished;
         public string? LastIssue;
+        public bool Refresh;
+        public bool Prepare;
+        public GuideDocument? Partial;
+        public readonly GuideAnalysisMemory Analysis = new();
     }
     private sealed record Cache(string Revision, string SourceHash, GuideLanguage Language, Dictionary<string, string> Summaries);
     private readonly string _directory;
@@ -26,6 +34,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
     private volatile bool _paused;
     private volatile string _preferredBoss = "";
     private bool _disposed;
+    private bool _refreshNext;
     private readonly Task _worker;
     private readonly Func<bool, IGuideSummaryModel>? _modelFactory;
     private volatile IGuideSummaryModel? _activeModel;
@@ -45,10 +54,11 @@ internal sealed class ForetellGuideSummaries : IDisposable
     }
 
     public void Update(GuideDocument? document, GuideLanguage language, bool enabled, bool combat, bool gpu, string preferredBoss,
-        int contextTokens = GuideModelLimits.DefaultContext, int memoryGiB = GuideModelLimits.DefaultMemoryGiB)
+        int contextTokens = GuideModelLimits.DefaultContext, int memoryGiB = GuideModelLimits.DefaultMemoryGiB, string modelID = GuideModelCatalog.DefaultID)
     {
         contextTokens = GuideModelLimits.Context(contextTokens);
         memoryGiB = GuideModelLimits.MemoryGiB(memoryGiB);
+        modelID = GuideModelCatalog.Get(modelID).ID;
         lock (_gate)
         {
             if (_disposed) return;
@@ -59,17 +69,20 @@ internal sealed class ForetellGuideSummaries : IDisposable
                 if (combat) _activity.Cancel();
                 else { _activity.Dispose(); _activity = new(); }
             }
-            if (!enabled || document == null)
+            if (document == null || !enabled && document.Page == null)
             {
                 CancelLatest(); _latest = null; _snapshot = null;
                 return;
             }
             if (_latest is { } latest && latest.Document.SourceHash == document.SourceHash && latest.Document.Duty == document.Duty && latest.Language == language
-                && latest.Gpu == gpu && latest.ContextTokens == contextTokens && latest.MemoryGiB == memoryGiB) return;
+                && latest.Gpu == gpu && latest.ContextTokens == contextTokens && latest.MemoryGiB == memoryGiB && latest.ModelID == modelID && latest.Prepare == enabled) return;
             CancelLatest();
             if (_queue.Reader.TryRead(out var dropped)) dropped.Cancellation.Dispose();
-            _latest = new(document, language, gpu, contextTokens, memoryGiB, CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token));
-            _snapshot = new(document.SourceHash, language, ImmutableDictionary<string, string>.Empty, "Queued", 0, ItemCount(document));
+            _latest = new(document, language, gpu, contextTokens, memoryGiB, modelID, CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token));
+            _latest.Refresh = _refreshNext;
+            _latest.Prepare = enabled;
+            _refreshNext = false;
+            _snapshot = new(document.SourceHash, language, ImmutableDictionary<string, string>.Empty, "Queued", 0, ItemCount(document)) { ModelID = modelID };
             _queue.Writer.TryWrite(_latest);
         }
     }
@@ -81,21 +94,23 @@ internal sealed class ForetellGuideSummaries : IDisposable
         if (latest.Finished) latest.Cancellation.Dispose();
     }
 
-    public void Retry()
+    public void Retry(bool refresh = false)
     {
         lock (_gate)
         {
             if (_disposed) return;
+            _refreshNext = refresh;
             CancelLatest(); _latest = null; _snapshot = null;
         }
     }
 
     private void Publish(Request request, ImmutableDictionary<string, string> summaries, string stage, int completed, int total,
-        GuideModelProgress? transfer = null, double? remaining = null)
+        GuideModelProgress? transfer = null, double? remaining = null, GuideDocument? prepared = null)
     {
         lock (_gate)
             if (!_disposed && _latest == request && !request.Cancellation.IsCancellationRequested)
-                _snapshot = new(request.Document.SourceHash, request.Language, summaries, stage, completed, total, transfer, remaining, request.LastIssue);
+                _snapshot = new(request.Document.SourceHash, request.Language, summaries, stage, completed, total, transfer, remaining, request.LastIssue)
+                { Prepared = prepared ?? request.Partial, ModelID = request.ModelID };
     }
 
     private string CachePath(Request request) => Path.Combine(_directory, request.Document.Duty.Key + "-" + request.Language + ".json");
@@ -143,6 +158,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
                 var summaries = ImmutableDictionary<string, string>.Empty;
                 try
                 {
+                    if (request.Document.Page != null) { await AnalyzePage(request).ConfigureAwait(false); continue; }
                     var entries = request.Document.Bosses.SelectMany(boss => boss.Phases.SelectMany(phase =>
                         (phase.Context.Length > 0 ? new[] { (Boss: boss.Name, Key: ContextKey(boss, phase), Source: phase.Context) } : [])
                         .Concat(phase.Mechanics.Select(mechanic => (Boss: boss.Name, Key: Key(boss, phase, mechanic),
@@ -153,7 +169,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
                     var skipped = 0;
                     var durations = new List<double>();
                     if (pending.Count == 0) { Publish(request, summaries, "Ready", summaries.Count, entries.Length); continue; }
-                    var model = _modelFactory?.Invoke(request.Gpu) ?? new ForetellGuideLocalModel(Path.Combine(_directory, "runtime"), request.Gpu, request.ContextTokens, request.MemoryGiB);
+                    var model = CreateModel(request);
                     _activeModel = model;
                     while (pending.Count > 0)
                     {
@@ -226,5 +242,68 @@ internal sealed class ForetellGuideSummaries : IDisposable
             _queue.Writer.TryComplete();
             if (_queue.Reader.TryRead(out var dropped)) dropped.Cancellation.Dispose();
         }
+    }
+
+    private IGuideSummaryModel CreateModel(Request request) => _modelFactory?.Invoke(request.Gpu)
+        ?? new ForetellGuideLocalModel(Path.Combine(_directory, "runtime"), request.Gpu, request.ContextTokens, request.MemoryGiB, request.ModelID);
+
+    private async Task AnalyzePage(Request request)
+    {
+        var profile = GuideModelCatalog.Get(request.ModelID);
+        var cache = new ForetellGuideCache(Path.Combine(_directory, "pages", profile.ID, request.Language.ToString()));
+        var prepared = cache.Read(request.Document.Duty);
+        if (!request.Refresh && prepared != null && GuidePageAnalysis.ValidPrepared(prepared, request.Document, request.Language, profile))
+        {
+            PublishPrepared(request, prepared with { RetrievedAt = request.Document.RetrievedAt, Sources = request.Document.Sources, Providers = request.Document.Providers });
+            return;
+        }
+        if (!request.Prepare)
+        {
+            Publish(request, ImmutableDictionary<string, string>.Empty, "PreparationDisabled", 0, 1);
+            return;
+        }
+        while (true)
+        {
+            request.Cancellation.Token.ThrowIfCancellationRequested();
+            if (_paused)
+            {
+                _activeModel?.Dispose();
+                Publish(request, ImmutableDictionary<string, string>.Empty, "PausedInCombat", 0, 1);
+                await Task.Delay(300, request.Cancellation.Token).ConfigureAwait(false);
+                continue;
+            }
+            CancellationTokenSource active;
+            lock (_gate) active = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token, _activity.Token);
+            using (active)
+            {
+                try
+                {
+                    _activeModel ??= CreateModel(request);
+                    await _activeModel.Start(transfer => Publish(request, ImmutableDictionary<string, string>.Empty,
+                        "InstallingOrStarting", 0, 1, transfer), active.Token).ConfigureAwait(false);
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    var resumable = new GuideResumableModel(_activeModel, request.Analysis);
+                    prepared = await GuidePageAnalysis.Compile(request.Document, request.Language, profile, request.ContextTokens, resumable,
+                        (done, total) => Publish(request, ImmutableDictionary<string, string>.Empty, "Analyzing", done, total,
+                            remaining: done > 0 ? watch.Elapsed.TotalSeconds / done * (total - done) : null), active.Token,
+                        partial => request.Partial = partial).ConfigureAwait(false);
+                    active.Token.ThrowIfCancellationRequested();
+                    _activeModel.Dispose();
+                    try { cache.Write(prepared); }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException) { request.LastIssue = "CacheWrite: " + error.GetType().Name; }
+                    PublishPrepared(request, prepared);
+                    return;
+                }
+                catch (OperationCanceledException) when (!request.Cancellation.IsCancellationRequested && active.IsCancellationRequested) { _activeModel?.Dispose(); }
+            }
+        }
+    }
+
+    private void PublishPrepared(Request request, GuideDocument prepared)
+    {
+        var summaries = prepared.Bosses.SelectMany(boss => boss.Phases.SelectMany(phase => phase.Mechanics
+            .Where(mechanic => mechanic.Advice != null).Select(mechanic => new KeyValuePair<string, string>(Key(boss, phase, mechanic), mechanic.Advice!.Description))))
+            .ToImmutableDictionary();
+        Publish(request, summaries, "Ready", prepared.MechanicCount, prepared.MechanicCount, prepared: prepared);
     }
 }

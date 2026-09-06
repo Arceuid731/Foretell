@@ -19,18 +19,23 @@ public sealed partial class ForetellEngine
             Live: active.FirstOrDefault(signal => ReferenceEquals(signal.Mechanic, mechanic) && ReferenceEquals(signal.Phase, phase))))).ToArray() ?? [];
         var viewport = ImGui.GetMainViewport();
         var size = FiniteViewport(viewport.Size) ? viewport.Size : new Vector2(1920, 1080);
-        var minimumWidth = rows.Length == 0 ? 260 : Math.Max(260, 110 + rows.Max(row => ImGui.CalcTextSize(" — " + GuideChecklistInstruction(boss!, row.Phase, row.Mechanic, row.Live) + " · 999.9s").X) * _cfg.GuideScale);
-        minimumWidth = Math.Min(minimumWidth, Math.Min(1000, size.X));
+        var minimumWidth = Math.Min(260, size.X);
         var width = Math.Clamp(Math.Max(_cfg.GuideWidth, minimumWidth), minimumWidth, Math.Max(minimumWidth, size.X));
         var lineHeight = ImGui.GetTextLineHeight() * _cfg.GuideScale;
         var spacing = ImGui.GetStyle().ItemSpacing.Y;
         var padding = ImGui.GetStyle().WindowPadding;
         var heightLimit = Math.Min(_cfg.GuideHeight, size.Y);
         var chrome = _cfg.GuideChecklistUnlocked ? ImGui.GetFrameHeight() : 0;
-        var capacity = Math.Max(1, (int)((heightLimit - padding.Y * 2 - chrome) / (lineHeight + spacing)) - 2);
-        var page = GuideChecklistPresentation.Page(rows.Length, capacity, _guideChecklistPage, Array.FindIndex(rows, row => row.Live != null));
+        var contentWidth = Math.Max(1, width - padding.X * 2);
+        var labels = rows.Select(row => GuideChecklistPresentation.Row(row.Live != null ? "▶ " + GuideMechanicName(boss!, row.Mechanic) : "• " + GuideMechanicName(boss!, row.Mechanic),
+            GuideRolePresentation.Prefix(row.Mechanic.Advice?.Roles ?? []) + GuideChecklistInstruction(boss!, row.Phase, row.Mechanic, row.Live) + (row.Live == null ? "" : $" · {Math.Max(0, (row.Live.Until - _ws.CurrentTime).TotalSeconds):F1}s"),
+            contentWidth / _cfg.GuideScale, text => ImGui.CalcTextSize(text).X)).ToArray();
+        var heights = labels.Select(text => ImGui.CalcTextSize(text, false, contentWidth / _cfg.GuideScale).Y * _cfg.GuideScale + spacing).ToArray();
+        var page = GuideChecklistPresentation.HeightPage(heights, Math.Max(lineHeight, heightLimit - padding.Y * 2 - chrome - 2 * (lineHeight + spacing)),
+            _guideChecklistPage, Array.FindIndex(rows, row => row.Live != null));
         _guideChecklistPage = page.Page;
-        var height = _cfg.GuideChecklistUnlocked ? heightLimit : Math.Min(size.Y, padding.Y * 2 + (1 + Math.Max(1, page.Count) + (page.Pages > 1 ? 1 : 0)) * (lineHeight + spacing));
+        var height = _cfg.GuideChecklistUnlocked ? heightLimit : Math.Min(size.Y, padding.Y * 2 + (1 + (page.Count == 0 ? 3 : 0) + (page.Pages > 1 ? 1 : 0)) * (lineHeight + spacing)
+            + heights.Skip(page.Start).Take(page.Count).Sum());
         var position = viewport.Pos + new Vector2(_cfg.GuidePositionX < 0 ? 20 : _cfg.GuidePositionX * size.X, _cfg.GuidePositionY < 0 ? size.Y * .2f : _cfg.GuidePositionY * size.Y);
         position = Vector2.Clamp(position, viewport.Pos, viewport.Pos + Vector2.Max(Vector2.Zero, size - new Vector2(width, height)));
         if (!_cfg.GuideChecklistUnlocked || !_guideChecklistWasUnlocked)
@@ -60,8 +65,13 @@ public sealed partial class ForetellEngine
             if (!visible) return;
             if (_liveGuide == null)
             {
+                if (_guideSummaries?.Snapshot is { Stage: not "Ready" })
+                {
+                    DrawGuideSummaryProgress();
+                    return;
+                }
                 var failed = _guides?.Snapshot.State == GuideState.Failed;
-                DrawGuideOverlayLine(_guideDuty == null ? GuideText("Foretell · checklist position", "Foretell · position de la checklist", "Foretell · Checklistenposition", "Foretell・チェックリストの位置")
+                DrawGuideOverlayLine(_guideDuty == null ? GuideText("Foretell · boss mechanics", "Foretell · mécaniques du boss", "Foretell · Bossmechaniken", "Foretell・ボスギミック")
                     : failed ? GuideText("Guide unavailable", "Guide indisponible", "Anleitung nicht verfügbar", "攻略取得不可")
                     : GuideText("Foretell · preparing guide…", "Foretell · préparation du guide…", "Foretell · Anleitung wird vorbereitet…", "Foretell・攻略を準備中…"), _cfg.GuideTextColor);
                 if (ImGui.IsItemHovered()) DrawGuideHeaderTooltip(null);
@@ -80,19 +90,15 @@ public sealed partial class ForetellEngine
             if (ImGui.IsItemHovered()) DrawGuideHeaderTooltip(boss);
             if (headerClicked) _guideEntryDismissed = false;
             if (rows.Length == 0)
-                DrawGuideOverlayLine(GuideText("Narrative guide · hover boss", "Guide narratif · survole le boss", "Textanleitung · Boss berühren", "文章形式の攻略・ボスにカーソル"), _cfg.GuideUnresolvedColor);
-            foreach (var row in rows.Skip(page.Start).Take(page.Count))
+                DrawGuideOverlayLine(GuideText("Preparing mechanics…", "Préparation des mécaniques…", "Mechaniken werden vorbereitet…", "ギミックを準備中…"), _cfg.GuideTextColor);
+            for (var index = page.Start; index < page.Start + page.Count; ++index)
             {
-                var resolved = _guideEncounter.Resolved(boss, row.Phase, row.Mechanic);
-                var prepared = GuideRules.LiveGuidance(row.Mechanic, row.Phase, boss) != GuidanceKind.None;
-                var color = row.Live != null ? _cfg.GuideActiveColor : resolved ? _cfg.GuideResolvedColor : prepared ? _cfg.GuideTextColor : _cfg.GuideUnresolvedColor;
+                var row = rows[index];
+                var color = row.Live != null ? _cfg.GuideActiveColor : _cfg.GuideTextColor;
                 var instruction = GuideChecklistInstruction(boss, row.Phase, row.Mechanic, row.Live);
-                var timer = row.Live == null ? "" : $" · {Math.Max(0, (row.Live.Until - _ws.CurrentTime).TotalSeconds):F1}s";
-                var prefix = row.Live != null ? "▶ " : resolved ? "✓ " : "• ";
-                var available = ImGui.GetContentRegionAvail().X;
-                var suffix = " — " + instruction + timer;
-                var name = GuideChecklistPresentation.Fit(prefix + GuideMechanicName(boss, row.Mechanic), Math.Max(35, available - ImGui.CalcTextSize(suffix).X), text => ImGui.CalcTextSize(text).X);
-                DrawGuideOverlayLine(name + suffix, color);
+                ImGui.PushStyleColor(ImGuiCol.Text, GuideColor(color));
+                ImGui.TextWrapped(labels[index]);
+                ImGui.PopStyleColor();
                 if (ImGui.IsItemHovered()) DrawGuideMechanicTooltip(boss, row.Phase, row.Mechanic, instruction);
             }
             if (page.Pages > 1)
@@ -128,21 +134,8 @@ public sealed partial class ForetellEngine
         ImGui.BeginTooltip();
         ImGui.PushTextWrapPos(ImGui.GetFontSize() * 28);
         if (_guideDuty != null) ImGui.TextWrapped(GuideDutyName(_guideDuty));
-        if (boss != null)
-        {
-            ImGui.TextWrapped(GuideBossName(boss));
-            if (_liveGuide is { MechanicCount: > 0 } && boss.Phases.All(phase => phase.Mechanics.Length == 0)) ImGui.TextWrapped(GuideNarrativeNotice());
-            foreach (var phase in boss.Phases.Where(phase => phase.Context.Length > 0))
-                ImGui.TextWrapped(GuideContextSummary(boss, phase) ?? phase.Context);
-        }
-        if (_guides != null) DrawGuideState(_guides.Snapshot);
-        DrawGuideSummaryProgress();
-        ImGui.TextWrapped(GuideText("Hover a mechanic for details. Click the boss to reopen the entry panel. Unlock in /foretell → Guides.",
-            "Survole une mécanique pour ses détails. Clique sur le boss pour revoir le panneau d’entrée. Déverrouillage : /foretell → Guides.",
-            "Mechanik berühren für Details. Boss anklicken für die Übersicht. Entsperren: /foretell → Guides.",
-            "ギミックにカーソルで詳細。ボスをクリックで入場案内。ロック解除：/foretell → Guides。"));
-        ImGui.TextWrapped(GuideText("✓ means resolved this pull, not successful execution or no repeats.", "✓ = résolue sur ce pull, pas forcément réussie ni définitivement terminée.",
-            "✓ = in diesem Versuch aufgelöst; kein Erfolgsnachweis oder Ausschluss einer Wiederholung.", "✓＝この戦闘で解決済み。成功や再発しないことを示しません。"));
+        if (boss != null && boss.Summary.Length > 0) ImGui.TextWrapped(boss.Summary);
+        ImGui.TextDisabled(GuideText("Click for the instance overview.", "Clique pour le résumé de l’instance.", "Für Instanzübersicht anklicken.", "クリックでコンテンツ概要。"));
         ImGui.PopTextWrapPos(); ImGui.EndTooltip();
     }
 
@@ -151,27 +144,11 @@ public sealed partial class ForetellEngine
         ImGui.BeginTooltip();
         ImGui.PushTextWrapPos(ImGui.GetFontSize() * 28);
         ImGui.TextColored(GuideColor(_cfg.GuideActiveColor), GuideMechanicName(boss, mechanic));
-        ImGui.TextWrapped(instruction);
-        if (phase.Name.Length > 0) ImGui.TextDisabled(GuidePhaseName(phase));
-        if (GuideSummaryFor(boss, phase, mechanic) is { } summary)
-        {
-            ImGui.TextWrapped(GuideChecklistPresentation.Preview(summary));
-            ImGui.TextDisabled(GuideText("Automatic summary · check source", "Résumé auto · vérifier la source", "Automatisch · Quelle prüfen", "自動要約・原文を確認"));
-        }
-        else ImGui.TextWrapped(GuideChecklistPresentation.Preview(mechanic.Text));
-        if (GuideRules.LiveGuidance(mechanic, phase, boss) == GuidanceKind.None)
-            ImGui.TextWrapped(GuideText("Conditional or unverified response; no unconditional instruction is inferred.", "Consigne conditionnelle ou non vérifiée : pas de consigne inconditionnelle déduite.",
-                "Bedingte oder ungeprüfte Reaktion; keine unbedingte Anweisung abgeleitet.", "条件付き・未確定の対処。無条件の指示は出しません。"));
-        if (phase.Context.Length > 0) ImGui.TextWrapped(GuideChecklistPresentation.Preview(GuideContextSummary(boss, phase) ?? phase.Context, 200));
-        DrawGuideStatusNames(mechanic);
-        ImGui.TextDisabled(GuideText("Hold Shift for full English source", "Maintiens Maj pour la source anglaise complète", "Umschalt halten für die englische Quelle", "Shiftで英語原文を表示"));
-        if (ImGui.GetIO().KeyShift)
-        {
-            ImGui.Separator(); ImGui.TextWrapped(mechanic.Text);
-            foreach (var context in boss.Phases.Where(context => context == phase || context.Name.Length == 0))
-                if (context.Context.Length > 0) ImGui.TextWrapped(context.Context);
-            if (_liveGuide != null) ImGui.TextWrapped(_liveGuide.SourceUrl);
-        }
+        ImGui.TextWrapped(mechanic.Advice?.Description ?? GuideSummaryFor(boss, phase, mechanic) ?? mechanic.Text);
+        if (mechanic.Advice is { Conflict.Length: > 0 } advice) ImGui.TextWrapped(advice.Conflict);
+        foreach (var source in GuideSourceAssembly.EvidenceSources(_liveGuide, mechanic.Advice)) ImGui.TextDisabled(source.Provider);
+        if (mechanic.Advice?.TriggerKind == "manual")
+            ImGui.TextDisabled(GuideText("Watch for this mechanic during the fight.", "Repère cette mécanique pendant le combat.", "Im Kampf auf diese Mechanik achten.", "戦闘中にこのギミックを確認。"));
         ImGui.PopTextWrapPos(); ImGui.EndTooltip();
     }
 }

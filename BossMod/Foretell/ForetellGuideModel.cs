@@ -11,6 +11,7 @@ internal sealed record GuideDuty(uint ContentID, uint TerritoryID, string Englis
 
 internal sealed class GuideMechanic(string name, string text, string anchor)
 {
+    public GuideAdvice? Advice { get; init; }
     public string Name { get; } = name;
     public string Text { get; } = text;
     public string Anchor { get; } = anchor;
@@ -30,12 +31,31 @@ internal sealed record GuidePhase(string Name, string Context, GuideMechanic[] M
     [System.Text.Json.Serialization.JsonIgnore]
     public bool Conditional { get; } = GuideRules.HasConditions(Context);
 }
-internal sealed record GuideBoss(string Name, string Anchor, GuidePhase[] Phases);
+internal sealed record GuideResponse(string When, string Instruction);
+internal sealed record GuideAdvice(GuideLanguage Language, string DisplayName, string Cue, string Description, string TriggerKind, string TriggerName, string[] Evidence)
+{
+    public GuideResponse[] Responses { get; init; } = [];
+    public string[] Roles { get; init; } = [];
+    public string Conflict { get; init; } = "";
+}
+internal sealed record GuideBoss(string Name, string Anchor, GuidePhase[] Phases)
+{
+    public string DisplayName { get; init; } = "";
+    public string Summary { get; init; } = "";
+}
+internal sealed record GuidePage(string Provider, string Url, string Text, string Html);
 internal sealed record GuideDocument(int Schema, GuideDuty Duty, string Title, long Revision, DateTime RetrievedAt,
     string SourceHash, GuideBoss[] Bosses)
 {
     public const int CurrentSchema = 1;
-    public string SourceUrl => $"https://ffxiv.consolegameswiki.com/mediawiki/index.php?title={Uri.EscapeDataString(Title)}&oldid={Revision}";
+    public GuidePage? Page { get; init; }
+    public string ModelRevision { get; init; } = "";
+    public GuideLanguage? AnalysisLanguage { get; init; }
+    public string Summary { get; init; } = "";
+    public string SourceUrl => Page?.Url ?? $"https://ffxiv.consolegameswiki.com/mediawiki/index.php?title={Uri.EscapeDataString(Title)}&oldid={Revision}";
+    public GuideSourceRange[] Coverage { get; init; } = [];
+    public GuideSourcePage[] Sources { get; init; } = [];
+    public GuideProviderState[] Providers { get; init; } = [];
     public int MechanicCount => Bosses.Sum(boss => boss.Phases.Sum(phase => phase.Mechanics.Length));
 }
 
@@ -98,7 +118,13 @@ internal static class GuideSynchronization
         var bosses = document.Bosses.Where(boss => GuideNames.Boss(boss.Name) == GuideNames.Boss(cast.BossName)).ToArray();
         if (bosses.Length != 1) return null;
         var candidates = bosses[0].Phases.SelectMany(phase => phase.Mechanics.Select(mechanic => (phase, mechanic)))
-            .Where(candidate => GuideNames.Normalize(candidate.mechanic.Name) == GuideNames.Normalize(cast.ActionName)).ToArray();
+            .Where(candidate => MatchesCast(candidate.mechanic, cast.ActionName)).ToArray();
         return candidates.Length == 1 ? new(bosses[0], candidates[0].phase, candidates[0].mechanic, cast) : null;
     }
+
+    internal static bool MatchesCast(GuideMechanic mechanic, string actionName) => mechanic.Advice is { } advice
+        ? advice.Conflict.Length == 0 && (advice.TriggerKind == "cast" && GuideNames.Normalize(advice.TriggerName) == GuideNames.Normalize(actionName)
+            || GuideNames.Normalize(mechanic.Name) == GuideNames.Normalize(actionName) && advice.Evidence.Any(quote => GuideRules.Mentions(quote, actionName))
+            || actionName.Length >= 3 && advice.Evidence.Any(quote => quote.TrimStart().StartsWith(actionName + ":", StringComparison.OrdinalIgnoreCase)))
+        : GuideNames.Normalize(mechanic.Name) == GuideNames.Normalize(actionName);
 }

@@ -64,7 +64,7 @@ internal static class GuideRules
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
 }
 
-internal enum GuideSignalKind { Cast, Status, Marker, Tether }
+internal enum GuideSignalKind { Cast, Status, Marker, Tether, Action }
 internal sealed record GuideSignal(GuideBoss Boss, GuidePhase Phase, GuideMechanic Mechanic, GuideSignalKind Kind,
     ulong SourceID, uint SourceOID, uint SourceNameID, uint ID, ulong TargetID, DateTime Until, GuidanceKind Guidance, string Evidence)
 {
@@ -75,6 +75,106 @@ internal sealed record GuideCombatFrame(GuideBoss? Boss, bool Upcoming, bool Amb
     public static readonly GuideCombatFrame Empty = new(null, true, false, null, [], 0);
 }
 internal sealed record GuideActorState(ulong ID, uint OID, uint NameID, string EnglishName, bool Dead, bool Engaged, float Distance);
+
+internal static class GuideSignalMatching
+{
+    public static Actor? Owner(Actor? source, Actor? owner)
+    {
+        if (source == null || source.IsDeadOrDestroyed || source.IsAlly || source.InstanceID == 0 || source.OID == 0 || source.NameID == 0
+            || source.Type is not (ActorType.Enemy or ActorType.Helper)) return null;
+        if (source.OwnerID == 0) return source.Type == ActorType.Enemy ? source : null;
+        return owner is { IsDeadOrDestroyed: false, IsAlly: false, Type: ActorType.Enemy }
+            && owner.InstanceID == source.OwnerID && owner.OID != 0 && owner.NameID != 0 ? owner : null;
+    }
+
+    public static GuideSignal? Status(GuideBoss boss, Actor player, ActorStatus status, Actor? source, Actor? owner, DateTime now, Func<string, uint, string> name)
+    {
+        if (player.IsDeadOrDestroyed || player.InstanceID == 0 || status.ID == 0 || status.ExpireAt <= now || source == null
+            || status.SourceID != source.InstanceID || Owner(source, owner) is not { } bossActor
+            || GuideNames.Boss(name("BNpcName", bossActor.NameID)) != GuideNames.Boss(boss.Name)) return null;
+        var statusName = name("Status", status.ID);
+        if (statusName.Length == 0) return null;
+        var candidates = boss.Phases.SelectMany(phase => phase.Mechanics.Select(mechanic => (phase, mechanic)))
+            .Where(entry => entry.mechanic.Advice is { } advice
+                ? advice.TriggerKind == "status" && GuideNames.Normalize(advice.TriggerName) == GuideNames.Normalize(statusName)
+                : GuideRules.Mentions(entry.mechanic.Text, statusName)).ToArray();
+        if (candidates.Length != 1) return null;
+        var candidate = candidates[0];
+        return new(boss, candidate.phase, candidate.mechanic, GuideSignalKind.Status, source.InstanceID, source.OID, source.NameID,
+            status.ID, player.InstanceID, status.ExpireAt, GuideRules.StatusGuidance(candidate.mechanic, candidate.phase, statusName, boss),
+            "Status ID + exact name + current boss ownership") { OwnerID = source.OwnerID };
+    }
+}
+
+internal sealed class GuideActionQueue
+{
+    private sealed record Pending(GuideDuty Duty, GuideBoss Boss, ulong SourceID, uint SourceOID, uint SourceNameID,
+        ulong OwnerID, uint OwnerOID, uint OwnerNameID, uint ActionID, ulong TargetID, DateTime Until);
+    private readonly List<Pending> _pending = [];
+    public int Count => _pending.Count;
+
+    public void Clear() => _pending.Clear();
+
+    public void Enqueue(GuideDuty duty, GuideBoss boss, Actor source, Actor? owner, uint action, ulong target, DateTime now)
+    {
+        if (!duty.Valid || action == 0 || GuideSignalMatching.Owner(source, owner) is not { } bossActor) return;
+        _pending.RemoveAll(pending => pending.Until <= now || pending.SourceID == source.InstanceID && pending.ActionID == action);
+        if (_pending.Count >= 32) return;
+        _pending.Add(new(duty, boss, source.InstanceID, source.OID, source.NameID, source.OwnerID, bossActor.OID, bossActor.NameID,
+            action, target, now.AddSeconds(4)));
+    }
+
+    public GuideSignal[] Resolve(GuideDocument document, GuideDuty duty, GuideCombatFrame frame, DateTime now,
+        Func<ulong, Actor?> actor, Func<string, uint, string> name)
+    {
+        if (document.Duty != duty || frame is not { Boss: { } boss, Upcoming: false, Ambiguous: false })
+        {
+            Clear();
+            return [];
+        }
+        List<GuideSignal> resolved = [];
+        foreach (var pending in _pending.ToArray())
+        {
+            var source = actor(pending.SourceID);
+            var owner = GuideSignalMatching.Owner(source, pending.OwnerID == 0 ? null : actor(pending.OwnerID));
+            if (pending.Until <= now || pending.Duty != duty || !ReferenceEquals(pending.Boss, boss)
+                || source == null || source.InstanceID != pending.SourceID || source.OID != pending.SourceOID || source.NameID != pending.SourceNameID || source.OwnerID != pending.OwnerID
+                || owner == null || owner.OID != pending.OwnerOID || owner.NameID != pending.OwnerNameID)
+            {
+                _pending.Remove(pending);
+                continue;
+            }
+            var bossName = name("BNpcName", owner.NameID);
+            if (bossName.Length == 0) continue;
+            if (GuideNames.Boss(bossName) != GuideNames.Boss(boss.Name))
+            {
+                _pending.Remove(pending);
+                continue;
+            }
+            var actionName = name("Action", pending.ActionID);
+            if (actionName.Length == 0) continue;
+            _pending.Remove(pending);
+            var match = GuideSynchronization.Match(document, new(duty, source.InstanceID, source.OID, source.NameID, bossName,
+                pending.ActionID, actionName, pending.Until), now);
+            if (match == null || !ReferenceEquals(match.Boss, boss)) continue;
+            resolved.Add(new(boss, match.Phase, match.Mechanic, GuideSignalKind.Action, source.InstanceID, source.OID, source.NameID,
+                pending.ActionID, pending.TargetID, pending.Until, GuidanceKind.None, "Observed ActionEffect + current boss ownership + exact ability name")
+                { OwnerID = pending.OwnerID });
+        }
+        return resolved.ToArray();
+    }
+}
+
+internal static class GuideCentralPresentation
+{
+    public static GuideSignal[] Select(IEnumerable<GuideSignal> signals, ulong playerID)
+        => playerID == 0 ? [] : signals.OrderByDescending(signal => signal.TargetID == playerID).ThenBy(signal => signal.Until).Take(2).ToArray();
+
+    public static bool Owns(ActivePrediction prediction, IEnumerable<GuideSignal> displayed)
+        => displayed.Any(signal => signal.Kind == GuideSignalKind.Cast && signal.SourceID == prediction.CasterID && signal.ID == prediction.ActionID
+            && Math.Abs((signal.Until - prediction.Activation).TotalSeconds) < .4
+            && (signal.Mechanic.Advice != null || prediction.Guidance is GuidanceKind.None or GuidanceKind.Marker || signal.Guidance == prediction.Guidance));
+}
 
 internal sealed class GuideEncounterTracker
 {
@@ -116,7 +216,9 @@ internal sealed class GuideEncounterTracker
 
     public GuideCombatFrame Update(GuideDocument document, IReadOnlyList<GuideActorState> actors, bool partyWiped)
     {
-        if (_documentHash != document.SourceHash) { Reset(); _documentHash = document.SourceHash; }
+        var identity = document.SourceHash + document.ModelRevision + document.AnalysisLanguage;
+        if (_documentHash != identity) { Reset(); _documentHash = identity; }
+        if (_boss != null) _boss = document.Bosses.FirstOrDefault(boss => boss.Name == _boss.Name);
         if (partyWiped) Wipe();
         if (_waitingForReset)
         {
@@ -182,11 +284,15 @@ internal static class GuideDecisionBridge
         };
     }
 
-    public static DecisionHazard Annotation(GuideSignal signal, Vector2 source, string label, string sourceUrl)
+    public static DecisionHazard Annotation(GuideSignal signal, Vector2 source, string label, string sourceUrl, Vector2? statusTarget = null)
     {
+        var targetedStatus = signal.Kind == GuideSignalKind.Status && signal.TargetID != 0 && statusTarget is { } position
+            && float.IsFinite(position.X) && float.IsFinite(position.Y);
+        var anchor = targetedStatus ? statusTarget!.Value : source;
+        var targetID = targetedStatus ? signal.TargetID : signal.SourceID;
         var prediction = new ActivePrediction(signal.SourceID, signal.Kind == GuideSignalKind.Cast ? signal.ID : 0, GeometryKind.Unknown, MechanicKind.Marker,
-            source, source, 0, 0, 0, signal.Until, 1, signal.Evidence, "guide-annotation:" + signal.Kind + ":" + signal.ID,
-            signal.SourceID, GuidanceKind.Marker, Label: label)
+            anchor, anchor, 0, 0, 0, signal.Until, 1, signal.Evidence, "guide-annotation:" + signal.Kind + ":" + signal.ID,
+            targetID, GuidanceKind.Marker, Label: label)
         { GuideLinked = true, Provenance = "Guide signal annotation · " + sourceUrl };
         return new(unchecked(long.MinValue + (long)signal.SourceID + signal.ID), prediction, signal.Until, false, true, prediction.Provenance);
     }

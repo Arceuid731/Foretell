@@ -34,7 +34,7 @@ public sealed partial class ForetellEngine
                 if (_cfg.WorldOverlay) DrawWorld(p);
             }
         }, "world overlay");
-        if (_cfg.TextHints) DrawSafely(DrawTextHints, "text hints");
+        if (_cfg.TextHints || _cfg.GuideCentralAlerts || _cfg.TextHintsUnlocked) DrawSafely(DrawTextHints, "text hints");
         if (_cfg.SafePositionSuggestions) DrawSafely(DrawSafeSuggestion, "safe suggestion");
     }
 
@@ -295,9 +295,9 @@ public sealed partial class ForetellEngine
             _textWasUnlocked = _cfg.TextHintsUnlocked;
 
             var playerContext = _ws.Party[PartyState.PlayerSlot];
-            var active = ForetellDecisionCore.Prioritize(PresentationFrame, playerContext == null ? Vector2.Zero : V(playerContext.Position), playerContext?.InstanceID ?? 0)
+            var active = !_cfg.TextHints ? [] : ForetellDecisionCore.Prioritize(PresentationFrame, playerContext == null ? Vector2.Zero : V(playerContext.Position), playerContext?.InstanceID ?? 0)
                 .Select(h => h.Prediction).Where(p => p.Confidence >= _cfg.VisualConfidence / 100f && !GuideOwnsCentralPrediction(p)).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
-            var terrainCue = _ws.Party[PartyState.PlayerSlot] is { } localPlayer
+            var terrainCue = _cfg.TextHints && _ws.Party[PartyState.PlayerSlot] is { } localPlayer
                 && ActiveDynamicTerrainWarnings().Any(w => ForetellArenaBoundaryCore.Contains(w.Points, V(localPlayer.Position)));
             var hasActive = DrawGuideCentralHints() || active.Length != 0 || terrainCue;
             for (var i = 0; i < active.Length; ++i)
@@ -306,12 +306,12 @@ public sealed partial class ForetellEngine
                 if (i != 0) ImGui.Separator();
                 var remain = Math.Max(0, (prediction.Activation - _ws.CurrentTime).TotalSeconds);
                 ImGui.TextColored(ConfidenceTextColor(prediction.Confidence), $"{GuidanceInstruction(prediction.Guidance, prediction.Kind, prediction.Geometry)} — {UserFacingPredictionLabel(prediction)}");
-                ImGui.TextDisabled($"{remain:F1}s · {prediction.Provenance}{(prediction.Anticipated ? " · anticipated" : "")}");
+                ImGui.TextDisabled($"{remain:F1}s");
             }
             if (terrainCue)
-                ImGui.TextColored(new Vector4(.28f, .75f, 1, 1), "WATCH TERRAIN — possible floor change");
-            if (!hasActive)
-                ImGui.TextDisabled("Watching for signals · no actionable prediction");
+                ImGui.TextColored(new Vector4(.28f, .75f, 1, 1), GuideText("WATCH THE FLOOR", "SURVEILLE LE SOL", "BODEN BEACHTEN", "床に注意"));
+            if (!hasActive && _cfg.TextHintsUnlocked)
+                ImGui.TextDisabled(GuideText("Central alerts · drag to move", "Alertes centrales · déplacer ici", "Zentrale Warnungen · verschieben", "中央警告・ドラッグで移動"));
         }
         finally { ImGui.End(); }
     }

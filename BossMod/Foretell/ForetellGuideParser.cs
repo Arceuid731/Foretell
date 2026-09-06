@@ -8,6 +8,7 @@ namespace BossMod.Foretell;
 internal static class ForetellGuideParser
 {
     public const int MaxResponseBytes = 2 * 1024 * 1024;
+    internal static string PlainText(string html) => Clean(ReadHtml(html).Plain);
     private static readonly TimeSpan RegexBudget = TimeSpan.FromMilliseconds(250);
     private static readonly Regex Tokens = new("<!--[\\s\\S]*?-->|<![^>]*>|<[/]?[a-zA-Z][^>\"']*(?:(?:\"[^\"]*\"|'[^']*')[^>\"']*)*>|[^<]+|<", RegexOptions.CultureInvariant, RegexBudget);
     private static readonly Regex TagName = new(@"^</?([a-zA-Z][a-zA-Z0-9]*)", RegexOptions.CultureInvariant, RegexBudget);
@@ -24,7 +25,7 @@ internal static class ForetellGuideParser
         public string Anchor = anchor;
         public string Text = text;
         public List<Node> Children = [];
-        public string Plain => IgnoredTags.Contains(Tag) ? "" : Text + string.Concat(Children.Select(child => child.Plain + (child.Tag is "li" or "p" or "br" or "td" or "th" ? "\n" : "")));
+        public string Plain => IgnoredTags.Contains(Tag) ? "" : Text + string.Concat(Children.Select(child => child.Plain + (child.Tag is "li" or "p" or "br" or "td" or "th" or "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "div" or "tr" ? "\n" : "")));
         public IEnumerable<Node> Walk()
         {
             yield return this;
@@ -116,6 +117,24 @@ internal static class ForetellGuideParser
         if (bosses.Count == 0) throw new InvalidDataException("No supported boss sections with guide text were found.");
         if (bosses.Count > 32 || document.MechanicCount > 512) throw new InvalidDataException("Wiki boss structure exceeds preparation limits.");
         return document;
+    }
+
+    public static GuideDocument ReadPage(string response, GuideDuty duty, DateTime retrievedAt)
+    {
+        if (!duty.Valid || Encoding.UTF8.GetByteCount(response) > MaxResponseBytes) throw new InvalidDataException("Guide response exceeds limits or duty identity is missing.");
+        using var json = JsonDocument.Parse(response, new JsonDocumentOptions { MaxDepth = 32 });
+        if (!json.RootElement.TryGetProperty("parse", out var parsed)) throw new InvalidDataException("Wiki page unavailable.");
+        var title = parsed.GetProperty("title").GetString() ?? "";
+        var revision = parsed.GetProperty("revid").GetInt64();
+        if (GuideNames.Normalize(title) != GuideNames.Normalize(duty.EnglishName) || revision <= 0)
+            throw new InvalidDataException("Wiki page identity does not match this duty and variant.");
+        var html = parsed.GetProperty("text").GetString() ?? "";
+        var text = Clean(ReadHtml(html).Plain);
+        if (text.Length < 20) throw new InvalidDataException("Guide page contains no usable text.");
+        return new(GuideDocument.CurrentSchema, duty, title, revision, retrievedAt, GuideNames.Hash(html), [])
+        {
+            Page = new("Console Games Wiki", $"https://ffxiv.consolegameswiki.com/mediawiki/index.php?title={Uri.EscapeDataString(title)}&oldid={revision}", text, html)
+        };
     }
 
     private static void AddMechanic(string text, string anchor, List<GuideMechanic> mechanics, ref string context)

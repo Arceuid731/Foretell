@@ -58,7 +58,7 @@ internal sealed class ForetellWikiSource : IDisposable
 internal sealed class ForetellGuideCache(string directory)
 {
     private sealed record Envelope(string Payload, string Hash);
-    private const int MaxCacheBytes = 4 * 1024 * 1024;
+    private const int MaxCacheBytes = 24 * 1024 * 1024;
     private string FilePath(GuideDuty duty) => Path.Combine(directory, duty.Key + ".json");
 
     public GuideDocument? Read(GuideDuty duty)
@@ -73,8 +73,17 @@ internal sealed class ForetellGuideCache(string directory)
             if (document == null || document.Schema != GuideDocument.CurrentSchema || document.Duty != duty || document.Revision <= 0
                 || GuideNames.Normalize(document.Title) != GuideNames.Normalize(duty.EnglishName)
                 || document.SourceHash is not { Length: 64 }
-                || document.Bosses is not { Length: > 0 and <= 32 } || document.MechanicCount > 512
+                || document.Bosses is not { Length: <= 32 } || document.Bosses.Length == 0 && document.Page == null || document.MechanicCount > 512
                 || document.RetrievedAt > DateTime.UtcNow.AddMinutes(5)) return null;
+            if (document.Page is { } page && (page.Text.Length < 20 || page.Text.Length > GuideSourceAssembly.MaximumBytes
+                || page.Html.Length > GuideSourceAssembly.MaximumBytes || GuideNames.Hash(page.Html) != document.SourceHash
+                || !Uri.TryCreate(page.Url, UriKind.Absolute, out var url) || url.Scheme != Uri.UriSchemeHttps)) return null;
+            if (document.Sources == null || document.Providers == null) return null;
+            if (document.Sources.Length > 0)
+            {
+                var rebuilt = GuideSourceAssembly.Combine(duty, new(document.Sources, document.Providers), document.RetrievedAt);
+                if (rebuilt.SourceHash != document.SourceHash || rebuilt.Page != document.Page) return null;
+            }
             foreach (var boss in document.Bosses)
             {
                 if (boss.Name.Length is 0 or > 200 || boss.Phases.Length is 0 or > 64) return null;
@@ -84,7 +93,7 @@ internal sealed class ForetellGuideCache(string directory)
             }
             return document;
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NullReferenceException)
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException or NullReferenceException)
         {
             return null;
         }
@@ -122,8 +131,6 @@ internal sealed class ForetellGuideService : IDisposable
     {
         public DateTime StartedAt { get; } = DateTime.UtcNow;
         public System.Diagnostics.Stopwatch Watch { get; } = System.Diagnostics.Stopwatch.StartNew();
-        public long ReceivedBytes;
-        public long? TotalBytes;
         public bool FromCache;
     }
     private readonly object _gate = new();
@@ -131,7 +138,7 @@ internal sealed class ForetellGuideService : IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private readonly ForetellGuideCache _cache;
     private readonly Func<GuideDuty, CancellationToken, Task<string>> _fetch;
-    private readonly ForetellWikiSource? _source;
+    private readonly ForetellGuideProviders? _sources;
     private readonly Task _worker;
     private Request? _latest;
     private volatile GuideSnapshot _snapshot = new(null, GuideState.Idle);
@@ -145,8 +152,8 @@ internal sealed class ForetellGuideService : IDisposable
     {
         _cache = new(directory);
         _timings = new(directory);
-        if (fetch == null) { _source = new(); _fetch = _source.Fetch; }
-        else _fetch = fetch;
+        if (fetch == null) _sources = new(Path.Combine(directory, "providers"));
+        _fetch = fetch ?? ((_, _) => throw new InvalidOperationException("Provider service is not initialized."));
         _worker = Task.Run(Run);
     }
 
@@ -184,7 +191,7 @@ internal sealed class ForetellGuideService : IDisposable
                 {
                     StartedAt = request.StartedAt, ElapsedSeconds = request.Watch.Elapsed.TotalSeconds,
                     EstimatedSeconds = request.FromCache ? null : _timings.Estimate,
-                    ReceivedBytes = request.ReceivedBytes, TotalBytes = request.TotalBytes, FromCache = request.FromCache
+                    FromCache = request.FromCache
                 };
     }
 
@@ -199,23 +206,21 @@ internal sealed class ForetellGuideService : IDisposable
                 {
                     request.Cancellation.Token.ThrowIfCancellationRequested();
                     document = _cache.Read(request.Duty);
+                    if (document?.Page == null) document = null;
                     request.FromCache = document != null;
                     if (document != null) Publish(request, GuideState.Ready, document);
-                    if (document == null || request.Refresh || DateTime.UtcNow - document.RetrievedAt > TimeSpan.FromDays(7))
+                    if (document == null || request.Refresh || _sources != null || DateTime.UtcNow - document.RetrievedAt > TimeSpan.FromDays(7))
                     {
                         request.FromCache = false;
                         Publish(request, GuideState.Downloading, document);
                         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);
                         timeout.CancelAfter(TimeSpan.FromSeconds(25));
-                        var response = _source == null ? await _fetch(request.Duty, timeout.Token).ConfigureAwait(false)
-                            : await _source.Fetch(request.Duty, timeout.Token, (received, total) =>
-                            {
-                                request.ReceivedBytes = received; request.TotalBytes = total;
-                                Publish(request, GuideState.Downloading, document);
-                            }).ConfigureAwait(false);
+                        var fetched = _sources != null
+                            ? GuideSourceAssembly.Combine(request.Duty, await _sources.Fetch(request.Duty, timeout.Token).ConfigureAwait(false), DateTime.UtcNow)
+                            : ForetellGuideParser.ReadPage(await _fetch(request.Duty, timeout.Token).ConfigureAwait(false), request.Duty, DateTime.UtcNow);
                         timeout.Token.ThrowIfCancellationRequested();
                         Publish(request, GuideState.Preparing, document);
-                        document = ForetellGuideParser.Parse(response, request.Duty, DateTime.UtcNow);
+                        document = fetched;
                         _timings.Record(request.Watch.Elapsed.TotalSeconds);
                         timeout.Token.ThrowIfCancellationRequested();
                         try { _cache.Write(document); }
@@ -243,7 +248,7 @@ internal sealed class ForetellGuideService : IDisposable
             }
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        finally { _source?.Dispose(); }
+        finally { _sources?.Dispose(); }
     }
 
     public void Dispose()

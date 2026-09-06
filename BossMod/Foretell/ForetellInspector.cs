@@ -127,9 +127,9 @@ public sealed partial class ForetellEngine
     private static string ModeDescription(ForetellMode mode) => mode switch
     {
         ForetellMode.Legacy => "BossMod Reborn presentation only; Foretell guidance is hidden.",
-        ForetellMode.Observe => "BMR presentation with background observation; Foretell combat overlays are hidden. Use Hybrid to see both.",
-        ForetellMode.Hybrid => "Shows the complete BMR and Foretell presentations together.",
-        ForetellMode.Foretell => "Pure Foretell presentation; legacy BMR encounter hints are hidden.",
+        ForetellMode.Observe => "BMR alerts only; Foretell continues recording encounters.",
+        ForetellMode.Hybrid => "Foretell and BMR alerts.",
+        ForetellMode.Foretell => "Foretell alerts.",
         _ => ""
     };
 
@@ -172,15 +172,6 @@ public sealed partial class ForetellEngine
         ImGui.TextWrapped(_guideDuty != null ? GuideDutyName(_guideDuty) : GuideText("Outside an instance · guides can be prepared in Sources", "Hors instance · préparation possible dans Sources", "Außerhalb einer Instanz · Vorbereitung unter Quellen", "コンテンツ外・原典タブから準備可能"));
         DrawGuideModelStatus(false);
 
-        ImGui.TextUnformatted("Mode");
-        ImGui.SameLine();
-        DrawModeButton(ForetellMode.Legacy);
-        ImGui.SameLine();
-        DrawModeButton(ForetellMode.Observe);
-        ImGui.SameLine();
-        DrawModeButton(ForetellMode.Hybrid);
-        ImGui.SameLine();
-        DrawModeButton(ForetellMode.Foretell);
         ImGui.Separator();
     }
 
@@ -218,7 +209,6 @@ public sealed partial class ForetellEngine
 
     private void DrawTelemetryDashboard()
     {
-        DrawRecommendedNextStep();
         DrawTelemetryStatus();
 
         if (!_store.Encounters.TryGetValue(_inspectorTerritory, out var encounter))
@@ -374,7 +364,6 @@ public sealed partial class ForetellEngine
                 changed |= ImGui.SliderFloat("Open-world radius (yalms)", ref _cfg.RadarAutoMinimumRadius, 10, 60);
                 _cfg.RadarAutoMaximumRadius = Math.Max(_cfg.RadarAutoMaximumRadius, _cfg.RadarAutoMinimumRadius);
                 changed |= ImGui.SliderFloat("Auto zoom maximum (yalms)", ref _cfg.RadarAutoMaximumRadius, Math.Max(20, _cfg.RadarAutoMinimumRadius), 120);
-                ImGui.TextDisabled("Compact rooms fit their observed bounds. Boss fights focus on the combat area; open terrain uses the radius above. Auto framing includes rectangular arena corners.");
             }
             var terrainStyle = (int)_cfg.RadarTerrainStyle;
             if (ImGui.Combo("Terrain drawing", ref terrainStyle, RadarTerrainStyleLabels, RadarTerrainStyleLabels.Length))
@@ -394,14 +383,6 @@ public sealed partial class ForetellEngine
                     | Channel(terrainColor.Z) << 16 | Channel(terrainColor.W) << 24;
                 changed = true;
             }
-            if (_cfg.RadarShape == ForetellRadarShape.Auto)
-                ImGui.TextDisabled(_topologyAnalysis is { PassableCells: > 0 }
-                    ? _topologyMeshPrimary
-                        ? $"Auto uses the local PCB heightfield ({_topologyAnalysis.PassableCells:N0} connected cells from {_topologyMeshTriangles:N0} triangles; {_topologyFirstSurfaceMilliseconds:F0} ms; {_topologySampleRadius:F0}y radius)."
-                        : $"Auto uses the raycast compatibility mesh ({_topologyAnalysis.PassableCells:N0} connected cells; {_topologyFrontier.Pending:N0} probes pending; first surface {_topologyFirstSurfaceMilliseconds:F0} ms; {_topologySampleRadius:F0}y radius)."
-                    : CurrentArenaBoundary is { } boundary
-                        ? $"Auto temporarily uses a near-enclosed wall outline ({boundary.Hits}/{boundary.Rays} rays)."
-                        : "Auto is building the nearby walkable mesh; a circle is used until the connected seed is ready.");
             if (ImGui.Button("Reset radar to top-right"))
             {
                 _cfg.RadarPositionX = -1;
@@ -762,25 +743,6 @@ public sealed partial class ForetellEngine
             ImGui.CloseCurrentPopup();
         }
         ImGui.EndPopup();
-    }
-
-    private void DrawRecommendedNextStep()
-    {
-        var learned = _store.Encounters.TryGetValue(_territory, out var encounter) ? encounter.Mechanics.Count : 0;
-        var high = encounter?.Mechanics.Values.Count(m => m.GuidanceConfidence >= _cfg.WarningConfidence / 100f) ?? 0;
-        var recommendation = _cfg.Mode switch
-        {
-            ForetellMode.Legacy => "Foretell is hidden. Switch to Observe to learn without changing the combat UI.",
-            ForetellMode.Observe when learned < 3 => "Stay in Observe: more repeated evidence is needed before comparison is useful.",
-            ForetellMode.Observe => $"{learned} candidates learned, including {high} high-confidence. Hybrid is the useful next step.",
-            ForetellMode.Hybrid when high < 3 => "Keep Hybrid enabled: BMR remains complete while you review Foretell's learned mechanics.",
-            ForetellMode.Hybrid => $"Combined validation mode: BMR and Foretell are both active; {high} Foretell candidates are high-confidence.",
-            ForetellMode.Foretell => "Pure Foretell is active. Review ambiguous mechanics after the run.",
-            _ => ""
-        };
-        ImGui.TextUnformatted("Recommended next step");
-        ImGui.SameLine();
-        ImGui.TextWrapped(recommendation);
     }
 
     private static string ConfidenceBadge(float confidence)
@@ -1241,14 +1203,16 @@ public sealed partial class ForetellEngine
 
     private void DrawInspectorHelp()
     {
-        if (ImGui.CollapsingHeader("How Foretell works", ImGuiTreeNodeFlags.DefaultOpen))
+        if (ImGui.CollapsingHeader(GuideText("Getting started", "Bien démarrer", "Erste Schritte", "使い方"), ImGuiTreeNodeFlags.DefaultOpen))
         {
-            ImGui.BulletText("Observe raw, semantic and native game evidence.");
-            ImGui.BulletText("Correlate signals with effects, movement, statuses and deaths.");
-            ImGui.BulletText("Surface guidance only after confidence gates are met.");
-            ImGui.BulletText("Download instance guides, retain source conditions and associate documented mechanics with the identified boss.");
-            ImGui.BulletText("Guide summaries are local translations, not yet whole-page AI extraction. They cannot invent geometry or targets.");
-            ImGui.BulletText("BMR modules remain separate. Observed memory verifies/fills gaps; it is not replaced by guide prose.");
+            ImGui.TextWrapped(GuideText("Enter an instance to prepare its guide. The mechanic list follows the next boss, then the boss you are fighting.",
+                "Entre dans une instance pour préparer son guide. La liste affiche le prochain boss, puis celui que tu affrontes.",
+                "Beim Betreten wird die Anleitung vorbereitet. Die Liste folgt dem nächsten und dann dem aktuellen Boss.",
+                "入場すると攻略を準備します。一覧は次のボス、戦闘中は現在のボスを表示します。"));
+            ImGui.TextWrapped(GuideText("Hover a mechanic for details. Unlock overlays in Display to move or resize them.",
+                "Survole une mécanique pour les détails. Déverrouille les éléments dans Affichage pour les déplacer ou les redimensionner.",
+                "Mechanik für Details berühren. Anzeigen zum Verschieben oder Skalieren entsperren.",
+                "ギミックにカーソルを合わせると詳細を表示。表示設定でロック解除すると移動・サイズ変更できます。"));
         }
 
         if (ImGui.CollapsingHeader("Modes", ImGuiTreeNodeFlags.DefaultOpen))

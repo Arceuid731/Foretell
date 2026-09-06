@@ -11,7 +11,13 @@ internal static class GuideCaptureTests
         var mechanic = new GuideMechanic("Storm", "If marked, spread out.", "Storm");
         var phase = new GuidePhase("Phase 1", "If protected, do not move.", [mechanic]);
         var boss = new GuideBoss("Boss", "Boss", [phase]);
-        var document = new GuideDocument(1, new(42, session.Territory, "Fixture"), "Fixture", 123, DateTime.UtcNow, GuideNames.Hash("fixture-source"), [boss]);
+        var document = new GuideDocument(1, new(42, session.Territory, "Fixture"), "Fixture", 123, DateTime.UtcNow, GuideNames.Hash("fixture-source"), [boss])
+        {
+            Page = new("Fixture provider", "https://example.org/fixture", "Complete source with all conditions.", "<p>Complete source with all conditions.</p>"),
+            Sources = [new("Community Workbook", "https://docs.google.com/spreadsheets/d/fixture/edit", "Full worksheet text", "Full original worksheet", "xlsx")],
+            Providers = [new("Community Workbook", "Ready", "https://docs.google.com/spreadsheets/d/fixture/edit")],
+            ModelRevision = "fixture-model-revision"
+        };
         return new(DateTime.UtcNow, session.ID, session.Territory, document.Duty, GuideLanguage.French, document,
             new("Ready", "", true, .2, "Ready", 1, 1, boss.Name, false, false, true)
             { ModelRuntime = new(GuideModelStage.Unloaded, null, "CPU", 16384, 8000, true), SummaryIssue = "Earlier excerpt exceeded context" },
@@ -57,7 +63,12 @@ internal static class GuideCaptureTests
                 Check(index.RootElement.GetProperty("availability").GetString() == "captured" && index.RootElement.GetProperty("complete").GetBoolean(), "Guide availability is wrong");
                 using var source = Read(archive, "guides/" + original.Guides.Single(file => file.Kind == "source").File);
                 Check(source.RootElement.GetProperty("Revision").GetInt32() == 123, "Source revision missing");
+                Check(source.RootElement.GetProperty("Sources")[0].GetProperty("Original").GetString() == "Full original worksheet"
+                    && source.RootElement.GetProperty("Providers")[0].GetProperty("Status").GetString() == "Ready", "Aggregated originals or provider state missing from export");
+                Check(source.RootElement.GetProperty("Page").GetProperty("Text").GetString() == "Complete source with all conditions."
+                    && source.RootElement.GetProperty("Page").GetProperty("Html").GetString()!.StartsWith("<p>"), "Full guide content not exported");
                 using var adapted = Read(archive, "guides/" + original.Guides.Single(file => file.Kind == "adapted").File);
+                Check(adapted.RootElement.GetProperty("modelRevision").GetString() == "fixture-model-revision", "Adaptation exported the default model instead of the actual one");
                 var row = adapted.RootElement.GetProperty("Adapted")[0].GetProperty("Phases")[0].GetProperty("Mechanics")[0];
                 Check(row.GetProperty("Summary").GetString() == "Écarte-toi si marqué." && row.GetProperty("ActionID").GetUInt32() == 51
                     && row.GetProperty("Instruction").GetString() == "À VÉRIFIER", "Adapted text, contextual ID or abstention missing");

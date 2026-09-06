@@ -4,129 +4,164 @@ namespace BossMod.Foretell;
 
 public sealed partial class ForetellEngine
 {
+    private void DrawGuideProviderStatus(GuideDocument? document)
+    {
+        if (document?.Providers is not { Length: > 0 })
+        {
+            ImGui.TextWrapped("Community workbook · Raven’s Reminders · Console Games Wiki · Gamer Escape");
+            return;
+        }
+        foreach (var provider in document.Providers)
+        {
+            var state = provider.Status switch
+            {
+                "Ready" => GuideText("Up to date", "À jour", "Aktuell", "最新"),
+                "Cached" => GuideText("Saved copy", "Copie enregistrée", "Gespeicherte Kopie", "保存済み"),
+                "Missing" => GuideText("No guide", "Pas de guide", "Keine Anleitung", "攻略なし"),
+                _ => GuideText("Unavailable", "Indisponible", "Nicht verfügbar", "取得不可")
+            };
+            ImGui.TextUnformatted(provider.Provider + " · " + state);
+            var page = document.Sources.FirstOrDefault(source => source.Provider == provider.Provider);
+            if (page != null)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton(GuideText("Open", "Ouvrir", "Öffnen", "開く") + "###Source" + provider.Provider)) Dalamud.Utility.Util.OpenLink(page.Url);
+            }
+        }
+    }
+
+    private GuideDocument? PreparedGuide => _guideSummaries?.Snapshot is { Prepared: { } document } snapshot
+        && snapshot.SourceHash == _guides?.Snapshot.Document?.SourceHash && snapshot.Language == GuideContentLanguage
+        && snapshot.ModelID == GuideModelCatalog.Get(_cfg.GuideModelID).ID ? document : null;
+
     internal static string GuideModelStageLabel(GuideModelStage stage, GuideLanguage language) => GuidePreparation.Local(language,
         stage switch
         {
-            GuideModelStage.Verifying => "Checking files", GuideModelStage.Downloading => "Downloading",
-            GuideModelStage.Loading => "Loading model", GuideModelStage.Loaded => "Loaded · idle",
-            GuideModelStage.Tokenizing => "Counting tokens", GuideModelStage.Generating => "Inference active",
-            GuideModelStage.Stopping => "Unloading", GuideModelStage.Failed => "Process exited unexpectedly", _ => "Unloaded"
+            GuideModelStage.Downloading => "Downloading", GuideModelStage.Verifying => "Checking download",
+            GuideModelStage.Loading => "Starting", GuideModelStage.Loaded => "Ready",
+            GuideModelStage.Tokenizing or GuideModelStage.Generating => "Analyzing guide",
+            GuideModelStage.Stopping => "Stopping", GuideModelStage.Failed => "Stopped", _ => "At rest"
         },
         stage switch
         {
-            GuideModelStage.Verifying => "Vérification des fichiers", GuideModelStage.Downloading => "Téléchargement",
-            GuideModelStage.Loading => "Chargement du modèle", GuideModelStage.Loaded => "Chargé · en attente",
-            GuideModelStage.Tokenizing => "Comptage des tokens", GuideModelStage.Generating => "Inférence en cours",
-            GuideModelStage.Stopping => "Déchargement", GuideModelStage.Failed => "Arrêt inattendu du processus", _ => "Déchargé"
+            GuideModelStage.Downloading => "Téléchargement", GuideModelStage.Verifying => "Vérification du téléchargement",
+            GuideModelStage.Loading => "Démarrage", GuideModelStage.Loaded => "Prêt",
+            GuideModelStage.Tokenizing or GuideModelStage.Generating => "Analyse du guide",
+            GuideModelStage.Stopping => "Arrêt en cours", GuideModelStage.Failed => "Arrêté", _ => "Au repos"
         },
         stage switch
         {
-            GuideModelStage.Verifying => "Dateien prüfen", GuideModelStage.Downloading => "Download",
-            GuideModelStage.Loading => "Modell laden", GuideModelStage.Loaded => "Geladen · bereit",
-            GuideModelStage.Tokenizing => "Token zählen", GuideModelStage.Generating => "Inferenz aktiv",
-            GuideModelStage.Stopping => "Entladen", GuideModelStage.Failed => "Prozess unerwartet beendet", _ => "Nicht geladen"
+            GuideModelStage.Downloading => "Download", GuideModelStage.Verifying => "Download prüfen",
+            GuideModelStage.Loading => "Startet", GuideModelStage.Loaded => "Bereit",
+            GuideModelStage.Tokenizing or GuideModelStage.Generating => "Anleitung analysieren",
+            GuideModelStage.Stopping => "Wird beendet", GuideModelStage.Failed => "Beendet", _ => "Inaktiv"
         },
         stage switch
         {
-            GuideModelStage.Verifying => "ファイル検証中", GuideModelStage.Downloading => "ダウンロード中",
-            GuideModelStage.Loading => "モデル読込中", GuideModelStage.Loaded => "読込済み・待機中",
-            GuideModelStage.Tokenizing => "トークン計数中", GuideModelStage.Generating => "推論中",
-            GuideModelStage.Stopping => "解放中", GuideModelStage.Failed => "プロセスの予期せぬ終了", _ => "未読込"
+            GuideModelStage.Downloading => "ダウンロード中", GuideModelStage.Verifying => "検証中",
+            GuideModelStage.Loading => "起動中", GuideModelStage.Loaded => "準備完了",
+            GuideModelStage.Tokenizing or GuideModelStage.Generating => "攻略を解析中",
+            GuideModelStage.Stopping => "停止中", GuideModelStage.Failed => "停止", _ => "休止中"
         });
 
     private void DrawGuideModelStatus(bool details)
     {
         var runtime = _guideSummaries?.Runtime ?? new();
-        ImGui.TextColored(runtime.ProcessID != null ? ProductAccent : GuideColor(_cfg.GuideTextColor),
-            "IA · " + GuideModelStageLabel(runtime.Stage, GuideClientLanguage)
-            + (runtime.ProcessID != null ? $" · {runtime.Backend} · PID {runtime.ProcessID}" : ""));
+        var profile = GuideModelCatalog.Get(runtime.ProcessID != null ? runtime.ModelID : _cfg.GuideModelID);
+        ImGui.TextDisabled(profile.Name + " · " + GuideModelStageLabel(runtime.Stage, GuideClientLanguage));
         if (!details) return;
-        ImGui.TextWrapped(GuideText("Active profile: Qwen3-1.7B · Q8_0 · llama.cpp b10809", "Profil actuel : Qwen3-1.7B · Q8_0 · llama.cpp b10809", "Aktives Profil: Qwen3-1.7B · Q8_0 · llama.cpp b10809", "現在のプロファイル：Qwen3-1.7B・Q8_0・llama.cpp b10809"));
-        ImGui.TextWrapped(runtime.VerifiedThisSession
-            ? GuideText("Model file SHA256 verified during this plugin session. Installed on disk does not mean loaded in memory.", "Fichier du modèle vérifié par SHA256 pendant cette session du plugin. Installé sur disque ne signifie pas chargé en mémoire.", "Modelldatei in dieser Sitzung per SHA256 geprüft. Auf der Festplatte bedeutet nicht im Speicher geladen.", "このセッションでモデルのSHA256検証済み。ディスク上の保存とメモリ読込は別です。")
-            : GuideText("Disk files have not been verified in this plugin session; cache-only use does not start or verify the model.", "Fichiers disque non vérifiés pendant cette session du plugin ; consulter le cache ne lance ni ne vérifie le modèle.", "Dateien in dieser Sitzung noch nicht geprüft; Cache-Nutzung startet oder prüft das Modell nicht.", "このセッションではファイル未検証。キャッシュ参照だけではモデルを起動・検証しません。"));
-        if (runtime.ContextTokens > 0)
-            ImGui.TextWrapped(GuideText($"Last/current process: context {runtime.ContextTokens:N0} tokens · last prompt {runtime.PromptTokens?.ToString("N0") ?? "—"}",
-                $"Dernier processus / en cours : contexte {runtime.ContextTokens:N0} tokens · dernier prompt {runtime.PromptTokens?.ToString("N0") ?? "—"}",
-                $"Letzter/aktueller Prozess: Kontext {runtime.ContextTokens:N0} Token · Prompt {runtime.PromptTokens?.ToString("N0") ?? "—"}",
-                $"直近のプロセス：コンテキスト{runtime.ContextTokens:N0}・プロンプト{runtime.PromptTokens?.ToString("N0") ?? "—"}トークン"));
+        ImGui.TextWrapped($"Process: {runtime.ProcessID?.ToString() ?? "—"} · {runtime.Backend} · context {runtime.ContextTokens} · prompt {runtime.PromptTokens?.ToString() ?? "—"}");
+        ImGui.TextWrapped(profile.Revision);
+        if (_guideSummaries?.Snapshot?.LastIssue is { } issue) ImGui.TextWrapped(issue);
     }
 
     private void DrawGuideModelManager()
     {
-        DrawGuideModelStatus(true);
-        ImGui.Separator();
-        var changed = ImGui.Checkbox(GuideText("Enable local AI preparation", "Activer la préparation IA locale", "Lokale KI-Vorbereitung aktivieren", "ローカルAI準備を有効化"), ref _cfg.GuideLocalSummaries);
-        ImGui.TextWrapped(GuideText("Downloads missing model/runtime files automatically when an uncached guide excerpt needs preparation outside combat. No cloud inference. Disabling unloads the process; files are retained.",
-            "Télécharge automatiquement les fichiers manquants lorsqu’un passage de guide non préparé en cache doit être traité hors combat. Aucune inférence cloud. Désactiver décharge le processus, sans supprimer les fichiers.",
-            "Fehlende Dateien werden bei ungecachten Abschnitten außerhalb des Kampfes geladen. Keine Cloud-Inferenz. Deaktivieren entlädt den Prozess, behält Dateien.",
-            "非戦闘中に未準備の攻略が必要な場合のみ不足ファイルを自動取得。クラウド推論なし。無効化はプロセスを停止しファイルは保持。"));
-        ImGui.BeginDisabled(_guideCombat);
-        changed |= ImGui.Checkbox(GuideText("Prefer Vulkan GPU (automatic CPU fallback)", "Préférer le GPU Vulkan (repli CPU automatique)", "Vulkan bevorzugen (CPU-Fallback)", "Vulkan優先（CPUへ自動切替）"), ref _cfg.GuideSummaryGpu);
-        if (ImGui.BeginCombo(GuideText("Context budget", "Budget de contexte", "Kontextbudget", "コンテキスト上限"), $"{_cfg.GuideContextTokens:N0} tokens"))
+        var selected = GuideModelCatalog.Get(_cfg.GuideModelID);
+        var changed = false;
+        ImGui.SetNextItemWidth(300);
+        if (ImGui.BeginCombo(GuideText("Model", "Modèle", "Modell", "モデル"), selected.Name))
         {
-            foreach (var size in new[] { 4096, 8192, 16384, 32768 })
-                if (ImGui.Selectable($"{size:N0}", _cfg.GuideContextTokens == size)) { _cfg.GuideContextTokens = size; changed = true; }
+            foreach (var profile in GuideModelCatalog.Profiles)
+                if (ImGui.Selectable(profile.Name, profile.ID == selected.ID)) { _cfg.GuideModelID = profile.ID; changed = true; }
             ImGui.EndCombo();
         }
-        changed |= ImGui.SliderInt(GuideText("Committed RAM cap (GiB)", "Plafond de RAM engagée (Gio)", "RAM-Limit (GiB)", "コミットRAM上限（GiB）"), ref _cfg.GuideMemoryGiB, 4, 12);
-        if (ImGui.Button(GuideText("Retry unresolved excerpts", "Relancer les passages non préparés", "Ungeklärte Abschnitte erneut versuchen", "未準備の文章を再試行"))) _guideSummaries?.Retry();
+        selected = GuideModelCatalog.Get(_cfg.GuideModelID);
+        ImGui.TextDisabled(GuideText($"First download: {selected.Asset.Bytes / 1e9:F2} GB", $"Premier téléchargement : {selected.Asset.Bytes / 1e9:F2} Go",
+            $"Erster Download: {selected.Asset.Bytes / 1e9:F2} GB", $"初回ダウンロード：{selected.Asset.Bytes / 1e9:F2} GB"));
+        DrawGuideModelStatus(false);
+        DrawGuideSummaryProgress(_guides?.Snapshot.Document);
+        changed |= ImGui.Checkbox(GuideText("Prepare guides automatically", "Préparer les guides automatiquement", "Anleitungen automatisch vorbereiten", "攻略を自動準備"), ref _cfg.GuideLocalSummaries);
+        changed |= ImGui.Checkbox(GuideText("Use graphics card", "Utiliser la carte graphique", "Grafikkarte verwenden", "GPUを使用"), ref _cfg.GuideSummaryGpu);
+        ImGui.BeginDisabled(_guideCombat || _guides?.Snapshot.Document == null);
+        if (ImGui.Button(GuideText("Analyze again", "Relancer l’analyse", "Erneut analysieren", "再解析"))) _guideSummaries?.Retry(true);
         ImGui.EndDisabled();
+        if (_guideCombat) ImGui.TextDisabled(GuideText("Analysis resumes after combat.", "L’analyse reprend après le combat.", "Analyse wird nach dem Kampf fortgesetzt.", "戦闘後に解析を再開。"));
+        if (ImGui.CollapsingHeader(GuideText("Performance", "Performances", "Leistung", "性能")))
+        {
+            ImGui.BeginDisabled(_guideCombat);
+            changed |= ImGui.SliderInt(GuideText("Maximum RAM (GiB)", "RAM maximale (Gio)", "Maximaler RAM (GiB)", "最大RAM（GiB）"), ref _cfg.GuideMemoryGiB, 4, 12);
+            if (ImGui.BeginCombo(GuideText("Maximum context", "Contexte maximal", "Maximaler Kontext", "最大コンテキスト"), $"{_cfg.GuideContextTokens / 1024}K"))
+            {
+                foreach (var size in new[] { 8192, 16384, 32768, 65536, 131072 })
+                    if (ImGui.Selectable($"{size / 1024}K", size == _cfg.GuideContextTokens)) { _cfg.GuideContextTokens = size; changed = true; }
+                ImGui.EndCombo();
+            }
+            ImGui.TextWrapped(GuideText("Reduce these settings if the game slows down.", "Réduis ces réglages si le jeu ralentit.", "Bei Spielruckeln diese Werte reduzieren.", "ゲームが重い場合は設定を下げてください。"));
+            ImGui.EndDisabled();
+        }
         if (changed) _cfg.Modified.Fire();
-        ImGui.TextWrapped(GuideText("Model: 1.83 GB on disk + runtime 18–35 MB. 2 CPU threads, 15% total CPU cap. RAM cap is not an allocation or a VRAM limit; a larger context increases memory and preparation time. Settings apply to the next process; prepared cache is retained.",
-            "Modèle : 1,83 Go sur disque + moteur 18–35 Mo. 2 threads CPU, plafond de 15 % du CPU total. Le plafond RAM n’est ni une allocation ni une limite de VRAM ; un contexte plus grand augmente la mémoire et le temps de préparation. Réglages appliqués au prochain processus ; cache préparé conservé.",
-            "Modell: 1,83 GB + Laufzeit 18–35 MB. 2 CPU-Threads, 15% Gesamt-CPU. RAM-Limit ist keine Reservierung oder VRAM-Grenze. Größerer Kontext kostet Speicher und Zeit. Einstellungen gelten ab nächstem Prozess; Cache bleibt erhalten.",
-            "モデル1.83 GB＋実行環境18～35 MB。CPU 2スレッド・全体の15%上限。RAM上限は予約やVRAM制限ではありません。コンテキスト拡大はメモリと準備時間を増やします。設定は次のプロセスから適用、キャッシュ保持。"));
-        ImGui.TextWrapped(GuideText("Full prompt token count includes the chat template and output reserve. Overflow is reported, never silently clipped. Combat cancels inference and unloads the process; reading prepared results does not keep it running.",
-            "Comptage du prompt complet, gabarit de conversation et réserve de réponse inclus. Tout dépassement est signalé, jamais coupé silencieusement. Le combat annule l’inférence et décharge le processus ; consulter les résultats préparés ne le maintient pas actif.",
-            "Tokenzählung mit Vorlage und Ausgabereserve. Überschreitung wird gemeldet, nie still gekürzt. Im Kampf wird abgebrochen und entladen. Cache-Lesen hält keinen Prozess aktiv.",
-            "テンプレートと出力予約を含むトークン計数。超過は明示し、切り捨てません。戦闘時は推論を中止し解放。準備済み結果の参照で起動は継続しません。"));
-        DrawGuideSummaryProgress(_liveGuide ?? _guides?.Snapshot.Document);
-        ImGui.Separator();
-        ImGui.TextWrapped(GuideText("Current limitation: AI translates already-extracted excerpts. Whole-page semantic boss/mechanic extraction and additional source providers are not implemented yet. A new model alone does not fix the parser.",
-            "Limite actuelle : l’IA traduit des passages déjà extraits. L’analyse sémantique de la page entière en boss/mécaniques et les autres fournisseurs de guides restent à implémenter. Changer de modèle seul ne corrige pas le parseur.",
-            "Aktuell übersetzt KI bereits extrahierte Abschnitte. Semantische Ganzseitenanalyse und weitere Quellen fehlen noch. Ein Modellwechsel allein repariert den Parser nicht.",
-            "現在のAIは抽出済み文章を翻訳。ページ全体の意味解析と他の情報源は未実装。モデル変更だけではパーサーは修正されません。"));
     }
 
     private void DrawInstanceDashboard()
     {
-        ImGui.TextColored(ProductAccent, GuideText("GUIDE → CURRENT BOSS → LIVE SIGNAL", "GUIDE → BOSS ACTUEL → SIGNAL EN JEU", "ANLEITUNG → BOSS → LIVE-SIGNAL", "攻略→現在のボス→ゲーム内シグナル"));
-        if (!_cfg.EnableGuides) ImGui.TextWrapped(GuideText("Automatic guides disabled. Enable them in Sources & guides.", "Guides automatiques désactivés. Activation dans Sources et guides.", "Automatische Anleitungen deaktiviert. Aktivierung unter Quellen.", "攻略の自動取得は無効。原典タブから有効化。"));
-        else if (_guideDuty != null && _guides?.Snapshot is { } snapshot && snapshot.Duty == _guideDuty) DrawGuideState(snapshot);
-        else ImGui.TextWrapped(GuideText("The current instance is detected automatically. No hardcoded duty list.", "L’instance actuelle est détectée automatiquement. Aucune liste d’instances codée en dur.", "Instanzen werden automatisch erkannt, ohne feste Liste.", "コンテンツを自動検出。固定リストはありません。"));
+        if (_guideDuty == null)
+        {
+            ImGui.TextWrapped(GuideText("Enter an instance or choose a guide in Sources and guides.", "Entre dans une instance ou choisis un guide dans Sources et guides.",
+                "Instanz betreten oder unter Quellen eine Anleitung wählen.", "コンテンツに入場するか原典から攻略を選択。"));
+            return;
+        }
+        if (!_cfg.EnableGuides)
+        {
+            if (ImGui.Button(GuideText("Enable guides", "Activer les guides", "Anleitungen aktivieren", "攻略を有効化"))) { _cfg.EnableGuides = true; _cfg.Modified.Fire(); }
+            return;
+        }
         DrawGuideSummaryProgress();
         if (_cfg.Mode is ForetellMode.Observe or ForetellMode.Legacy)
-            ImGui.TextWrapped(GuideText("Foretell combat display is hidden in this mode. Hybrid displays BMR and Foretell together.", "L’affichage Foretell en combat est masqué dans ce mode. Hybrid affiche BMR et Foretell ensemble.", "Foretell-Kampfanzeige ist in diesem Modus verborgen. Hybrid zeigt BMR und Foretell.", "このモードではForetell戦闘表示は非表示。HybridでBMRと同時表示。"));
-        ImGui.Separator();
-        if (_guideFrame.Boss is { } boss && _cfg.EnableGuides)
+            if (ImGui.Button(GuideText("Enable Foretell alerts", "Activer les alertes Foretell", "Foretell-Warnungen aktivieren", "Foretell警告を有効化"))) SetMode(ForetellMode.Foretell);
+        if (_guideFrame.Boss is { } boss)
         {
-            ImGui.TextColored(ProductAccent, (_guideFrame.Upcoming ? GuideText("Next: ", "À venir : ", "Als Nächstes: ", "次：") : GuideText("Current: ", "Actuel : ", "Aktuell: ", "現在：")) + GuideBossName(boss));
+            ImGui.TextColored(ProductAccent, (_guideFrame.Upcoming ? GuideText("Next: ", "À venir : ", "Als Nächstes: ", "次：") : "") + GuideBossName(boss));
+            if (boss.Summary.Length > 0) ImGui.TextWrapped(boss.Summary);
+            ImGui.Separator();
             var signals = LiveGuideSignals().ToArray();
             foreach (var phase in boss.Phases)
                 foreach (var mechanic in phase.Mechanics)
                 {
                     var live = signals.FirstOrDefault(signal => signal.Boss == boss && signal.Phase == phase && signal.Mechanic == mechanic);
                     var instruction = GuideChecklistInstruction(boss, phase, mechanic, live);
-                    ImGui.TextColored(GuideColor(live != null ? _cfg.GuideActiveColor : _cfg.GuideTextColor), GuideMechanicName(boss, mechanic) + " — " + instruction);
+                    ImGui.TextColored(GuideColor(live != null ? _cfg.GuideActiveColor : _cfg.GuideTextColor), GuideMechanicName(boss, mechanic) + " — " + GuideRolePresentation.Prefix(mechanic.Advice?.Roles ?? []) + instruction);
                     if (ImGui.IsItemHovered()) DrawGuideMechanicTooltip(boss, phase, mechanic, instruction);
                 }
-            if (!boss.Phases.Any(phase => phase.Mechanics.Length > 0))
-                ImGui.TextWrapped(GuideText("Narrative guide only: consult Sources; no named mechanic can trigger a guide alert yet.", "Guide narratif uniquement : voir Sources ; aucune mécanique nommée ne peut encore déclencher d’alerte du guide.", "Nur Textanleitung: siehe Quellen. Noch keine benannten Mechanik-Warnungen.", "文章形式のみ。原典を参照。名前付きギミック警告は未対応。"));
         }
+        else if (_liveGuide == null && _guides?.Snapshot is { } snapshot) DrawGuideState(snapshot);
         else ImGui.TextWrapped(_guideFrame.Ambiguous
-            ? GuideText("Ambiguous boss identity: no mechanics from another boss are displayed.", "Identité du boss ambiguë : aucune mécanique d’un autre boss n’est affichée.", "Boss mehrdeutig: keine fremden Mechaniken angezeigt.", "ボスの特定が曖昧なため他ボスのギミックは表示しません。")
-            : GuideText("Waiting for a guide and an identified boss.", "En attente d’un guide et d’un boss identifié.", "Warte auf Anleitung und erkannten Boss.", "攻略とボス特定を待機中。"));
-        ImGui.Separator();
-        ImGui.TextWrapped(GuideText("Guide cues supplement BMR and observed client signals. Radar/3D use established geometry, never an AI-drawn guess. Display configures overlays; Advanced keeps observation memory, timelines and Analysis ZIP exports.",
-            "Les consignes du guide complètent BMR et les signaux du jeu. Le radar et la 3D utilisent la géométrie établie, jamais une zone inventée par l’IA. Affichage règle les overlays ; Avancé conserve la mémoire observée, les timelines et les exports Analysis ZIP.",
-            "Anleitungen ergänzen BMR und Client-Signale. Radar/3D verwenden belegte Geometrie, keine KI-Vermutung. Anzeige konfiguriert Overlays; Erweitert enthält Beobachtungen und Analysis-Exporte.",
-            "攻略はBMRとゲーム内シグナルを補完。レーダーと3Dは確立した形状のみ使用。表示でオーバーレイ設定、詳細で観測記録とAnalysis出力。"));
-        if (_guideDuty != null && ImGui.Button(GuideText("Reopen entry panel", "Revoir le panneau d’entrée", "Eintrittsfenster erneut öffnen", "入場パネルを再表示"))) _guideEntryDismissed = false;
+            ? GuideText("Waiting to identify the boss.", "Identification du boss en cours.", "Boss wird erkannt.", "ボス特定中。")
+            : GuideText("No upcoming boss.", "Aucun boss à venir.", "Kein weiterer Boss.", "次のボスはいません。"));
+        if (ImGui.Button(GuideText("Instance overview", "Résumé de l’instance", "Instanzübersicht", "コンテンツ概要"))) _guideEntryDismissed = false;
     }
 
     private void DrawGuideAdvanced()
     {
+        if (ImGui.CollapsingHeader(GuideText("Presentation mode", "Mode d’affichage", "Anzeigemodus", "表示モード")))
+        {
+            foreach (var mode in Enum.GetValues<ForetellMode>())
+            {
+                DrawModeButton(mode);
+                ImGui.SameLine();
+                ImGui.TextWrapped(ModeDescription(mode));
+            }
+        }
         DrawObservedContentSelector();
         if (!ImGui.BeginTabBar("ForetellAdvancedTabs")) return;
         try
@@ -136,7 +171,7 @@ public sealed partial class ForetellEngine
             DrawInspectorTab("Timeline", DrawInspectorTimeline);
             DrawInspectorTab(GuideText("Analysis / recordings", "Analysis / enregistrements", "Analyse / Aufnahmen", "解析・記録"), DrawInspectorReplay);
             DrawInspectorTab(GuideText("Learning / storage", "Observation / stockage", "Lernen / Speicher", "学習・保存"), DrawLearningSettings);
-            DrawInspectorTab(GuideText("Diagnostics", "Diagnostics", "Diagnose", "診断"), DrawDiagnostics);
+            DrawInspectorTab(GuideText("Diagnostics", "Diagnostics", "Diagnose", "診断"), () => { DrawGuideModelStatus(true); DrawDiagnostics(); });
         }
         finally { ImGui.EndTabBar(); }
     }

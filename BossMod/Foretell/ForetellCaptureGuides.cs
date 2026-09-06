@@ -8,7 +8,10 @@ namespace BossMod.Foretell;
 
 internal sealed record GuideCaptureFile(string File, string Sha256, long Bytes, string Kind, DateTime At, string SourceHash);
 internal sealed record GuideAdaptedMechanic(string Name, string DisplayName, uint ActionID, string SummaryKey, string? Summary,
-    GuidanceKind Guidance, string Instruction, bool Resolved, GuideRule[] Rules, GuideStatusRule? StatusRule);
+    GuidanceKind Guidance, string Instruction, bool Resolved, GuideRule[] Rules, GuideStatusRule? StatusRule)
+{
+    public GuideAdvice? Advice { get; init; }
+}
 internal sealed record GuideAdaptedPhase(string Name, string? Summary, bool Conditional, GuideAdaptedMechanic[] Mechanics);
 internal sealed record GuideAdaptedBoss(string Name, string DisplayName, uint NameID, GuideAdaptedPhase[] Phases);
 internal sealed record GuideCapturedSignal(string Boss, string Phase, string Mechanic, GuideSignalKind Kind, ulong SourceID, uint SourceOID,
@@ -23,6 +26,7 @@ internal sealed record GuideCaptureOptions(ForetellMode Mode, bool Enabled, bool
     public GuideCaptureLayout? Layout { get; init; }
     public int ContextTokens { get; init; }
     public int MemoryGiB { get; init; }
+    public string ModelID { get; init; } = "";
 }
 internal sealed record GuideCaptureLayout(bool Unlocked, float PositionX, float PositionY, float Width, float Height,
     uint TextColor, uint ActiveColor, uint ResolvedColor, uint UnresolvedColor, float AlertPositionX, float AlertPositionY);
@@ -36,12 +40,14 @@ internal sealed record GuideCaptureInput(DateTime At, string SessionID, uint Ter
     GuideDocument? Document, GuideCaptureState State, GuideCaptureOptions Options, GuideAdaptedBoss[] Adapted, GuideCapturedSignal[] Signals)
 {
     public long EstimatedBytes => 4096 + (Document?.Bosses.Sum(boss => boss.Phases.Sum(phase => phase.Context.Length + phase.Mechanics.Sum(mechanic => mechanic.Text.Length + mechanic.Name.Length))) ?? 0) * 8L
+        + ((Document?.Page?.Text.Length ?? 0) + (Document?.Page?.Html.Length ?? 0)) * 6L
+        + (Document?.Sources.Sum(source => (long)source.Text.Length + source.Original.Length) ?? 0) * 6L
         + Adapted.Sum(boss => boss.Phases.Sum(phase => (phase.Summary?.Length ?? 0) + phase.Mechanics.Sum(mechanic => (mechanic.Summary?.Length ?? 0) + mechanic.DisplayName.Length))) * 4L;
 }
 
 internal sealed partial class ForetellCapture
 {
-    internal const int GuideExpandedLimit = 4 * 1024 * 1024;
+    internal const int GuideExpandedLimit = 24 * 1024 * 1024;
     internal const long GuideSessionLimit = 16L * 1024 * 1024;
     private static readonly JsonSerializerOptions GuideJson = new(Json) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never };
     private sealed record GuideEvent(Session Session, GuideCaptureInput Input, long Bytes);
@@ -94,7 +100,8 @@ internal sealed partial class ForetellCapture
         WriteGuideArtifact($"guide-snapshot-{++_guideSnapshotNumber:D6}.json.gz", "adapted", new
         {
             schema = 1, input.At, input.SessionID, input.TerritoryID, input.Duty, input.Language,
-            sourceFile, sourceHash = input.Document?.SourceHash, modelRevision = ForetellGuideLocalModel.Revision,
+            sourceFile, sourceHash = input.Document?.SourceHash, modelRevision = input.Document?.ModelRevision,
+            sourceCoverage = input.Document?.Coverage,
             input.State, input.Options, input.Adapted, input.Signals,
             availableSummaries = input.Adapted.Sum(boss => boss.Phases.Sum(phase => (phase.Summary == null ? 0 : 1) + phase.Mechanics.Count(mechanic => mechanic.Summary != null))),
             semantics = "Session-time guide preparation and sampled matching state, not proof of rendered pixels. Source/conditions remain authoritative; automatic summaries are documentary. No guides are loaded into the learner by replay."
@@ -106,7 +113,7 @@ internal sealed partial class ForetellCapture
     {
         if (!ValidGuideFilename(filename)) throw new InvalidDataException("Invalid guide artifact filename");
         var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, GuideJson);
-        if (bytes.Length > GuideExpandedLimit) throw new IOException("Guide artifact exceeds 4 MiB expanded limit");
+        if (bytes.Length > GuideExpandedLimit) throw new IOException("Guide artifact exceeds expanded size limit");
         using var compressed = new MemoryStream();
         using (var gzip = new GZipStream(compressed, CompressionLevel.Fastest, leaveOpen: true)) gzip.Write(bytes);
         var data = compressed.ToArray();

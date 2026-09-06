@@ -55,6 +55,22 @@ internal static class GuideChecklistPresentation
         return text[..(lower == boundaries.Length ? text.Length : boundaries[lower])] + "…";
     }
 
+    public static (int Page, int Pages, int Start, int Count) HeightPage(float[] heights, float budget, int requested, int activeIndex = -1)
+    {
+        var starts = new List<int> { 0 };
+        var used = 0f;
+        for (var index = 0; index < heights.Length; ++index)
+        {
+            if (used > 0 && used + heights[index] > budget) { starts.Add(index); used = 0; }
+            used += Math.Max(1, heights[index]);
+        }
+        var page = activeIndex >= 0 && activeIndex < heights.Length ? starts.FindLastIndex(start => start <= activeIndex) : Math.Clamp(requested, 0, starts.Count - 1);
+        return (page, starts.Count, starts[page], (page + 1 < starts.Count ? starts[page + 1] : heights.Length) - starts[page]);
+    }
+
+    public static string Row(string name, string instruction, float width, Func<string, float> measure)
+        => Fit(name, Math.Max(width * .25f, width - measure(" — " + instruction)), measure) + " — " + instruction;
+
     public static string Preview(string text, int limit = 320)
     {
         if (text.Length <= limit) return text;
