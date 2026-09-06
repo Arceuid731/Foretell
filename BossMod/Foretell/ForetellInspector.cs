@@ -152,6 +152,7 @@ public sealed partial class ForetellEngine
                 try
                 {
                     DrawInspectorTab("Overview", DrawDashboard);
+                    DrawInspectorTab(GuideText("Guides", "Guides", "Anleitungen", "攻略"), DrawGuideManager);
                     DrawInspectorTab("Knowledge", DrawKnowledgeExplorer);
                     DrawInspectorTab("Timeline", DrawInspectorTimeline);
                     DrawInspectorTab("Recordings", DrawInspectorReplay);

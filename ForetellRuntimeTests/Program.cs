@@ -14,7 +14,10 @@ internal static class Program
             var file = Path.Combine(directory, name.Name + ".dll");
             return File.Exists(file) ? AssemblyLoadContext.Default.LoadFromAssemblyPath(file) : null;
         };
-        if (args.Length == 0) Run(); else EvaluateFiles(args);
+        if (args.Length == 0) Run();
+        else if (args[0] == "--wiki-smoke") GuideTests.Smoke(args);
+        else if (args is ["--guide-sheets", var directory]) GuideTests.SheetSmoke(directory);
+        else EvaluateFiles(args);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -108,6 +111,7 @@ internal static class Program
         Check(JsonSerializer.Serialize(before) == JsonSerializer.Serialize(changed.Knowledge.DecisionAudit.Where(d => d.At <= cast.At)
             .Select(d => new { d.Stage, d.Mechanic, d.Geometry, d.Confidence }).ToArray()), "Future outcomes changed earlier decisions");
         CastRecoveryTests.Run();
+        GuideTests.Run();
         CaptureTests.Run(events, firstRun.Report.DecisionDigest);
         foreach (var observation in events) { observation.Context = null; observation.ContextID = 0; }
         var legacy = ForetellEngine.EvaluateRecordedObservations(events);

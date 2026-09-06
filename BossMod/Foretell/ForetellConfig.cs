@@ -67,6 +67,12 @@ public sealed class ForetellConfig : ConfigNode
     [PropertyDisplay("Local ML classifier", tooltip: "Small dependency-free local classifier used only as an additional signal for ambiguous mechanic types. No cloud or remote inference is used.")]
     public bool EnableML = true;
 
+    [PropertyDisplay("Automatic wiki guides", tooltip: "Retrieve the current instance's guide from Console Games Wiki on a bounded background worker. Prepared cache works offline. Complex responses and ambiguous variants remain explicitly unresolved.")]
+    public bool EnableGuides = true;
+
+    [PropertyDisplay("Encounter guide sidebar", tooltip: "Show documented bosses and mechanics, and highlight uniquely matched live casts. Guide extraction does not establish tactical or geometry coverage.")]
+    public bool GuideSidebar = true;
+
     [PropertyDisplay("World-space overlay", tooltip: "Draw learned mechanic geometry directly in the game world when it passes the configured confidence threshold.")]
     public bool WorldOverlay = true;
 

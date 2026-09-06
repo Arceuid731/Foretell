@@ -181,6 +181,7 @@ public sealed partial class ForetellEngine : IDisposable
         // and subscriptions are installed last; any failure unwinds every Foretell-owned resource in reverse.
         try
         {
+            _guides = new(Path.Combine(configDirectory, "foretell-guides"));
             _capture = new(Path.Combine(configDirectory, "foretell-captures"));
             NormalizeStore();
             _preImpact = new(_store.PreImpact);
@@ -214,6 +215,7 @@ public sealed partial class ForetellEngine : IDisposable
             try { _subscriptions.Dispose(); } catch { }
             try { DisposeNativeHooks(); } catch { }
             _capture?.Dispose();
+            _guides?.Dispose();
             _replay?.Dispose();
             _replay = null;
             _raw.Dispose();
@@ -259,6 +261,7 @@ public sealed partial class ForetellEngine : IDisposable
         if (_disposed) return;
         _disposed = true;
         _semanticReplayCancellation.Cancel();
+        _guides?.Dispose();
         try { FinalizeDue(DateTime.MaxValue, exhaustive: true); CompleteSession(); SaveStore(); }
         catch (Exception e) { Service.Log($"[Foretell] Final save during dispose failed safely: {e.Message}"); }
         _ws.Network.CaptureRawTransport = false;
@@ -316,6 +319,8 @@ public sealed partial class ForetellEngine : IDisposable
             ChangeTerritory(territory);
         else if (_store.Encounters.TryGetValue(_territory, out var currentEncounter) && _ws.CurrentCFCID != 0 && currentEncounter.ContentFinderConditionID != _ws.CurrentCFCID)
             RefreshEncounterIdentity(currentEncounter, _ws.CurrentCFCID);
+
+        UpdateGuides(now, gameInCombat);
 
         // The combat flag normally changes before the first cast packet. Starting the phase clock here lets an
         // already learned T+N mechanic be announced before its trigger in duties and in open-world encounters.

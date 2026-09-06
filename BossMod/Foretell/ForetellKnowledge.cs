@@ -75,10 +75,15 @@ public sealed partial class ForetellEngine
     }
 
     private string EncounterDisplayName(EncounterMemory encounter)
-        => string.IsNullOrWhiteSpace(encounter.ContentName) ? encounter.TerritoryName : encounter.ContentName;
+    {
+        var localized = GuideSheetName("ContentFinderCondition", encounter.ContentFinderConditionID, true);
+        return localized.Length != 0 ? localized : string.IsNullOrWhiteSpace(encounter.ContentName) ? encounter.TerritoryName : encounter.ContentName;
+    }
 
     private string SourceDisplayName(SourceMemory source)
     {
+        var localized = GuideSheetName("BNpcName", source.NameID, true);
+        if (localized.Length != 0) return localized;
         if (!string.IsNullOrWhiteSpace(source.Name))
             return source.Name;
 
@@ -105,7 +110,7 @@ public sealed partial class ForetellEngine
     {
         if (mechanic.TriggerID != 0 && mechanic.TriggerKind is ObservationKind.CastStart or ObservationKind.CastFinish or ObservationKind.ActionResolved or ObservationKind.AffectedTarget)
         {
-            var actionName = LookupActionName(mechanic.TriggerID);
+            var actionName = DisplayActionName(mechanic.TriggerID);
             if (!string.IsNullOrWhiteSpace(actionName))
                 return actionName;
         }

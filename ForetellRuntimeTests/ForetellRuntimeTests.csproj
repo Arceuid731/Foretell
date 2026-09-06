@@ -7,5 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../BossMod/BossModReborn.csproj" />
+    <Reference Include="Lumina" HintPath="$(appdata)/XIVLauncher/addon/Hooks/dev/Lumina.dll" Private="false" />
+    <Reference Include="Lumina.Excel" HintPath="$(appdata)/XIVLauncher/addon/Hooks/dev/Lumina.Excel.dll" Private="false" />
   </ItemGroup>
 </Project>

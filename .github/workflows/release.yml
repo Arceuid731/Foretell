@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate zero-knowledge telemetry contract
+      - name: Validate telemetry and legacy knowledge separation
         run: python .github/scripts/check_foretell_telemetry_contract.py
 
       - name: Read release configuration

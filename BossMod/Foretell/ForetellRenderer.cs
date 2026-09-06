@@ -20,6 +20,8 @@ public sealed partial class ForetellEngine
     {
         _presentationFrame = null;
         DrawSafely(DrawInspector, "inspector");
+        if (_cfg.EnableGuides && _cfg.GuideSidebar && _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell)
+            DrawSafely(DrawGuideSidebar, "guide sidebar");
         if (_cfg.MiniRadar)
             DrawSafely(() => DrawRadar(_cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell), "radar");
         if (_cfg.Mode is ForetellMode.Legacy or ForetellMode.Observe) return;
@@ -281,7 +283,7 @@ public sealed partial class ForetellEngine
                 .Select(h => h.Prediction).Where(p => p.Confidence >= _cfg.VisualConfidence / 100f).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
             var terrainCue = _ws.Party[PartyState.PlayerSlot] is { } localPlayer
                 && ActiveDynamicTerrainWarnings().Any(w => ForetellArenaBoundaryCore.Contains(w.Points, V(localPlayer.Position)));
-            var hasActive = active.Length != 0 || terrainCue;
+            var hasActive = DrawGuideCentralHints() || active.Length != 0 || terrainCue;
             for (var i = 0; i < active.Length; ++i)
             {
                 var prediction = active[i];
@@ -306,20 +308,20 @@ public sealed partial class ForetellEngine
 
     private static string GuidanceInstruction(GuidanceKind guidance, MechanicKind kind, GeometryKind geometry) => guidance switch
     {
-        GuidanceKind.Avoid => geometry == GeometryKind.Unknown ? "WATCH AOE" : "AVOID",
-        GuidanceKind.Stack => "STACK",
-        GuidanceKind.Spread => "SPREAD",
-        GuidanceKind.Soak => "SOAK TOWER",
-        GuidanceKind.LookAway => "LOOK AWAY",
-        GuidanceKind.Knockback => "KNOCKBACK",
-        GuidanceKind.Tether => "CHECK TETHER",
-        GuidanceKind.Raidwide => "RAIDWIDE",
-        GuidanceKind.Tankbuster => "TANKBUSTER",
-        GuidanceKind.Cleanse => "CLEANSE",
-        GuidanceKind.Move => "MOVE",
-        GuidanceKind.Marker => "MARKER",
-        _ when geometry != GeometryKind.Unknown || kind is MechanicKind.GroundAOE or MechanicKind.TargetedAOE => "AVOID",
-        _ => "WATCH"
+        GuidanceKind.Avoid => geometry == GeometryKind.Unknown ? GuideText("WATCH AOE", "SURVEILLE LA ZONE", "FLÄCHE BEACHTEN", "範囲攻撃に注意") : GuideText("AVOID", "ÉVITE", "AUSWEICHEN", "回避"),
+        GuidanceKind.Stack => GuideText("STACK", "REGROUPE-TOI", "SAMMELN", "頭割り"),
+        GuidanceKind.Spread => GuideText("SPREAD", "ÉCARTE-TOI", "VERTEILEN", "散開"),
+        GuidanceKind.Soak => GuideText("SOAK TOWER", "PRENDS LA TOUR", "TURM BESCHREITEN", "塔に入る"),
+        GuidanceKind.LookAway => GuideText("LOOK AWAY", "DÉTOURNE LE REGARD", "WEGSEHEN", "視線を外す"),
+        GuidanceKind.Knockback => GuideText("KNOCKBACK", "RECUL", "RÜCKSTOSS", "ノックバック"),
+        GuidanceKind.Tether => GuideText("CHECK TETHER", "VÉRIFIE LE LIEN", "VERBINDUNG PRÜFEN", "線を確認"),
+        GuidanceKind.Raidwide => GuideText("RAIDWIDE", "DÉGÂTS DE GROUPE", "GRUPPENSCHADEN", "全体攻撃"),
+        GuidanceKind.Tankbuster => GuideText("TANKBUSTER", "COUP PUISSANT", "TANKBUSTER", "強攻撃"),
+        GuidanceKind.Cleanse => GuideText("CLEANSE", "DISSIPE", "ENTFERNEN", "解除"),
+        GuidanceKind.Move => GuideText("MOVE", "BOUGE", "BEWEGEN", "移動"),
+        GuidanceKind.Marker => GuideText("MARKER", "MARQUEUR", "MARKIERUNG", "マーカー"),
+        _ when geometry != GeometryKind.Unknown || kind is MechanicKind.GroundAOE or MechanicKind.TargetedAOE => GuideText("AVOID", "ÉVITE", "AUSWEICHEN", "回避"),
+        _ => GuideText("WATCH", "SURVEILLE", "BEOBACHTEN", "注意")
     };
 
     private static string FriendlyMechanicLabel(MechanicKind kind, GeometryKind geometry) => kind switch
@@ -349,7 +351,7 @@ public sealed partial class ForetellEngine
     {
         if (mechanic.TriggerKind is ObservationKind.CastStart or ObservationKind.CastFinish or ObservationKind.ActionResolved or ObservationKind.AffectedTarget)
         {
-            var actionName = LookupActionName(mechanic.TriggerID);
+            var actionName = DisplayActionName(mechanic.TriggerID);
             if (!string.IsNullOrWhiteSpace(actionName)) return actionName;
         }
         return FriendlyMechanicLabel(mechanic.Kind, mechanic.Geometry);
@@ -357,7 +359,7 @@ public sealed partial class ForetellEngine
 
     private string UserFacingPredictionLabel(ActivePrediction prediction)
     {
-        var actionName = LookupActionName(prediction.ActionID);
+        var actionName = DisplayActionName(prediction.ActionID);
         return !string.IsNullOrWhiteSpace(actionName) ? actionName : FriendlyMechanicLabel(prediction.Kind, prediction.Geometry);
     }
 

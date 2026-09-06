@@ -48,6 +48,7 @@ public sealed class Service
     public static Lumina.GameData LuminaGameData = null!;
     public static Lumina.Excel.ExcelSheet<T>? LuminaSheet<T>() where T : struct, Lumina.Excel.IExcelRow<T> => LuminaGameData.GetExcelSheet<T>(Lumina.Data.Language.English);
     public static T? LuminaRow<T>(uint row) where T : struct, Lumina.Excel.IExcelRow<T> => LuminaSheet<T>()?.GetRowOrDefault(row);
+    public static T? LuminaDisplayRow<T>(uint row) where T : struct, Lumina.Excel.IExcelRow<T> => DataManager.GetExcelSheet<T>(ClientState.ClientLanguage)?.GetRowOrDefault(row);
     public static ConcurrentDictionary<Lumina.Text.ReadOnly.ReadOnlySeString, Lumina.Text.ReadOnly.ReadOnlySeString> LuminaRSV = []; // TODO: reconsider
 
     public static WindowSystem? WindowSystem;

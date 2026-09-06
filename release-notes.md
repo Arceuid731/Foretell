@@ -1,12 +1,11 @@
-Foretell 0.10.2 improves radar stability, combat framing and simultaneous attack collection.
+Foretell 0.11.0 introduces the first experimental hybrid guide path, with automatic on-demand acquisition for the current instance.
 
-- Keep terrain opacity stable during normal refreshes and remove transparency seams inside the filled map. Published missing-floor changes still replace the map immediately.
-- Use a square Auto viewport, fit compact observed rooms or boss combat space, and smooth zoom and panning. The open-world radius no longer forces small boss arenas to zoom out; rectangular corners remain visible.
-- Recover still-active enemy casts missed during callback budget pressure, without duplicate predictions or backdating. Apply the shared radar/world display limit to simultaneous attack groups, preserving their individual footprints within a separate 64-shape bound.
-- Exclude Lumina backing Excel pages before reflection and cache bounded static row features, addressing oversized actor observations and unnecessary ingestion work.
-- Stop turning unmarked circle metadata into unsupported AVOID instructions. Keep ambiguous casts as WATCH; recognize explicit knockback Omen names without inventing a landing point. Migrate affected old derived instructions while retaining observation counts and unrelated knowledge.
-- Remove the camera caption and clarify the confidence legend: Learning / Confident / Very high. Include the last update exception and recovered-cast count in analysis diagnostics. Automatic capture remains enabled without extra Replay settings.
+- Discover the Console Games Wiki page from the client's ContentFinderCondition identity, without a fixed Praetorium/Orbonne catalogue or user-entered URLs. Retrieve and prepare documents on a bounded background worker; retain revision/hash provenance, boss/phase context, nested conditions and source text.
+- Use `/foretell` → Guides for acquisition state, refresh, cache and out-of-combat preparation from the client duty catalogue. Cached documents work offline and survive failed refreshes. The cache is capped at 128 guides / 64 MiB.
+- Show a boss/phase/mechanic sidebar in Hybrid and Foretell modes. Highlight only unique entries matched to a live enemy cast in the correct content and boss context. Repeated names and unresolved variants abstain; interruption, death and territory changes invalidate active matches.
+- Read official client-language names through a separate display accessor, preserving internal English data. Simple prepared instructions use EN/FR/DE/JA. Names without contextual ID bindings remain marked [EN]; complex source text remains in English with an explicit unprepared response.
+- Add limited central wiki/cast instructions, including a tankbuster response only for its actual target. Wiki documents do not manufacture radar/world shapes, change learned confidence or establish safe routes. Existing game-evidence geometry remains independent.
 
-Validated with real-engine simultaneous-cast and guidance regressions, radar/core tests, automatic capture/export tests, the telemetry contract and a Release build. Live visual/performance checks remain necessary. The inspected Praetorium capture is partial, so the changes do not claim complete encounter coverage or the same first-occurrence anticipation as authored BMR modules.
+Validated with deterministic parser, context/ambiguity, personal-target, cache/HTTP and typed live-cast tests; Foretell core/runtime suites; the telemetry contract; a Release build; real API retrieval for Praetorium, Orbonne, Sastasha and Ifrit Hard; and local client-sheet identity/localization checks.
 
-See docs/review-praetorium-2026-09-05.md for findings, limits and the next test.
+This is a documentary foundation with partial synchronization, not operational coverage of all encounters. Complex tactical extraction/translation, status/marker variants, guide-derived geometry and automatic phase tracking remain unimplemented. No local LLM or GitHub synchronization helper is introduced. Visual and in-combat validation remain outstanding. See docs/review-hybrid-guides-2026-09-06.md for evidence and limits.
