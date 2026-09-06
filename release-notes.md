@@ -1,11 +1,11 @@
-# Foretell 0.12.2 — session-bound guides in Analysis ZIP
+# Foretell 0.12.3 — accept narrative boss guides
 
-- Analysis ZIP now includes extracted source documents with duty/revision/hash and session-time adapted checklist snapshots: conditions, localized names and contextual IDs, local summaries, short responses, guide settings and sampled live associations.
-- Guide sidecars share the automatic capture worker and immutable export barrier, survive leaving the duty/restarting, and remain isolated from learner input. Source documents are deduplicated; artifacts are bounded and SHA256-verified.
-- Add `guides/index.json` with explicit availability/completeness and omission warnings. Historical exports use the selected session's recorded sidecars, never a later current cache. Pre-0.12.2 recordings cannot recover missing historical guide evidence through re-export.
-- Add a generic retrospective guide-review command and an Arboretum 0.12.0 report. That capture contains all three boss deaths but no guide state. Current-cache comparison is explicitly distinguished from actual historical matching/rendering.
-- Preserve the compact 0.12.1 overlay and existing BMR modes. No encounter-specific runtime IDs, new model downloads or automatic cache-to-learner imports are introduced.
+- Fix the guide preparation failure reproduced on Kugane Castle in 0.12.2: valid boss sections written entirely as paragraphs were rejected because no named mechanics were extracted.
+- Accept and cache narrative-only boss documents generically. Preserve each boss's source text, conditions, revision and optional local summary. Keep rejecting empty/non-boss pages and mismatched duty variants.
+- Clearly label narrative guides in the entry panel and transparent overlay. Advice is available by hovering the current/upcoming boss; prose mentions do not invent named mechanics, cast/status matches, central alerts or geometry.
+- Preserve specific bounded parser failure details instead of displaying only InvalidDataException; wrap diagnostics and the entry-panel explanation, and add a retry button for failed downloads/refreshes.
+- Preserve the 0.12.2 session-bound guide analysis exports, compact overlay, existing model/cache and BMR modes. No encounter-specific runtime list or new model download is introduced.
 
-Validation: source/adaptation contents, historical/same-duty session isolation, immutable snapshots, restart recovery, integrity/path rejection, quotas, missing-guide disclosure and unchanged detached decision digests; existing runtime/core tests, telemetry contract and Release build. The Arboretum review records parser attribution, overly broad condition gating, missing helper ownership and a separate topology exception as unresolved findings, not fixes delivered by this release.
+Validation: synthetic multi-boss narrative parsing, preserved conditions and source isolation, no invented cast association, upcoming-boss tracking, empty/wrong-variant rejection, cache/restart/offline fallback, detailed failures and narrative-only summary/cache tests. Runtime/core tests, telemetry contract, native ImGui smoke and Release build pass. Live wiki probes: Kugane Castle revision 1488386 loads three narrative boss sections; Sastasha revision 1489668 still loads five named mechanics.
 
-Details: `docs/foretell-0.12-guides.md` and `docs/review-arboretum-2026-09-06.md`.
+This fixes guide availability, not full live mechanic coverage. Narrative-to-ability extraction, the previously reported Arboretum paragraph fusion/condition gating and model selection remain separate work. Details: `docs/foretell-0.12-guides.md`.

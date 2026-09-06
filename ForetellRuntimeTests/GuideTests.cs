@@ -23,6 +23,19 @@ internal static class GuideTests
         <script>Do not execute this. <h3>Fake boss</h3></script>
         <h2>Loot</h2><h3>Sentinel</h3><ul><li>Coin: Not a mechanic.</li></ul></div>
         """;
+    private const string NarrativeHtml = """
+        <div class="mw-parser-output"><h2>Objectives</h2><p>Defeat the intruders.</p>
+        <h2>Bosses</h2><div><iframe>Untrusted video text</iframe></div>
+        <h3 id="Watchman"><a>Watchman</a></h3>
+        <p>Avoid the frontal cone.</p><p>Share damage when marked.</p>
+        <p>If tethered, keep away until the bomb stops. Heal through <b>War Cry</b>.</p>
+        <h3 id="Illusionist"><a>Illusionist</a></h3>
+        <p>Defeat the copies before their cast finishes.</p><p>Spread when marked.</p>
+        <h3 id="Mercenary"><a>Mercenary</a></h3>
+        <p>Collect the tokens before the pet reaches them.</p>
+        <p>During the second collection, defeat the summoned enemies.</p>
+        <h2>Loot</h2><h3>Watchman</h3><p>Treasure only.</p></div>
+        """;
 
     private static string Response(GuideDuty duty, string html = Html, long revision = 123)
         => JsonSerializer.Serialize(new { parse = new { title = duty.EnglishName, revid = revision, text = html } });
@@ -57,10 +70,33 @@ internal static class GuideTests
         Check(document.Revision == 123 && document.SourceHash.Length == 64 && document.SourceUrl.Contains("oldid=123"), "Revision provenance is missing");
         var trial = ForetellGuideParser.Parse(Response(Duty, "<h2>Strategy</h2><h3>Lord of tests: <a>Keeper</a></h3><h3>Phase 1</h3><ul><li>Lance is an attack that hits the target.</li></ul><h3>Phase 2</h3><p>If marked, move outside.</p><h2>Loot</h2>"), Duty, Now);
         Check(trial.Bosses.Single().Name == "Keeper" && trial.Bosses[0].Phases.Length == 2 && trial.MechanicCount == 1, "Single-boss trial headings and sibling phase headings were misclassified");
+        NarrativeGuides();
         Synchronization(document);
         GuideCombatTests.Run();
         AsyncChecks(document).GetAwaiter().GetResult();
         Console.WriteLine("Guide parsing, preserved conditions, ambiguous contexts, localization, bounded HTTP, cache and cancellation tests passed.");
+    }
+
+    private static void NarrativeGuides()
+    {
+        var document = ForetellGuideParser.Parse(Response(Duty, NarrativeHtml), Duty, Now);
+        Check(document.Bosses.Select(boss => boss.Name).SequenceEqual(["Watchman", "Illusionist", "Mercenary"])
+            && document.MechanicCount == 0, "Narrative guide rejected or paragraphs became invented abilities");
+        var watchman = document.Bosses[0].Phases.Single();
+        Check(watchman.Context.Contains("If tethered") && watchman.Context.Contains("War Cry") && watchman.Conditional,
+            "Narrative advice lost text, inline ability mentions or conditions");
+        Check(!watchman.Context.Contains("copies") && !document.Bosses.SelectMany(boss => boss.Phases)
+            .Any(phase => phase.Context.Contains("Treasure") || phase.Context.Contains("video") || phase.Context.Contains("intruders")),
+            "Narrative sections leaked between bosses or included non-guide content");
+        var cast = new GuideCast(Duty, 100, 200, 300, "Watchman", 400, "War Cry", Now.AddSeconds(5));
+        Check(GuideSynchronization.Match(document, cast, Now) == null, "Inline prose mention invented a live cast association");
+        var encounter = new GuideEncounterTracker();
+        var frame = encounter.Update(document, [new(100, 200, 300, "Watchman", false, false, 10)], false);
+        Check(frame is { Boss.Name: "Watchman", Upcoming: true, Active.Length: 0 }, "Narrative boss is unavailable or produced a live signal");
+        Reject(() => ForetellGuideParser.Parse(Response(Duty, "<h2>Bosses</h2><h3>Empty boss</h3><p> </p><h2>Loot</h2><p>Coins.</p>"), Duty, Now),
+            "Empty boss sections became a ready narrative guide");
+        Reject(() => ForetellGuideParser.Parse(Response(Duty with { EnglishName = "the Test Chamber (Hard)" }, NarrativeHtml), Duty, Now),
+            "Narrative fallback accepted another duty variant");
     }
 
     private static void Synchronization(GuideDocument document)
@@ -126,6 +162,42 @@ internal static class GuideTests
                 service.RequestGuide(Duty);
                 await WaitFor(() => service.Snapshot.State == GuideState.Offline);
                 Check(service.Snapshot.Document != null, "Network failure destroyed a usable stale guide");
+            }
+            var narrativeDuty = Duty with { ContentID = 20, TerritoryID = 120, EnglishName = "Narrative Chamber" };
+            using (var service = new ForetellGuideService(directory, (duty, _) => Task.FromResult(Response(duty, NarrativeHtml))))
+            {
+                service.RequestGuide(narrativeDuty);
+                await WaitFor(() => service.Snapshot.State is GuideState.Ready or GuideState.Failed);
+                Check(service.Snapshot is { State: GuideState.Ready, Error.Length: 0, Document.MechanicCount: 0 }
+                    && cache.Read(narrativeDuty)?.Bosses.Length == 3, "Narrative guide did not prepare/cache successfully");
+            }
+            using (var service = new ForetellGuideService(directory, (_, _) => throw new Exception("Narrative cache requested network")))
+            {
+                service.RequestGuide(narrativeDuty);
+                await WaitFor(() => service.Snapshot.State is GuideState.Ready or GuideState.Failed);
+                Check(service.Snapshot is { State: GuideState.Ready, FromCache: true, Document.MechanicCount: 0 }, "Narrative guide unavailable offline after restart");
+            }
+            var narrative = cache.Read(narrativeDuty)!;
+            cache.Write(narrative with { RetrievedAt = Now.AddDays(-8) });
+            using (var service = new ForetellGuideService(directory, (_, _) => Task.FromResult(Response(narrativeDuty, "<h2>Loot</h2>"))))
+            {
+                service.RequestGuide(narrativeDuty);
+                await WaitFor(() => service.Snapshot.State == GuideState.Offline);
+                Check(service.Snapshot.Document?.SourceHash == narrative.SourceHash && service.Snapshot.Error.Contains("No supported boss sections"),
+                    "Failed refresh discarded narrative advice or hid the parser diagnostic");
+            }
+            cache.Write(narrative with { Bosses = [new("Empty", "", [])] });
+            Check(cache.Read(narrativeDuty) == null, "Narrative cache accepted a boss with no sections");
+            cache.Write(narrative with { Bosses = [new("Empty", "", [new("", "  ", [])])] });
+            Check(cache.Read(narrativeDuty) == null, "Narrative cache accepted empty guide text");
+            using (var service = new ForetellGuideService(directory, (_, _) => Task.FromResult(Response(narrativeDuty, "<h2>Bosses</h2>"))))
+            {
+                service.RequestGuide(narrativeDuty);
+                await WaitFor(() => service.Snapshot.State == GuideState.Failed);
+                Check(service.Snapshot.Error.StartsWith("InvalidDataException: No supported boss sections"), "Failed preparation lost the specific parser error");
+                service.RequestGuide(narrativeDuty with { ContentID = 21, TerritoryID = 121, EnglishName = "Different Narrative Chamber" });
+                await WaitFor(() => service.Snapshot.State == GuideState.Failed);
+                Check(service.Snapshot.Error.Contains("identity does not match"), "Failure diagnostics conflate missing structure and wrong duty");
             }
             var path = Path.Combine(directory, Duty.Key + ".json");
             File.WriteAllText(path, "{\"Payload\":\"{}\",\"Hash\":\"wrong\"}");

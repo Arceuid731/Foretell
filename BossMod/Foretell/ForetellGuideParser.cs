@@ -113,7 +113,8 @@ internal static class ForetellGuideParser
         }
         FinishBoss();
         var document = new GuideDocument(GuideDocument.CurrentSchema, duty, title, revision, retrievedAt, GuideNames.Hash(html), bosses.ToArray());
-        if (bosses.Count is 0 or > 32 || document.MechanicCount is 0 or > 512) throw new InvalidDataException("Wiki boss structure is unsupported or exceeds limits.");
+        if (bosses.Count == 0) throw new InvalidDataException("No supported boss sections with guide text were found.");
+        if (bosses.Count > 32 || document.MechanicCount > 512) throw new InvalidDataException("Wiki boss structure exceeds preparation limits.");
         return document;
     }
 

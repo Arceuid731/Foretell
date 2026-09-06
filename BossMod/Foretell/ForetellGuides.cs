@@ -313,9 +313,21 @@ public sealed partial class ForetellEngine
             _ => GuideText("Choose an instance to prepare", "Choisis une instance à préparer", "Instanz zum Vorbereiten auswählen", "準備するコンテンツを選択")
         };
         ImGui.TextWrapped(state);
+        if (snapshot.Document is { MechanicCount: 0 }) ImGui.TextWrapped(GuideNarrativeNotice());
         DrawGuideProgress(snapshot);
-        if (snapshot.Error.Length != 0) ImGui.TextDisabled(snapshot.Error);
+        if (snapshot.Error.Length != 0)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
+            ImGui.TextWrapped(snapshot.Error);
+            ImGui.PopStyleColor();
+        }
     }
+
+    private static string GuideNarrativeNotice() => GuideText(
+        "Narrative guide: boss advice is available, but no named abilities were extracted. No automatic guide matching or alerts for these paragraphs.",
+        "Guide narratif : conseils disponibles par boss, mais aucune capacité nommée extraite. Pas de correspondance ni d’alerte automatique du guide pour ces paragraphes.",
+        "Textanleitung: Hinweise je Boss verfügbar, aber keine benannten Fähigkeiten extrahiert. Keine automatische Guide-Zuordnung oder Warnungen aus diesen Absätzen.",
+        "文章形式の攻略：ボス別の助言は利用できますが、名称付きアクションは抽出されていません。この文章からの自動照合・警告はありません。");
 
     private void DrawGuideDocument(GuideDocument document, bool live)
     {

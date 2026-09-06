@@ -18,6 +18,8 @@ Since 0.12.2, **Analysis ZIP** also includes `guides/index.json`, revision-bound
 
 For cast actions, Foretell also consumes useful local FFXIV client metadata as an immediate prior: `CastType`, `EffectRange`, `XAxisModifier`, `TargetArea`, `Omen`/VFX information and actor hitbox. Complete ordinary telegraph shapes from those fields remain authoritative for their Action row, while observed outcomes validate them and learn the ambiguous families; unrelated movement or status traffic cannot rewrite a known rectangle/circle into a different mechanic. Metadata alone still cannot reach the 99% safe-guidance threshold. If metadata identifies a cone but provides no angle, Foretell retains the cone family and range for learning without drawing an invented sector. The gaze VFX becomes a text `LOOK AWAY` instruction instead of a fake circle, while large non-targeted circle families and the family shared by meteor, proximity, raidwide and line-of-sight actions stay non-spatial until outcomes disambiguate them. Long observed casts with no provable spatial shape remain visible as text-only `WATCH` entries.
 
+Version 0.12.3 also accepts narrative-only boss guides, fixing the preparation error reproduced on Kugane Castle. Advice and optional summaries remain available per boss, including from cache. The UI explicitly labels these as narrative guides: no named abilities have been extracted, so these paragraphs cannot trigger automatic guide highlights or central alerts. Existing BMR/Foretell signals are unaffected; no instance-specific exception or invented cast association is added.
+
 ## Dalamud custom repository
 
 `https://raw.githubusercontent.com/Arceuid731/Foretell/main/repo.json`

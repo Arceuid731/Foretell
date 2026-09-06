@@ -168,6 +168,27 @@ internal static class GuideCombatTests
                 service.Dispose();
                 await service.Completion.WaitAsync(TimeSpan.FromSeconds(2));
             }
+            var narrative = document with
+            {
+                Duty = new(3, 4, "Narrative guide"), Title = "Narrative guide", SourceHash = GuideNames.Hash("narrative-summary-test"),
+                Bosses = [new("Narrative boss", "", [new("", "Stand near the center.", [])])]
+            };
+            using (var service = new ForetellGuideSummaries(directory, _ => new FakeModel()))
+            {
+                service.Update(narrative, GuideLanguage.French, true, false, false, "Narrative boss");
+                await WaitFor(() => service.Snapshot?.Stage == "Ready");
+                Check(service.Snapshot is { Total: 1, Completed: 1, Summaries.Count: 1 }
+                    && service.Snapshot.Summaries.ContainsKey(ForetellGuideSummaries.ContextKey(narrative.Bosses[0], narrative.Bosses[0].Phases[0])),
+                    "A wholly narrative guide did not prepare a source-bound context summary");
+                service.Dispose();
+                await service.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            using (var service = new ForetellGuideSummaries(directory, _ => throw new Exception("Narrative cached summary initialized model")))
+            {
+                service.Update(narrative, GuideLanguage.French, true, true, false, "Narrative boss");
+                await WaitFor(() => service.Snapshot?.Stage == "Ready");
+                Check(service.Snapshot?.Summaries.Count == 1 && narrative.MechanicCount == 0, "Narrative summary lost offline/in combat or became a named mechanic");
+            }
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }

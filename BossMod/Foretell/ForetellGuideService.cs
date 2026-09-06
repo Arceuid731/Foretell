@@ -73,13 +73,14 @@ internal sealed class ForetellGuideCache(string directory)
             if (document == null || document.Schema != GuideDocument.CurrentSchema || document.Duty != duty || document.Revision <= 0
                 || GuideNames.Normalize(document.Title) != GuideNames.Normalize(duty.EnglishName)
                 || document.SourceHash is not { Length: 64 }
-                || document.Bosses is not { Length: > 0 and <= 32 } || document.MechanicCount is 0 or > 512
+                || document.Bosses is not { Length: > 0 and <= 32 } || document.MechanicCount > 512
                 || document.RetrievedAt > DateTime.UtcNow.AddMinutes(5)) return null;
             foreach (var boss in document.Bosses)
             {
-                if (boss.Name.Length is 0 or > 200 || boss.Phases.Length > 64) return null;
+                if (boss.Name.Length is 0 or > 200 || boss.Phases.Length is 0 or > 64) return null;
                 foreach (var phase in boss.Phases)
-                    if (phase.Context.Length > 100000 || phase.Mechanics.Any(mechanic => mechanic.Name.Length is 0 or > 120 || mechanic.Text.Length > 24000)) return null;
+                    if (phase.Context.Length > 100000 || string.IsNullOrWhiteSpace(phase.Context) && phase.Mechanics.Length == 0
+                        || phase.Mechanics.Any(mechanic => mechanic.Name.Length is 0 or > 120 || mechanic.Text.Length > 24000)) return null;
             }
             return document;
         }
@@ -228,7 +229,8 @@ internal sealed class ForetellGuideService : IDisposable
                 catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
                 catch (Exception error)
                 {
-                    Publish(request, document == null ? GuideState.Failed : GuideState.Offline, document, error.GetType().Name);
+                    var detail = error is InvalidDataException ? error.GetType().Name + ": " + error.Message : error.GetType().Name;
+                    Publish(request, document == null ? GuideState.Failed : GuideState.Offline, document, detail[..Math.Min(detail.Length, 500)]);
                 }
                 finally
                 {

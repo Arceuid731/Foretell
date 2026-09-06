@@ -80,7 +80,7 @@ public sealed partial class ForetellEngine
             if (ImGui.IsItemHovered()) DrawGuideHeaderTooltip(boss);
             if (headerClicked) _guideEntryDismissed = false;
             if (rows.Length == 0)
-                DrawGuideOverlayLine(GuideText("No named mechanics · hover boss", "Aucune mécanique nommée · survole le boss", "Keine benannten Mechaniken · Boss berühren", "名称付きギミックなし・ボスにカーソル"), _cfg.GuideUnresolvedColor);
+                DrawGuideOverlayLine(GuideText("Narrative guide · hover boss", "Guide narratif · survole le boss", "Textanleitung · Boss berühren", "文章形式の攻略・ボスにカーソル"), _cfg.GuideUnresolvedColor);
             foreach (var row in rows.Skip(page.Start).Take(page.Count))
             {
                 var resolved = _guideEncounter.Resolved(boss, row.Phase, row.Mechanic);
@@ -131,6 +131,7 @@ public sealed partial class ForetellEngine
         if (boss != null)
         {
             ImGui.TextWrapped(GuideBossName(boss));
+            if (_liveGuide is { MechanicCount: > 0 } && boss.Phases.All(phase => phase.Mechanics.Length == 0)) ImGui.TextWrapped(GuideNarrativeNotice());
             foreach (var phase in boss.Phases.Where(phase => phase.Context.Length > 0))
                 ImGui.TextWrapped(GuideContextSummary(boss, phase) ?? phase.Context);
         }

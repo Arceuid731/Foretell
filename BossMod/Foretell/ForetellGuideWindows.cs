@@ -44,7 +44,7 @@ public sealed partial class ForetellEngine
         {
             ImGui.TextColored(GuideColor(_cfg.GuideActiveColor), GuideDutyName(_guideDuty));
             ImGui.TextDisabled("Console Games Wiki");
-            ImGui.TextDisabled(GuideText("Stays open until dismissed; hidden during combat.", "Reste ouvert jusqu’à fermeture ; masqué pendant le combat.",
+            ImGui.TextWrapped(GuideText("Stays open until dismissed; hidden during combat.", "Reste ouvert jusqu’à fermeture ; masqué pendant le combat.",
                 "Bleibt bis zum Schließen offen; im Kampf ausgeblendet.", "閉じるまで表示。戦闘中は一時的に非表示。"));
             DrawGuideState(snapshot);
             DrawGuideSummaryProgress();
@@ -63,6 +63,9 @@ public sealed partial class ForetellEngine
                 if (ImGui.Button(GuideText("Show checklist", "Afficher la checklist", "Checkliste anzeigen", "チェックリストを表示")))
                 { _cfg.GuideSidebar = true; _cfg.Modified.Fire(); open = false; }
             }
+            if (snapshot.State is GuideState.Failed or GuideState.Offline
+                && ImGui.Button(GuideText("Retry guide download", "Réessayer le téléchargement du guide", "Anleitung erneut laden", "攻略の取得を再試行")))
+                _guides!.RequestGuide(_guideDuty, true);
             if (ImGui.SmallButton(GuideText("Dismiss", "Fermer", "Schließen", "閉じる"))) open = false;
         }
         ImGui.End();
