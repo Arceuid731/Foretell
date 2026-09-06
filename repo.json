@@ -4,7 +4,7 @@
     "Name": "Foretell",
     "InternalName": "Foretell",
     "RepoUrl": "https://github.com/Arceuid731/Foretell",
-    "Description": "Adaptive encounter intelligence built on BossMod Reborn. Learns mechanics locally and renders predictive world/radar/text guidance while preserving BMR.",
+    "Description": "Guide-informed encounter assistance built on BossMod Reborn. Automatic instance guides, current-boss mechanics, local summaries and observed world/radar/text guidance while preserving BMR.",
     "ApplicableVersion": "any",
     "Tags": [
       "combat",
@@ -21,11 +21,11 @@
     "CanUnloadAsync": false,
     "LoadPriority": 0,
     "IsTestingExclusive": false,
-    "Punchline": "Adaptive encounter intelligence: observe, learn, predict.",
+    "Punchline": "Instance guides, current-boss mechanics and observed combat guidance.",
     "AcceptsFeedback": true,
-    "AssemblyVersion": "0.12.3.0",
-    "DownloadLinkInstall": "https://github.com/Arceuid731/Foretell/releases/download/v0.12.3/Foretell.zip",
-    "DownloadLinkUpdate": "https://github.com/Arceuid731/Foretell/releases/download/v0.12.3/Foretell.zip",
-    "DownloadLinkTesting": "https://github.com/Arceuid731/Foretell/releases/download/v0.12.3/Foretell.zip"
+    "AssemblyVersion": "0.12.4.0",
+    "DownloadLinkInstall": "https://github.com/Arceuid731/Foretell/releases/download/v0.12.4/Foretell.zip",
+    "DownloadLinkUpdate": "https://github.com/Arceuid731/Foretell/releases/download/v0.12.4/Foretell.zip",
+    "DownloadLinkTesting": "https://github.com/Arceuid731/Foretell/releases/download/v0.12.4/Foretell.zip"
   }
 ]
