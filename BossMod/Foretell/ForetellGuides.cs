@@ -162,7 +162,7 @@ public sealed partial class ForetellEngine
         _guideIdentity = default; _guideDuty = null; _liveGuide = null; _guideSampleAt = default;
         _guideMatches.Clear(); _guideBossNames.Clear(); _guideActionNames.Clear();
         _guideSignals.Clear(); _guideEncounter.Reset(); _guideFrame = GuideCombatFrame.Empty;
-        _guideEntryDismissed = false; _guideEntryReadyAt = default;
+        _guideEntryDismissed = false; _guideChecklistBoss = null; _guideChecklistPage = 0;
     }
 
     private string GuideSheetName(string sheet, uint id, bool localized)
@@ -255,19 +255,24 @@ public sealed partial class ForetellEngine
         if (player == null || player.IsDeadOrDestroyed) return false;
         foreach (var signal in LiveGuideSignals().OrderByDescending(signal => signal.TargetID == player.InstanceID).ThenBy(signal => signal.Until).Take(2))
         {
-            var guidance = GuideAlertGuidance(signal, player);
             var remaining = Math.Max(0, (signal.Until - _ws.CurrentTime).TotalSeconds);
-            ImGui.TextColored(GuideColor(_cfg.GuideActiveColor), GuidanceInstruction(guidance, MechanicKind.Unknown, GeometryKind.Unknown)
+            ImGui.SetWindowFontScale(_cfg.GuideAlertScale);
+            ImGui.TextColored(GuideColor(_cfg.GuideActiveColor), GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal)
                 + " — " + GuideMechanicName(signal.Boss, signal.Mechanic));
-            if (guidance == GuidanceKind.None)
-                ImGui.TextWrapped(GuideText("Signal matched · check the conditional response in the checklist.", "Signal relié · consulte la consigne conditionnelle dans la checklist.",
-                    "Signal zugeordnet · bedingte Reaktion in der Checkliste prüfen.", "シグナル対応・チェックリストの条件付き対処を確認。"));
+            ImGui.SetWindowFontScale(1);
             var total = signal.Kind == GuideSignalKind.Cast ? _ws.Actors.Find(signal.SourceID)?.CastInfo?.TotalTime ?? 0 : 0;
             ImGui.ProgressBar(total > 0 && float.IsFinite(total) ? Math.Clamp((float)remaining / total, 0, 1) : 0,
-                new(360 * _cfg.GuideScale, 0), $"{remaining:F1}s · {signal.Kind} · Wiki");
+                new(360 * _cfg.GuideAlertScale, 0), $"{remaining:F1}s");
             shown = true;
         }
         return shown;
+    }
+
+    private string GuideChecklistInstruction(GuideBoss boss, GuidePhase phase, GuideMechanic mechanic, GuideSignal? live = null)
+    {
+        if (live == null) return GuideChecklistPresentation.Instruction(GuideRules.LiveGuidance(mechanic, phase, boss), GuideClientLanguage);
+        var confirmed = _ws.Party[PartyState.PlayerSlot] is { IsDeadOrDestroyed: false } player && GuideAlertGuidance(live, player) != GuidanceKind.None;
+        return GuideChecklistPresentation.Instruction(live.Guidance, GuideClientLanguage, confirmed);
     }
 
     private GuidanceKind GuideAlertGuidance(GuideSignal signal, Actor player)
@@ -388,7 +393,7 @@ public sealed partial class ForetellEngine
     {
         if (ImGui.Checkbox(GuideText("Automatic instance guides", "Fiches automatiques en instance", "Automatische Instanzanleitungen", "コンテンツ攻略の自動取得"), ref _cfg.EnableGuides)) _cfg.Modified.Fire();
         ImGui.SameLine();
-        if (ImGui.Checkbox(GuideText("Sidebar", "Liste latérale", "Seitenleiste", "サイドバー"), ref _cfg.GuideSidebar)) _cfg.Modified.Fire();
+        if (ImGui.Checkbox(GuideText("Checklist overlay", "Checklist en surimpression", "Checklisten-Overlay", "チェックリスト表示"), ref _cfg.GuideSidebar)) _cfg.Modified.Fire();
         if (_guides == null) return;
         DrawGuideSettings();
         var snapshot = _guides.Snapshot;

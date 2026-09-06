@@ -19,6 +19,7 @@ internal static class Program
         else if (args is ["--guide-sheets", var directory]) GuideTests.SheetSmoke(directory);
         else if (args is ["--guide-model-smoke", var modelDirectory, var mode]) GuideCombatTests.ModelSmoke(modelDirectory, mode == "gpu");
         else if (args is ["--guide-pipeline-smoke", var pipelineDirectory]) GuideCombatTests.PipelineSmoke(pipelineDirectory);
+        else if (args is ["--guide-ui-smoke"]) GuideOverlayTests.Run();
         else EvaluateFiles(args);
     }
 

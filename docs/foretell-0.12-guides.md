@@ -4,11 +4,13 @@
 
 Any current ContentFinderCondition with a matching TerritoryType and non-empty official English name can request a Console Games Wiki page. There are no runtime Praetorium/Orbonne/other encounter lists. The bounded parser retains boss, phase, nested condition and source-revision context.
 
-At entry, a non-modal, dismissible panel shows the localized duty title, source, download/parse state, elapsed time, bytes when available and a median estimate from at most 16 actual local preparations. A first run measures rather than inventing an ETA. The usable cached/quick document appears first. A ready entry panel closes after 15 seconds and stays out of combat; the checklist remains. Users can reopen it from Guides.
+At entry, a non-modal, dismissible panel shows the localized duty title, source, download/parse state, elapsed time, bytes when available and a median estimate from at most 16 actual local preparations. A first run measures rather than inventing an ETA. The usable cached/quick document appears first. Since 0.12.1, the entry panel waits for manual dismissal instead of closing after 15 seconds. Combat hides it temporarily without dismissing it. Users can reopen it from Guides or by clicking the checklist's boss heading.
 
 The live checklist shows one identified current boss, or an upcoming boss while out of combat. A nearby identified boss is preferred to source order; engaging a later boss supports joining in progress. Multiple engaged documented bosses abstain. Death must be observed; despawn is not a kill. A wipe clears per-pull resolutions without forgetting previously defeated bosses and waits for old combat state to clear before rearming. Checkmarks mean a signal resolved, not that the player handled it correctly or that it cannot recur. Other bosses remain browsable in the inspector.
 
-Checklist layout persists separately from radar/text layout: normalized position, unlock/drag/resize, dimensions, scale, background, ordinary text, active, resolved and unresolved colors. Positions are clamped to the viewport. Central alerts reuse the movable text overlay and its enable switch, with an additional guide-alert switch.
+Checklist layout persists separately from radar/text layout: normalized position, unlock/drag/resize, width, maximum height, scale, ordinary text, active, resolved and unresolved colors. Since 0.12.1 the locked overlay has no background, title bar, borders or scrollbar. Only the boss heading and one line per mechanic remain: name, short response, and a countdown when live. A text shadow keeps it readable over the game. Descriptions, context, summary progress and provenance are in hover tooltips; Shift reveals the full English mechanic/context source, and the inspector retains complete document browsing. Tooltip previews are bounded and visibly ellipsized rather than presented as complete source.
+
+Height fits the visible rows automatically. Exceptionally long lists use bounded pages, not a scrollable article; a current signal selects its page. Width reserves room for the response, ellipsizing long names on grapheme boundaries. Unlock restores editing chrome/background and persists the maximum height. Positions are clamped to the viewport. Central alerts reuse the movable text overlay and its enable switch, with an additional guide-alert switch and independent text scale (default 1.4). Checklist and central alert use the same short response for the same live signal, including spatial/target abstention; ambiguous responses remain CHECK RESPONSE. No model-generated prose becomes an executable instruction.
 
 ## Evidence and presentation
 
@@ -17,7 +19,7 @@ Checklist layout persists separately from radar/text layout: normalized position
 - A local-player status highlights a unique source mention only when its actual Status ID/name and source boss match. Narrow positive-status condition rules can enable spread/look-away/cleanse instructions after the named status is observed. Unresolved alternatives, sequences and phase conditions remain documentary.
 - One combat frame drives the checklist and central alerts. Its associations annotate the existing DecisionFrame used by both radar and world overlay. Existing dimensions, endpoints and confidence do not come from guide prose. Shapes retain the ordinary display thresholds. Guides never increase learned success counts or confidence.
 - Unknown geometry is an explicitly non-spatial cross/label annotation, not a circle radius. Advisory guide changes prevent safe-route claims. A cast target alone never establishes a stack/tower anchor. Conditional guide text does not suppress a separately grounded generic hazard warning.
-- Central alerts show matched mechanics with a remaining-time bar. Direct personal instructions require relevant target/status/spatial evidence. Otherwise the alert points to the conditional checklist response, rather than guessing a safe direction.
+- Central alerts show matched mechanics with a remaining-time bar. Direct personal instructions require relevant target/status/spatial evidence. Otherwise a concise watch/check-response/check-target cue is shown, with the same cue in the highlighted checklist row, rather than guessing a safe direction.
 
 ## Local summaries and resource bounds
 
@@ -44,6 +46,8 @@ Inference is canceled and the helper killed on combat, disable, duty change or d
 ## Validation and limits
 
 Deterministic runtime tests cover current/upcoming boss selection, joining in progress, wipe/death/despawn, multi-boss ambiguity, per-pull resolutions, owned helpers, status prerequisites, independent geometry/confidence preservation, cross-caster/occurrence rejection, non-spatial annotations, measured ETA persistence, ZIP traversal, summary cancellation on combat, replacement, disable, and cached summaries without a model. Existing parser/HTTP/cache tests, core geometry tests and the telemetry contract remain required.
+
+0.12.1 adds short localized cue tests, unconfirmed spatial/group-target abstention, active-page selection, page reset for shorter lists, bounded hover previews and Unicode-safe name truncation. Generic source rules now also recognize standalone party-wide damage and cone/line attack wording; conditions and multi-response rejection still apply. The optional `dotnet run --project ForetellRuntimeTests -c Release -- --guide-ui-smoke` creates an isolated native ImGui context and checks the actual overlay-line drawing, one-line height, transparent/locked flags, editing flags, hover and tooltip emission. This is a headless native UI smoke test, not an in-game visual acceptance test.
 
 Explicit local CPU/Vulkan probes download pinned assets if missing:
 

@@ -9,6 +9,7 @@ internal static class GuideCombatTests
 
     public static void Run()
     {
+        ChecklistPresentation();
         var now = DateTime.UtcNow;
         var first = new GuideBoss("First", "", [new("", "", [new("Blast", "A circular AoE around the boss.", ""), new("Pulse", "Raidwide damage.", "")])]);
         var second = new GuideBoss("Second", "", [new("", "", [new("Blast", "A tankbuster.", "")])]);
@@ -87,6 +88,37 @@ internal static class GuideCombatTests
         finally { Directory.Delete(directory, true); }
         SummaryWorker().GetAwaiter().GetResult();
         Console.WriteLine("Guide boss lifecycle, synchronized decision bridge, conditional rules, summary guardrails, measured ETA and archive safety passed.");
+    }
+
+    private static void ChecklistPresentation()
+    {
+        var phase = new GuidePhase("", "", []);
+        Check(GuideRules.LiveGuidance(new("Breath", "A cone that deals damage and inflicts Poison.", ""), phase) == GuidanceKind.Avoid, "Plain-language cone was not prepared");
+        Check(GuideRules.LiveGuidance(new("Pulse", "Party-wide damage.", ""), phase) == GuidanceKind.Raidwide, "Party-wide damage was not prepared");
+        Check(GuideRules.LiveGuidance(new("Breath", "A cone attack. Do not move out if marked.", ""), phase) == GuidanceKind.None, "Plain-language cone lost its condition");
+        Check(GuideRules.LiveGuidance(new("Pulse", "Party-wide damage only if the shield breaks.", ""), phase) == GuidanceKind.None, "Party-wide damage lost its condition");
+        Check(GuideRules.LiveGuidance(new("Tower", "Soak the tower to avoid party-wide damage.", ""), phase) == GuidanceKind.Soak, "Damage consequence took precedence over the tower response");
+        Check(GuideRules.LiveGuidance(new("Add", "Kill the add to avoid party-wide damage.", ""), phase) == GuidanceKind.None, "Avoidable damage consequence became a raidwide instruction");
+        Check(GuideChecklistPresentation.Instruction(GuidanceKind.Avoid, GuideLanguage.French) == "ÉVITE LA ZONE", "Checklist lacks a short action");
+        Check(GuideChecklistPresentation.Instruction(GuidanceKind.Avoid, GuideLanguage.French, false) == "SURVEILLE LA ZONE", "Unconfirmed spatial instruction became a movement order");
+        Check(GuideChecklistPresentation.Instruction(GuidanceKind.Stack, GuideLanguage.French, false) == "CIBLE À CONFIRMER", "Missing group target became a stack order");
+        Check(GuideChecklistPresentation.Instruction(GuidanceKind.None, GuideLanguage.French) == "À VÉRIFIER", "Unresolved response became actionable");
+        foreach (var language in Enum.GetValues<GuideLanguage>())
+            foreach (var guidance in Enum.GetValues<GuidanceKind>())
+            {
+                var instruction = GuideChecklistPresentation.Instruction(guidance, language);
+                Check(instruction.Length is > 0 and <= 28 && !instruction.Contains('\n'), "Instruction is no longer a single short line");
+            }
+        Check(GuideChecklistPresentation.Page(5, 12, 0) == (0, 1, 0, 5), "Ordinary boss requires pagination");
+        Check(GuideChecklistPresentation.Page(30, 12, 0, 28) == (2, 3, 24, 6), "Active mechanic stayed outside the visible page");
+        Check(GuideChecklistPresentation.Page(2, 12, 7) == (0, 1, 0, 2), "Previous boss page hid a shorter checklist");
+        Check(GuideChecklistPresentation.Page(0, 0, -1) == (0, 1, 0, 0), "Empty/small layout is invalid");
+        Check(GuideChecklistPresentation.Fit("Mechanic", 8, value => value.Length) == "Mechanic", "Fitting name was truncated");
+        Check(GuideChecklistPresentation.Fit("Mechanic", 5, value => value.Length) == "Mech…", "Long name is not bounded");
+        Check(GuideChecklistPresentation.Fit("Mechanic", 0, value => value.Length) == "", "Tiny viewport overflows");
+        Check(GuideChecklistPresentation.Fit("é👩‍🚀abcdef", 3, value => System.Globalization.StringInfo.ParseCombiningCharacters(value).Length) == "é👩‍🚀…", "Name truncation split a Unicode grapheme");
+        Check(GuideChecklistPresentation.Preview(string.Join(" ", Enumerable.Repeat("description", 90))).Length <= 320, "Hover description is no longer compact");
+        Console.WriteLine("Compact guide cues, spatial/target abstention, automatic active paging and Unicode layout passed.");
     }
 
     private static async Task WaitFor(Func<bool> ready)

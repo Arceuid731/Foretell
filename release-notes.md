@@ -1,10 +1,11 @@
-# Foretell 0.12.0 — synchronized boss guides
+# Foretell 0.12.1 — compact combat checklist
 
-- Instance-entry panel: guide/source name, quick topic summary, measured timing estimates and download/preparation progress. The quick guide never waits for model installation.
-- Current/upcoming-boss checklist: live cast/status matching, explicit helper ownership, active highlights, per-pull resolution marks, death/wipe handling, persistent drag/resize, scale and colors. The inspector keeps full-document browsing.
-- Guide associations now annotate the existing 2D/3D decision frame and central countdown alerts. Client/observed geometry and confidence stay unchanged. Unknown shapes get only a non-spatial annotation; ambiguous prerequisites never become confirmed tactics.
-- Managed local translated summaries: pinned Qwen3-1.7B Q8 and llama.cpp CPU/Vulkan assets, SHA256 validation, resumable download, authenticated loopback, hidden auxiliary process, two inference threads, 15% total CPU hard cap, 4 GiB committed process-memory cap, bounded context, combat cancellation and progressive offline cache.
+- Replace the document-style checklist with a transparent, borderless overlay: boss heading, then one line per mechanic with its short response. Active mechanics highlight with a countdown. Unlock temporarily restores drag/resize controls; position, width, maximum height, scale and colors persist.
+- Move descriptions, conditions, translated summaries and preparation details into hover tooltips. Hold Shift over a mechanic for full English source. The inspector still offers the full guide. Ordinary boss lists fit without scrolling; unusually long lists use pages and active signals bring their page into view.
+- Use the same concise response for the highlighted row and central alert, with independent central text scaling. Unconfirmed targets/geometry and conditional responses remain watch/check cues rather than invented orders.
+- Keep the instance-entry panel open until dismissed. It hides temporarily in combat and can be reopened from Guides or by clicking the boss heading.
+- Recognize generic cone-attack and standalone party-wide damage phrasing without encounter-specific IDs or exceptions. Existing boss isolation, guide caches, 2D/3D geometry and BMR modes remain unchanged.
 
-First model setup downloads 1.83 GB plus an 18–35 MB runtime and may take minutes. Prepared guides/summaries work without network/model access. Automatic summaries are documentary, not trusted executable tactics. Ambiguous phases, unidentified marker/tether variants and missing spatial/target evidence still abstain. This connects the presentation pipeline; it does not claim universal encounter coverage or completed in-game visual validation.
+Validation: detached runtime and core tests, telemetry contract, Release build, plus a native ImGui headless smoke test for compact row geometry, transparent/locked flags, drag/resize flags and tooltip hover. In-game visual acceptance remains to be checked after updating. Guide coverage and unresolved conditions are not made universal by this UI change.
 
 Validation and limits: `docs/foretell-0.12-guides.md`.

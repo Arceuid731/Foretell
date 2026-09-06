@@ -5,9 +5,6 @@ namespace BossMod.Foretell;
 public sealed partial class ForetellEngine
 {
     private bool _guideEntryDismissed;
-    private DateTime _guideEntryReadyAt;
-    private bool _guideChecklistWasUnlocked;
-    private bool _guideChecklistDirty;
 
     private static Vector4 GuideColor(uint packed) => new((packed & 255) / 255f, ((packed >> 8) & 255) / 255f, ((packed >> 16) & 255) / 255f, (packed >> 24) / 255f);
 
@@ -38,11 +35,6 @@ public sealed partial class ForetellEngine
     private void DrawGuideEntry()
     {
         if (_guideDuty == null || _guideEntryDismissed || _guideCombat || _guides?.Snapshot is not { } snapshot || snapshot.Duty != _guideDuty) return;
-        if (snapshot.Document != null)
-        {
-            if (_guideEntryReadyAt == default) _guideEntryReadyAt = DateTime.UtcNow;
-            if ((DateTime.UtcNow - _guideEntryReadyAt).TotalSeconds > 15) { _guideEntryDismissed = true; return; }
-        }
         var viewport = ImGui.GetMainViewport();
         ImGui.SetNextWindowPos(viewport.Pos + new Vector2(viewport.Size.X * .5f - 250, Math.Max(20, viewport.Size.Y * .12f)), ImGuiCond.FirstUseEver);
         ImGui.SetNextWindowSize(new(500, Math.Min(560, viewport.Size.Y * .75f)), ImGuiCond.Always);
@@ -52,6 +44,8 @@ public sealed partial class ForetellEngine
         {
             ImGui.TextColored(GuideColor(_cfg.GuideActiveColor), GuideDutyName(_guideDuty));
             ImGui.TextDisabled("Console Games Wiki");
+            ImGui.TextDisabled(GuideText("Stays open until dismissed; hidden during combat.", "Reste ouvert jusqu’à fermeture ; masqué pendant le combat.",
+                "Bleibt bis zum Schließen offen; im Kampf ausgeblendet.", "閉じるまで表示。戦闘中は一時的に非表示。"));
             DrawGuideState(snapshot);
             DrawGuideSummaryProgress();
             if (snapshot.Document is { } document)
@@ -87,95 +81,6 @@ public sealed partial class ForetellEngine
         if (summary != null) ImGui.TextWrapped(GuideText("Excerpt (auto-summary): ", "Extrait (résumé auto) : ", "Auszug (automatisch): ", "抜粋（自動要約）：") + summary);
     }
 
-    private void DrawGuideChecklist()
-    {
-        if (_guideDuty == null && !_cfg.GuideChecklistUnlocked) return;
-        var viewport = ImGui.GetMainViewport();
-        var size = FiniteViewport(viewport.Size) ? viewport.Size : new Vector2(1920, 1080);
-        var width = Math.Clamp(_cfg.GuideWidth, 260, Math.Max(260, size.X));
-        var height = Math.Clamp(_cfg.GuideHeight, 180, Math.Max(180, size.Y));
-        var position = viewport.Pos + new Vector2(_cfg.GuidePositionX < 0 ? 20 : _cfg.GuidePositionX * size.X, _cfg.GuidePositionY < 0 ? size.Y * .2f : _cfg.GuidePositionY * size.Y);
-        position = Vector2.Clamp(position, viewport.Pos, viewport.Pos + Vector2.Max(Vector2.Zero, size - new Vector2(width, height)));
-        if (!_cfg.GuideChecklistUnlocked || !_guideChecklistWasUnlocked)
-        { ImGui.SetNextWindowPos(position, ImGuiCond.Always); ImGui.SetNextWindowSize(new(width, height), ImGuiCond.Always); }
-        ImGui.SetNextWindowSizeConstraints(new(260, 180), Vector2.Min(new(1000, 1000), Vector2.Max(new(260, 180), size)));
-        ImGui.PushStyleColor(ImGuiCol.WindowBg, GuideColor(_cfg.GuideBackgroundColor));
-        ImGui.PushStyleColor(ImGuiCol.Text, GuideColor(_cfg.GuideTextColor));
-        var flags = ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoSavedSettings;
-        if (!_cfg.GuideChecklistUnlocked) flags |= ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoResize;
-        var visible = ImGui.Begin(GuideText("Foretell · boss checklist", "Foretell · checklist du boss", "Foretell · Boss-Checkliste", "Foretell・ボスチェックリスト") + "###ForetellGuideChecklist", flags);
-        try
-        {
-            ImGui.SetWindowFontScale(_cfg.GuideScale);
-            if (_cfg.GuideChecklistUnlocked)
-            {
-                var actual = (ImGui.GetWindowPos() - viewport.Pos) / size;
-                var dimensions = ImGui.GetWindowSize();
-                if (Math.Abs(_cfg.GuidePositionX - actual.X) > .0001f || Math.Abs(_cfg.GuidePositionY - actual.Y) > .0001f
-                    || Math.Abs(_cfg.GuideWidth - dimensions.X) > .5f || Math.Abs(_cfg.GuideHeight - dimensions.Y) > .5f)
-                {
-                    _cfg.GuidePositionX = Math.Clamp(actual.X, 0, 1); _cfg.GuidePositionY = Math.Clamp(actual.Y, 0, 1);
-                    _cfg.GuideWidth = dimensions.X; _cfg.GuideHeight = dimensions.Y; _guideChecklistDirty = true;
-                }
-            }
-            if (_guideChecklistDirty && (!ImGui.IsMouseDown(ImGuiMouseButton.Left) || !_cfg.GuideChecklistUnlocked))
-            { _guideChecklistDirty = false; _cfg.Modified.Fire(); }
-            _guideChecklistWasUnlocked = _cfg.GuideChecklistUnlocked;
-            if (!visible) return;
-            if (_guideDuty != null) ImGui.TextWrapped(GuideDutyName(_guideDuty));
-            if (_liveGuide == null)
-            {
-                if (_guides != null) DrawGuideState(_guides.Snapshot);
-                return;
-            }
-            if (_guideFrame.Boss is not { } boss)
-            {
-                ImGui.TextWrapped(_guideFrame.Ambiguous
-                    ? GuideText("Several bosses active: waiting for unambiguous identification.", "Plusieurs boss actifs : attente d’une identification sans ambiguïté.", "Mehrere Bosse aktiv: eindeutige Erkennung abwarten.", "複数のボスが活動中：特定待ち。")
-                    : GuideText("Documented bosses completed.", "Boss documentés terminés.", "Dokumentierte Bosse abgeschlossen.", "記載されたボスを撃破済み。"));
-                return;
-            }
-            ImGui.TextColored(GuideColor(_cfg.GuideActiveColor), (_guideFrame.Upcoming ? GuideText("Upcoming: ", "À venir : ", "Als Nächstes: ", "次：") : GuideText("Current: ", "Actuel : ", "Aktuell: ", "現在：")) + GuideBossName(boss));
-            DrawGuideBossSummary(boss);
-            DrawGuideSummaryProgress();
-            var active = LiveGuideSignals().ToArray();
-            foreach (var phase in boss.Phases)
-            {
-                ImGui.Separator();
-                ImGui.TextWrapped(GuidePhaseName(phase));
-                if (GuideContextSummary(boss, phase) is { } contextSummary)
-                    ImGui.TextWrapped(GuideText("Context (auto-summary): ", "Contexte (résumé auto) : ", "Kontext (automatisch): ", "背景（自動要約）：") + contextSummary);
-                if (phase.Context.Length > 0 && ImGui.TreeNode(GuideText("Phase context (source EN)", "Contexte de phase (source EN)", "Phasenkontext (EN)", "フェーズ背景（英語）") + "###" + phase.Name))
-                { ImGui.TextWrapped(phase.Context); ImGui.TreePop(); }
-                for (var index = 0; index < phase.Mechanics.Length; ++index)
-                {
-                    var mechanic = phase.Mechanics[index];
-                    ImGui.PushID(phase.Name + ":" + index);
-                    var live = active.Where(signal => ReferenceEquals(signal.Mechanic, mechanic)).ToArray();
-                    var resolved = _guideEncounter.Resolved(boss, phase, mechanic);
-                    var prepared = GuideRules.LiveGuidance(mechanic, phase, boss) != GuidanceKind.None;
-                    var color = live.Length > 0 ? _cfg.GuideActiveColor : resolved ? _cfg.GuideResolvedColor : prepared ? _cfg.GuideTextColor : _cfg.GuideUnresolvedColor;
-                    ImGui.TextColored(GuideColor(color), (live.Length > 0 ? "▶ " : resolved ? "✓ " : "• ") + GuideMechanicName(boss, mechanic));
-                    if (live.Length > 0) ImGui.TextDisabled($"{Math.Max(0, (live.Min(signal => signal.Until) - _ws.CurrentTime).TotalSeconds):F1}s · {live[0].Kind}");
-                    if (mechanic.Rules.Length > 0) ImGui.TextWrapped((prepared ? "" : GuideText("Topics: ", "Thèmes : ", "Themen: ", "種類："))
-                        + string.Join(" · ", mechanic.Rules.Select(rule => GuidanceInstruction(rule.Guidance, MechanicKind.Unknown, GeometryKind.Unknown))));
-                    if (GuideSummaryFor(boss, phase, mechanic) is { } summary)
-                    {
-                        ImGui.TextWrapped(summary);
-                        ImGui.TextDisabled(GuideText("Local auto-summary · check source", "Résumé automatique local · vérifier la source", "Lokale automatische Zusammenfassung · Quelle prüfen", "ローカル自動要約・原文を確認"));
-                    }
-                    if (!prepared) ImGui.TextWrapped(GuideText("Conditional / specific response: source required.", "Consigne conditionnelle / spécifique : consulter la source.", "Bedingte / spezielle Reaktion: Quelle lesen.", "条件付き・固有の対処：原文を確認。"));
-                    if (ImGui.TreeNode(GuideText("Details and source (EN)", "Détails et source (EN)", "Details und Quelle (EN)", "詳細・原文（英語）")))
-                    { ImGui.TextWrapped(mechanic.Text); DrawGuideStatusNames(mechanic); ImGui.TreePop(); }
-                    ImGui.PopID();
-                }
-            }
-            ImGui.Separator();
-            ImGui.TextWrapped(GuideText("✓ = observed resolution this pull, not permanently finished. Missing geometry is never invented.", "✓ = résolution observée sur ce pull, pas définitivement terminée. Aucune zone manquante n’est inventée.",
-                "✓ = in diesem Versuch aufgelöst, nicht dauerhaft erledigt. Fehlende Geometrie wird nie erfunden.", "✓＝この戦闘で解決済み。再発しない意味ではありません。不明な範囲は描画しません。"));
-        }
-        finally { ImGui.End(); ImGui.PopStyleColor(2); }
-    }
 
     private void DrawGuideSettings()
     {
@@ -190,9 +95,10 @@ public sealed partial class ForetellEngine
             "Einmalig: 1,83 GB Modell + 18–35 MB Laufzeit. Isoliert: 2 CPU-Threads, 15% Gesamt-CPU, 4 GiB zugesicherter RAM, 4096 Token. Keine Inferenz im Kampf. Cache funktioniert offline. KI-Zusammenfassungen bestimmen keine Live-Geometrie oder Ziele.",
             "初回：モデル1.83 GB＋実行環境18～35 MB。別プロセス：CPU 2スレッド、全CPUの15%、コミットRAM 4 GiB、4096トークン上限。戦闘中は推論停止。キャッシュはオフライン対応。AI要約は範囲や対象を決定しません。"));
         changed |= ImGui.SliderFloat(GuideText("Width", "Largeur", "Breite", "幅"), ref _cfg.GuideWidth, 260, 1000, "%.0f");
-        changed |= ImGui.SliderFloat(GuideText("Height", "Hauteur", "Höhe", "高さ"), ref _cfg.GuideHeight, 180, 1000, "%.0f");
+        changed |= ImGui.SliderFloat(GuideText("Maximum height (automatic when locked)", "Hauteur maximale (automatique une fois verrouillée)", "Maximale Höhe (gesperrt automatisch)", "最大高さ（ロック中は自動）"), ref _cfg.GuideHeight, 180, 1000, "%.0f");
         changed |= ImGui.SliderFloat(GuideText("Text scale", "Échelle du texte", "Textgröße", "文字倍率"), ref _cfg.GuideScale, .7f, 1.8f, "%.2f");
-        changed |= EditGuideColor(GuideText("Background", "Fond", "Hintergrund", "背景"), ref _cfg.GuideBackgroundColor);
+        changed |= ImGui.SliderFloat(GuideText("Central alert scale", "Taille de l’alerte centrale", "Größe der zentralen Warnung", "中央警告の倍率"), ref _cfg.GuideAlertScale, 1, 2.5f, "%.2f");
+        changed |= EditGuideColor(GuideText("Editing background only", "Fond en édition uniquement", "Hintergrund nur beim Bearbeiten", "編集中のみの背景"), ref _cfg.GuideBackgroundColor);
         changed |= EditGuideColor(GuideText("Text", "Texte", "Text", "文字"), ref _cfg.GuideTextColor);
         changed |= EditGuideColor(GuideText("Active mechanic / alert", "Mécanique active / alerte", "Aktive Mechanik / Warnung", "発動中・警告"), ref _cfg.GuideActiveColor);
         changed |= EditGuideColor(GuideText("Resolved this pull", "Résolue sur ce pull", "In diesem Versuch aufgelöst", "この戦闘で解決済み"), ref _cfg.GuideResolvedColor);
@@ -200,7 +106,7 @@ public sealed partial class ForetellEngine
         if (ImGui.Button(GuideText("Reset checklist layout", "Réinitialiser la disposition", "Layout zurücksetzen", "配置をリセット")))
         { _cfg.GuidePositionX = _cfg.GuidePositionY = -1; _cfg.GuideWidth = 380; _cfg.GuideHeight = 520; _cfg.GuideScale = 1; _guideChecklistWasUnlocked = false; changed = true; }
         if (_guideDuty != null && ImGui.Button(GuideText("Show entry summary again", "Revoir le résumé d’entrée", "Zusammenfassung erneut anzeigen", "入場時の要約を再表示")))
-        { _guideEntryDismissed = false; _guideEntryReadyAt = default; }
+        { _guideEntryDismissed = false; }
         if (!_guideCombat && ImGui.Button(GuideText("Retry unfinished summaries", "Relancer les résumés non préparés", "Fehlende Zusammenfassungen erneut versuchen", "未完了の要約を再試行"))) _guideSummaries?.Retry();
         if (changed) { _guideChecklistWasUnlocked = false; _cfg.Modified.Fire(); }
     }

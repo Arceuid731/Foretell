@@ -534,6 +534,7 @@ public sealed partial class ForetellEngine : IDisposable
         changed |= NormalizeFinite(ref _cfg.GuideWidth, 380, 260, 1000);
         changed |= NormalizeFinite(ref _cfg.GuideHeight, 520, 180, 1000);
         changed |= NormalizeFinite(ref _cfg.GuideScale, 1, .7f, 1.8f);
+        changed |= NormalizeFinite(ref _cfg.GuideAlertScale, 1.4f, 1, 2.5f);
         changed |= NormalizeFinite(ref _cfg.GuidePositionX, -1, -1, 1);
         changed |= NormalizeFinite(ref _cfg.GuidePositionY, -1, -1, 1);
         var maxRendered = Math.Clamp(_cfg.MaxRenderedMechanics, 1, 32);

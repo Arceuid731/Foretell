@@ -4,10 +4,12 @@
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../BossMod/BossModReborn.csproj" />
     <Reference Include="Lumina" HintPath="$(appdata)/XIVLauncher/addon/Hooks/dev/Lumina.dll" Private="false" />
     <Reference Include="Lumina.Excel" HintPath="$(appdata)/XIVLauncher/addon/Hooks/dev/Lumina.Excel.dll" Private="false" />
+    <Reference Include="Dalamud.Bindings.ImGui" HintPath="$(appdata)/XIVLauncher/addon/Hooks/dev/Dalamud.Bindings.ImGui.dll" Private="false" />
   </ItemGroup>
 </Project>

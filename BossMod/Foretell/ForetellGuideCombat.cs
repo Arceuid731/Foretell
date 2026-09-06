@@ -14,14 +14,14 @@ internal static class GuideRules
     private static readonly (GuidanceKind Kind, Regex Pattern)[] Patterns =
     [
         (GuidanceKind.Tankbuster, Pattern(@"\btank[ -]?buster\b")),
-        (GuidanceKind.Raidwide, Pattern(@"\braid[ -]?wide\b|\bunavoidable (?:party|group)[ -]wide damage\b")),
+        (GuidanceKind.Raidwide, Pattern(@"\braid[ -]?wide\b|\bunavoidable (?:party|group)[ -]wide damage\b|^(?:party|group)[ -]wide damage[.!]?$")),
         (GuidanceKind.Stack, Pattern(@"\bstack marker\b|\bshare (?:the )?(?:damage|hit)\b|\bgroup stack\b")),
         (GuidanceKind.Spread, Pattern(@"\bspread out\b|\bspread markers?\b|\bspread aoes?\b")),
         (GuidanceKind.LookAway, Pattern(@"\bgaze (?:attack|mechanic)\b|\blook away\b|\bturn away\b")),
         (GuidanceKind.Knockback, Pattern(@"\bknock[ -]?back\b")),
         (GuidanceKind.Soak, Pattern(@"\bsoak (?:the )?towers?\b|\bstand in (?:the )?towers?\b")),
         (GuidanceKind.Cleanse, Pattern(@"\b(?:cleansed|removed|dispelled) (?:with|by|using) esuna\b")),
-        (GuidanceKind.Avoid, Pattern(@"\b(?:circle|circular|cone|conal|line|donut|doughnut|rectangular|cross)[ -](?:shaped )?aoe\b|\b(?:circle|circular|cone|conal|line|donut|doughnut|rectangular|cross) aoe\b"))
+        (GuidanceKind.Avoid, Pattern(@"\b(?:circle|circular|cone|conal|line|donut|doughnut|rectangular|cross)[ -](?:shaped )?(?:aoe|attack|area of effect)\b|\b(?:cone|line|circle) that deals damage\b"))
     ];
 
     private static Regex Pattern(string value) => new(value, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
