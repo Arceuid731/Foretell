@@ -54,6 +54,7 @@ internal static class CaptureTests
         }
         TestQuota(root, events[0]);
         TestReaderBounds(root);
+        GuideCaptureTests.Run(root, events, expectedDigest);
         Console.WriteLine("Automatic capture tests passed: immutable live ZIP, replay parity, repeated context, missing evidence, quotas, retention and reader bounds.");
         // Only known temporary files created by this test; validate the absolute root before recursive cleanup.
         var full = Path.GetFullPath(root);

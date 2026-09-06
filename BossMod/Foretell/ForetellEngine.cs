@@ -324,6 +324,7 @@ public sealed partial class ForetellEngine : IDisposable
             RefreshEncounterIdentity(currentEncounter, _ws.CurrentCFCID);
 
         UpdateGuides(now, gameInCombat);
+        CaptureGuideDiagnostics();
 
         // The combat flag normally changes before the first cast packet. Starting the phase clock here lets an
         // already learned T+N mechanic be announced before its trigger in duties and in open-world encounters.

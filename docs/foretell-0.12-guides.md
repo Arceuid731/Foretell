@@ -23,6 +23,14 @@ Height fits the visible rows automatically. Exceptionally long lists use bounded
 
 ## Local summaries and resource bounds
 
+### Analysis ZIP provenance (0.12.2)
+
+Guide diagnostics now share the automatic capture worker's ordered queue and immutable export barrier, but remain separate from combat observations and learning. `guides/index.json` in each Analysis ZIP links SHA256-verified compressed JSON files: `guide-source-<hash>.json.gz` contains the extracted English document, duty identity, revision, source URL, boss/phase contexts and mechanic text; `guide-snapshot-<number>.json.gz` contains session/time identity, source reference, language, model revision, adapted names and contextual IDs, original rule evidence, conditional flags, translated summaries, short responses, resolved flags, sampled cast/status associations and relevant guide settings.
+
+Preparation stages, attempted/total counts and available summary count are separate. A prepared attempt is not proof of a usable summary or tactical coverage. Snapshots occur on state/summary/name/boss/signal changes, sampled at most every 250 ms, with a forced snapshot before an active-session export. They are not a continuous event trace or proof of which pixels were drawn. Source documents are deduplicated within a session; the capture keeps at most 16 source revisions and 128 adaptation snapshots, 4 MiB expanded per artifact and 16 MiB compressed guide data within the existing 64 MiB session / 256 MiB cache / 14-day retention limits. Queueing, quota, integrity or preparation failures produce explicit guide warnings without invalidating otherwise complete decision observations.
+
+The sidecars are pinned with the selected session, including historical exports after duty changes or plugin restart. Sources and adaptations are never fetched from a later current cache during export. Old ZIPs do not gain historical guide evidence by being re-exported; absent records are reported as unavailable. Original user ZIPs remain untouched. These files retain extracted source text, not the original full wiki HTML/API response. The normal detached learner ignores them entirely; tests verify unchanged decision digests with/without guide attachments.
+
 The guide document and fast classification do not wait for a model. A separate worker progressively translates/condenses source excerpts, prioritizing the current/upcoming boss. It handles attributed text only and cannot query the game, execute tools, choose Action IDs, publish geometry or change live rule semantics.
 
 Source-context sections are also summarized, including sections with no named ability (for example general boss strategy or tank notes). They are not silently dropped or turned into fictitious mechanics. Context and per-ability excerpts have distinct source-bound cache keys.

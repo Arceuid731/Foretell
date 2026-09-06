@@ -10,7 +10,7 @@ namespace BossMod.Foretell;
 
 // Only this new automatic cache is rotated automatically. Existing raw/readable files and exported ZIPs
 // retain their separate, user-controlled retention policy. No game services are used by this worker.
-internal sealed class ForetellCapture : IDisposable
+internal sealed partial class ForetellCapture : IDisposable
 {
     internal const long SessionLimit = 64L * 1024 * 1024;
     internal const long CacheLimit = 256L * 1024 * 1024;
@@ -36,12 +36,15 @@ internal sealed class ForetellCapture : IDisposable
         public long ExpandedBytes;
         public int Capped;
         public string Error = "";
+        public long GuideRejected;
+        public string GuideError = "";
     }
-    internal sealed class Snapshot(string directory, byte[] index, string[] parts, Action release) : IDisposable
+    internal sealed class Snapshot(string directory, byte[] index, string[] parts, Action release, GuideCaptureFile[]? guides = null) : IDisposable
     {
         public string Directory { get; } = directory;
         public byte[] Index { get; } = index;
         public string[] Parts { get; } = parts;
+        public GuideCaptureFile[] Guides { get; } = guides ?? [];
         private Action? _release = release;
         public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
     }
@@ -126,6 +129,13 @@ internal sealed class ForetellCapture : IDisposable
     {
         foreach (var item in _queue.GetConsumingEnumerable())
         {
+            if (item is GuideEvent guide)
+            {
+                try { WriteGuide(guide); }
+                catch (Exception error) { RejectGuide(guide.Session, $"{error.GetType().Name}: {error.Message}"); }
+                finally { Interlocked.Add(ref _queuedBytes, -guide.Bytes); }
+                continue;
+            }
             if (item is Seal seal)
             {
                 try
@@ -152,11 +162,7 @@ internal sealed class ForetellCapture : IDisposable
 
     private void Write(Event item)
     {
-        if (_active != item.Session)
-        {
-            ClosePart(); SaveIndex();
-            _active = item.Session; _part = 0; _parts.Clear(); _hashes.Clear(); _counts.Clear(); _first = _last = default;
-        }
+        SelectSession(item.Session);
         if (Volatile.Read(ref item.Session.Capped) != 0)
         { Interlocked.Increment(ref item.Session.Rejected); return; }
         if (_file != null && DateTime.UtcNow - _segmentStarted >= TimeSpan.FromMinutes(1)) { ClosePart(); SaveIndex(); }
@@ -176,7 +182,7 @@ internal sealed class ForetellCapture : IDisposable
         if (_file == null && !OpenPart()) { Interlocked.Increment(ref item.Session.Rejected); return; }
         _gzip!.Write(bytes); _gzip.WriteByte(10);
         _segmentBytes += bytes.Length + 1;
-        _active.ExpandedBytes += bytes.Length + 1;
+        _active!.ExpandedBytes += bytes.Length + 1;
         _lastContext = observation.ContextID;
         Interlocked.Increment(ref _active.Written);
         _counts[observation.Kind] = _counts.GetValueOrDefault(observation.Kind) + 1;
@@ -226,7 +232,8 @@ internal sealed class ForetellCapture : IDisposable
         first = _first, last = _last, observations = _active.Written, rejected = Interlocked.Read(ref _active.Rejected),
         complete = _active.Rejected == 0 && _active.Error.Length == 0, error = _active.Error,
         compressedBytes = _active.Bytes, expandedBytes = _active.ExpandedBytes, parts = _parts, hashes = _hashes, counts = _counts,
-        semantics = "Accepted normalized events in arrival order, including recorded client priors and world context. Cold-start semantic evaluation; no initial learned-memory checkpoint, rendered pixels or historical collision scene."
+        semantics = "Accepted normalized events in arrival order, including recorded client priors and world context. Cold-start semantic evaluation; no initial learned-memory checkpoint, rendered pixels or historical collision scene.",
+        guides = _guideFiles, guideRejected = _active.GuideRejected, guideError = _active.GuideError
     }, Json);
 
     private void SaveIndex()
@@ -250,8 +257,11 @@ internal sealed class ForetellCapture : IDisposable
             var parts = document.RootElement.GetProperty("parts").EnumerateArray().Select(e => e.GetString()!).ToArray();
             if (parts.Any(p => p != Path.GetFileName(p) || !p.EndsWith(".jsonl.gz", StringComparison.Ordinal)))
                 throw new InvalidDataException("Invalid capture index part");
+            var guides = document.RootElement.TryGetProperty("guides", out var entries) ? entries.Deserialize<GuideCaptureFile[]>(Json) ?? [] : [];
+            if (guides.Length > 256 || guides.Any(guide => !ValidGuideFilename(guide.File)) || guides.Select(guide => guide.File).Distinct().Count() != guides.Length)
+                throw new InvalidDataException("Invalid guide capture index");
             _pins[full] = _pins.GetValueOrDefault(full) + 1;
-            return new(full, index, parts, () => { lock (_filesLock) { if (--_pins[full] == 0) _pins.Remove(full); } });
+            return new(full, index, parts, () => { lock (_filesLock) { if (--_pins[full] == 0) _pins.Remove(full); } }, guides);
         }
     }
 
@@ -270,7 +280,8 @@ internal sealed class ForetellCapture : IDisposable
             foreach (var file in directory.GetFiles())
             {
                 if (file.Name != "index.json" && file.Name != "index.json.tmp" && !file.Name.EndsWith(".jsonl.gz", StringComparison.Ordinal)
-                    && !file.Name.EndsWith(".jsonl.gz.tmp", StringComparison.Ordinal)) continue;
+                    && !file.Name.EndsWith(".jsonl.gz.tmp", StringComparison.Ordinal) && !ValidGuideFilename(file.Name)
+                    && !(file.Name.EndsWith(".tmp", StringComparison.Ordinal) && ValidGuideFilename(file.Name[..^4]))) continue;
                 try { var length = file.Length; file.Delete(); used -= length; } catch (IOException) { }
             }
             if (!directory.EnumerateFileSystemInfos().Any()) directory.Delete();

@@ -205,6 +205,7 @@ public sealed partial class ForetellEngine
         };
         var analysisBytes = JsonSerializer.SerializeToUtf8Bytes(analysis, _diagnosticJson);
         var outputPath = Path.Combine(_replayDir, $"foretell-analysis-T{encounter.TerritoryID}-{DateTime.Now:yyyyMMdd-HHmmss-fff}.zip");
+        if (liveSelected) CaptureGuideDiagnostics(force: true);
         var captureTask = _capture == null || string.IsNullOrWhiteSpace(selected?.CaptureDirectory)
             ? Task.FromResult<ForetellCapture.Snapshot?>(null)
             : _capture.SnapshotAsync(Path.Combine(Path.GetDirectoryName(_replayDir)!, "foretell-captures", Path.GetFileName(selected.CaptureDirectory)));
@@ -285,6 +286,30 @@ public sealed partial class ForetellEngine
             long bytes = work.Analysis.LongLength + (capture?.Index.LongLength ?? 0)
                 + (capture?.Parts.Sum(p => new FileInfo(Path.Combine(capture.Directory, p)).Length) ?? 0);
             if (bytes > bundleLimit - 1024 * 1024) throw new IOException("Required analysis/capture exceeds the 128 MiB export limit");
+            var guideFiles = new List<(GuideCaptureFile Metadata, byte[] Data)>();
+            var guideWarnings = new List<string>();
+            if (capture == null || capture.Guides.Length == 0)
+                guideWarnings.Add("No session-time guides were recorded. Older versions did not capture them; current wiki/summary caches are not substituted for historical evidence.");
+            if (capture != null)
+            {
+                using var index = JsonDocument.Parse(capture.Index);
+                if (index.RootElement.GetProperty("sessionID").GetString() != work.SessionID || index.RootElement.GetProperty("territory").GetUInt32() != work.TerritoryID)
+                    throw new InvalidDataException("Capture does not belong to the selected session");
+                if (index.RootElement.TryGetProperty("guideRejected", out var rejected) && rejected.GetInt64() > 0)
+                    guideWarnings.Add($"{rejected.GetInt64()} guide snapshot(s) omitted: " + (index.RootElement.TryGetProperty("guideError", out var error) ? error.GetString() : "unknown reason"));
+                foreach (var guide in capture.Guides)
+                {
+                    try
+                    {
+                        var data = ReadGuideArtifact(capture.Directory, guide);
+                        if (bytes + data.Length > bundleLimit - 1024 * 1024) throw new IOException("Export budget exhausted");
+                        bytes += data.Length; guideFiles.Add((guide, data));
+                    }
+                    catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException)
+                    { guideWarnings.Add($"Guide artifact omitted: {guide.File}: {error.Message}"); }
+                }
+            }
+            warnings.AddRange(guideWarnings);
             var collision = work.Collision;
             if (collision != null)
             {
@@ -305,6 +330,16 @@ public sealed partial class ForetellEngine
             using (var archive = new ZipArchive(file, ZipArchiveMode.Create))
             {
                 WriteBundleBytes(archive, "foretell-analysis.json", work.Analysis);
+                foreach (var guide in guideFiles) WriteBundleBytes(archive, "guides/" + guide.Metadata.File, guide.Data);
+                WriteBundleBytes(archive, "guides/index.json", JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    schema = 1, work.SessionID, work.TerritoryID, work.SessionPluginVersion,
+                    availability = guideFiles.Any(guide => guide.Metadata.Kind == "adapted") ? "captured" : "unavailable",
+                    complete = guideWarnings.Count == 0,
+                    files = guideFiles.Select(guide => new { path = "guides/" + guide.Metadata.File, guide.Metadata.Kind, guide.Metadata.Sha256, guide.Metadata.Bytes, guide.Metadata.At, guide.Metadata.SourceHash }),
+                    warnings = guideWarnings,
+                    semantics = "Immutable session-time snapshots: extracted English source with revision, adapted checklist/conditions/local summaries, contextual IDs, settings and sampled live matches. Not raw wiki HTML, continuous match telemetry or proof of rendered pixels. Old sessions cannot be reconstructed from the current cache."
+                }, new JsonSerializerOptions { WriteIndented = true }));
                 if (capture != null)
                 {
                     WriteBundleBytes(archive, "capture/index.json", capture.Index);
@@ -313,7 +348,7 @@ public sealed partial class ForetellEngine
                 }
                 var manifest = new
                 {
-                    formatSchema = 2,
+                    formatSchema = 3,
                     generatedAt = DateTime.UtcNow,
                     work.TerritoryID,
                     work.Content,
@@ -326,6 +361,7 @@ public sealed partial class ForetellEngine
                         rawJournals = rawPaths.Select(path => $"raw/{Path.GetFileName(path)}").ToArray(),
                         readableReplay = replayPath == null ? null : $"replay/{Path.GetFileName(replayPath)}",
                         decisionCapture = capture == null ? null : "capture/index.json",
+                        guides = "guides/index.json",
                         collisionSnapshot = collision == null ? null : "terrain/collision.ftrc"
                     },
                     collisionSnapshotMeaning = "Latest completed local capture for the selected live session at export; not the historical terrain of a completed run. Replay with ForetellCoreTests --collision <analysis.zip>.",
