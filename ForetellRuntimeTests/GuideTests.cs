@@ -71,6 +71,7 @@ internal static class GuideTests
         var trial = ForetellGuideParser.Parse(Response(Duty, "<h2>Strategy</h2><h3>Lord of tests: <a>Keeper</a></h3><h3>Phase 1</h3><ul><li>Lance is an attack that hits the target.</li></ul><h3>Phase 2</h3><p>If marked, move outside.</p><h2>Loot</h2>"), Duty, Now);
         Check(trial.Bosses.Single().Name == "Keeper" && trial.Bosses[0].Phases.Length == 2 && trial.MechanicCount == 1, "Single-boss trial headings and sibling phase headings were misclassified");
         NarrativeGuides();
+        BossNames();
         Synchronization(document);
         GuideCombatTests.Run();
         GuidePageAnalysisTests.Run();
@@ -102,6 +103,58 @@ internal static class GuideTests
             "Empty boss sections became a ready narrative guide");
         Reject(() => ForetellGuideParser.Parse(Response(Duty with { EnglishName = "the Test Chamber (Hard)" }, NarrativeHtml), Duty, Now),
             "Narrative fallback accepted another duty variant");
+    }
+
+    private static void BossNames()
+    {
+        foreach (var (heading, expected) in new[]
+        {
+            ("Auspice: Suzaku", "suzaku"),
+            ("  AUSPICE :\tSuZaKu  ", "suzaku"),
+            ("Auspice： Suzaku", "suzaku"),
+            ("Lord of tests: The Keeper", "keeper"),
+            ("King’s right-hand: The O’Keeper", "o'keeper"),
+            ("The O’Keeper", "o'keeper"),
+            ("Auspice: Suzaku (Extreme)", "suzaku (extreme)"),
+            ("Warden: Keeper II", "keeper ii"),
+            ("Warden: Keeper-Prime", "keeper-prime")
+        })
+        {
+            Check(GuideNames.Boss(heading) == expected, "Boss heading normalization failed: " + heading);
+            Check(GuideNames.Boss(GuideNames.Boss(heading)) == expected, "Boss normalization is not idempotent: " + heading);
+        }
+        foreach (var heading in new[]
+        {
+            "Auspice:Suzaku", ": Suzaku", "Auspice:", "Auspice: : Suzaku", "Title: Auspice: Suzaku",
+            "Auspice (Extreme): Suzaku", "Boss 2: Suzaku", "Suzaku/Seiryu: Suzaku", "Suzaku & Seiryu: Suzaku"
+        })
+            Check(GuideNames.Boss(heading) == GuideNames.Normalize(heading), "Ambiguous heading was shortened: " + heading);
+        foreach (var difficulty in new[] { "Normal", "Hard", "Extreme", "Savage", "Ultimate", "Unreal" })
+        {
+            Check(GuideNames.Boss(difficulty + ": Suzaku") != GuideNames.Boss("Suzaku"), "Difficulty prefix was removed: " + difficulty);
+            Check(GuideNames.Boss("Auspice " + difficulty + ": Suzaku") != GuideNames.Boss("Suzaku"), "Title lost difficulty: " + difficulty);
+            Check(GuideNames.Boss("Auspice: Suzaku (" + difficulty + ")") != GuideNames.Boss("Suzaku"), "Difficulty suffix was removed: " + difficulty);
+        }
+        Check(GuideNames.Normalize("Auspice: Suzaku") == "auspice: suzaku", "Boss title rules changed general name normalization");
+        var boss = new GuideBoss("Auspice: Suzaku", "", [new("", "", [new("Pulse", "Raidwide damage.", "")])]);
+        var document = new GuideDocument(GuideDocument.CurrentSchema, Duty, Duty.EnglishName, 1, Now, GuideNames.Hash("heading"), [boss]);
+        var cast = new GuideCast(Duty, 100, 200, 300, "sUzAkU", 400, "PULSE", Now.AddSeconds(5));
+        Check(GuideSynchronization.Match(document, cast, Now)?.Boss == boss, "Prepared title did not match the live boss");
+        var plain = document with { Bosses = [boss with { Name = "Suzaku" }] };
+        Check(GuideSynchronization.Match(plain, cast with { BossName = "AUSPICE: SUZAKU" }, Now) != null, "Live title did not match the prepared boss");
+        var apostrophe = document with { Bosses = [boss with { Name = "Lord of tests: The O’Keeper" }] };
+        Check(GuideSynchronization.Match(apostrophe, cast with { BossName = "O'KEEPER" }, Now) != null, "Title and apostrophe variants failed to synchronize");
+        foreach (var other in new[] { "Seiryu", "Auspice: Seiryu", "Suzaku II", "Suzaku's Echo", "Suzaku (Extreme)", "Suzaku-Prime", "Suzak" })
+            Check(GuideSynchronization.Match(document, cast with { BossName = other }, Now) == null, "Different boss synchronized: " + other);
+        Check(GuideSynchronization.Match(document, cast with { Duty = Duty with { EnglishName = Duty.EnglishName + " (Extreme)" } }, Now) == null,
+            "Title normalization bypassed duty difficulty identity");
+        foreach (var duplicateName in new[] { "Suzaku", "The Suzaku", "AUSPICE: SUZAKU", "Keeper of flame: Suzaku" })
+        {
+            var duplicate = document with { Bosses = [boss, boss with { Name = duplicateName }] };
+            Check(GuideSynchronization.Match(duplicate, cast, Now) == null, "Colliding boss titles bypassed ambiguity rejection: " + duplicateName);
+        }
+        var repeated = document with { Bosses = [boss with { Phases = [boss.Phases[0], boss.Phases[0] with { Name = "Phase 2" }] }] };
+        Check(GuideSynchronization.Match(repeated, cast, Now) == null, "Title normalization bypassed repeated-action ambiguity rejection");
     }
 
     private static void Synchronization(GuideDocument document)

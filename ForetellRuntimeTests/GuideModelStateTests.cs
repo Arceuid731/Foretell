@@ -1,4 +1,5 @@
 using BossMod.Foretell;
+using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -16,10 +17,67 @@ internal static class GuideModelStateTests
         Check(GuideModelLimits.Fits(boundary, 16384) && !GuideModelLimits.Fits(boundary + 1, 16384), "Output/template reserve not enforced");
         Check(!GuideModelLimits.Fits(8000, 4096) && GuideModelLimits.Fits(8000, 16384), "Larger context did not permit the complete prompt");
         foreach (var language in Enum.GetValues<GuideLanguage>())
+        {
             foreach (var stage in Enum.GetValues<GuideModelStage>())
                 Check(!string.IsNullOrWhiteSpace(ForetellEngine.GuideModelStageLabel(stage, language)), "Missing runtime label");
+            foreach (var state in Enum.GetValues<GuideModelFileState>())
+                Check(!string.IsNullOrWhiteSpace(ForetellEngine.GuideModelFileLabel(new(state, 5, 10), language)), "Missing file status label");
+        }
+        Storage();
+        AnalysisTiming();
         Tokenizer().GetAwaiter().GetResult();
         Console.WriteLine("Guide model states, context/RAM bounds and complete template/tokenizer preflight passed without model inference.");
+    }
+
+    private static void Storage()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "foretell-model-state-" + Guid.NewGuid().ToString("N"));
+        var asset = new GuideModelAsset("test.gguf", "https://example.invalid/test.gguf", 10, "unused");
+        var path = Path.Combine(directory, asset.Name);
+        try
+        {
+            Check(ForetellGuideLocalModel.InspectAsset(directory, asset).State == GuideModelFileState.Missing, "Missing directory reported as installed");
+            Directory.CreateDirectory(directory);
+            File.WriteAllBytes(path + ".part", []);
+            Check(ForetellGuideLocalModel.InspectAsset(directory, asset).State == GuideModelFileState.Missing, "Empty download reported as saved");
+            File.WriteAllBytes(path + ".part", new byte[5]);
+            Check(ForetellGuideLocalModel.InspectAsset(directory, asset) == new GuideModelFileStatus(GuideModelFileState.Partial, 5, 10), "Partial download was not retained");
+            File.WriteAllBytes(path + ".part", new byte[10]);
+            Check(ForetellGuideLocalModel.InspectAsset(directory, asset).State == GuideModelFileState.Partial, "Unverified temporary download reported as installed");
+            File.WriteAllBytes(path + ".part", new byte[11]);
+            Check(ForetellGuideLocalModel.InspectAsset(directory, asset).State == GuideModelFileState.InvalidSize, "Oversized download reported as resumable");
+            File.WriteAllBytes(path, new byte[10]);
+            Check(ForetellGuideLocalModel.InspectAsset(directory, asset).State == GuideModelFileState.OnDisk, "Complete model hidden by a stale partial download");
+            File.Delete(path + ".part");
+            File.WriteAllBytes(path, new byte[9]);
+            Check(ForetellGuideLocalModel.InspectAsset(directory, asset).State == GuideModelFileState.InvalidSize, "Incomplete model reported as on disk");
+            File.WriteAllBytes(path + ".part", new byte[5]);
+            Check(ForetellGuideLocalModel.InspectAsset(directory, asset).State == GuideModelFileState.Partial, "Replacement download hidden by an incomplete model");
+            File.Delete(path);
+            File.Delete(path + ".part");
+            Check(ForetellGuideLocalModel.InspectAsset(directory, asset).State == GuideModelFileState.Missing, "Removed model still reported as on disk");
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    private static void AnalysisTiming()
+    {
+        var second = Stopwatch.Frequency;
+        var timing = new GuideAnalysisTiming().AtStage("InstallingOrStarting", 0);
+        Check(timing.Elapsed(10 * second) == 0, "Download time included in analysis");
+        timing = timing.AtStage("Analyzing", 10 * second).AtStage("Analyzing", 12 * second);
+        Check(timing.Elapsed(15 * second) == 5, "Progress reset the running analysis timer");
+        timing = timing.AtStage("PausedInCombat", 15 * second);
+        Check(timing.Elapsed(25 * second) == 5, "Analysis timer advanced during combat");
+        timing = timing.AtStage("InstallingOrStarting", 25 * second).AtStage("Summarizing", 30 * second);
+        Check(timing.Elapsed(32 * second) == 7, "Resumed analysis lost earlier elapsed time or counted startup");
+        timing = timing.AtStage("Ready", 32 * second);
+        Check(timing.StartedAt == null && timing.Elapsed(50 * second) == 7, "Completed analysis timer kept running");
+        var failed = new GuideAnalysisTiming().AtStage("Analyzing", 0).AtStage("Unavailable: IOException", second);
+        Check(failed.Elapsed(10 * second) == 1, "Failed analysis timer kept running");
     }
 
     private static async Task Tokenizer()

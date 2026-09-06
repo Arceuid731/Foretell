@@ -9,6 +9,7 @@ internal static class GuideCombatTests
 
     public static void Run()
     {
+        HeadingBossIdentity();
         ChecklistPresentation();
         CentralSignalSelection();
         OwnedStatusSignals();
@@ -103,6 +104,25 @@ internal static class GuideCombatTests
         SummaryWorker().GetAwaiter().GetResult();
         GuideModelStateTests.Run();
         Console.WriteLine("Guide boss lifecycle, synchronized decision bridge, conditional rules, summary guardrails, measured ETA and archive safety passed.");
+    }
+
+    private static void HeadingBossIdentity()
+    {
+        var now = DateTime.UtcNow;
+        var boss = new GuideBoss("Auspice: Suzaku", "", [new("", "", [new("Pulse", "Raidwide damage.", "")])]);
+        var document = new GuideDocument(GuideDocument.CurrentSchema, new(1, 2, "Test"), "Test", 1, now, GuideNames.Hash("heading-combat"), [boss]);
+        var actor = new GuideActorState(10, 20, 30, "SUZAKU", false, true, 10);
+        Check(new GuideEncounterTracker().Update(document, [actor], false) is { Boss.Name: "Auspice: Suzaku", Upcoming: false, Ambiguous: false },
+            "A prepared boss title prevented live encounter engagement");
+        foreach (var other in new[] { "Seiryu", "Auspice: Seiryu", "Suzaku (Extreme)", "Suzaku II" })
+            Check(new GuideEncounterTracker().Update(document, [actor with { EnglishName = other }], false).Upcoming,
+                "A different boss engaged the titled encounter: " + other);
+        var duplicate = document with { Bosses = [boss, boss with { Name = "Suzaku" }] };
+        var tracker = new GuideEncounterTracker();
+        Check(tracker.Update(duplicate, [actor], false).Upcoming, "Colliding titles silently selected an engaged boss");
+        tracker.Synchronize([new(boss, boss.Phases[0], boss.Phases[0].Mechanics[0], GuideSignalKind.Cast,
+            10, 20, 30, 40, 0, now.AddSeconds(5), GuidanceKind.Raidwide, "fixture")]);
+        Check(tracker.Frame.Active.Length == 0, "Colliding titles produced a live signal");
     }
 
     private static (GuideDocument Document, GuideBoss Boss, Actor Owner, Actor Helper, Actor Player, DateTime Now) SignalFixture()

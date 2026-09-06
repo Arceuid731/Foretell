@@ -46,6 +46,29 @@ internal static class GuideOverlayTests
                 if (frame > 0) Check(ImGui.GetDrawData().TotalVtxCount > 0, "Overlay submitted no text geometry");
             }
             Check(!ForetellEngine.GuideEntryFlags.HasFlag(ImGuiWindowFlags.NoSavedSettings), "Entry summary cannot retain its layout");
+            foreach (var scale in new[] { .7f, 1.4f, 3f })
+            {
+                ImGui.NewFrame();
+                ImGui.SetNextWindowPos(new(10, 10));
+                ImGui.SetNextWindowSize(new(750, 450));
+                ImGui.Begin("Central alert appearance", flags);
+                var config = new ForetellConfig { GuideAlertScale = scale, CentralAlertWidth = 620, CentralAlertColor = 0xFF123456, CentralBarColor = 0xFF654321 };
+                ForetellEngine.DrawCentralAlert(config, "DEMO · MOVE BEHIND", "Frontal cone", 4.5, 6);
+                Check(ImGui.GetCursorPosY() < 400, "Central alert overflows at a supported scale");
+                Check(ImGui.GetItemRectSize().X <= 621, "Cast bar ignored the selected width");
+                Check(Math.Abs(ImGui.GetFontSize() - io.Fonts.Fonts[0].FontSize) < .1f, "Central alert leaked font scale");
+                ImGui.End();
+                ImGui.Render();
+                Check(ImGui.GetDrawData().TotalVtxCount > 0, "Central alert submitted no drawing");
+            }
+            ImGui.NewFrame();
+            ImGui.SetNextWindowPos(new(950, 10));
+            ImGui.SetNextWindowSize(new(300, 400));
+            ImGui.Begin("Central alert at right edge", flags);
+            ForetellEngine.DrawCentralAlert(new() { CentralAlertWidth = 1200, GuideAlertScale = 3 }, "DEMO · MOVE BEHIND", "Frontal cone", 4, 6);
+            Check(ImGui.GetItemRectMax().X <= io.DisplaySize.X, "Central bar extends beyond viewport after moving");
+            ImGui.End();
+            ImGui.Render();
             for (var frame = 0; frame < 4; ++frame)
             {
                 ImGui.NewFrame();

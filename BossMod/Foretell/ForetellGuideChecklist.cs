@@ -11,10 +11,11 @@ public sealed partial class ForetellEngine
 
     private void DrawGuideChecklist()
     {
-        if (_guideDuty == null && !_cfg.GuideChecklistUnlocked) return;
-        var boss = _guideFrame.Boss;
+        if (_demoFrame == null && _guideDuty == null && !_cfg.GuideChecklistUnlocked) return;
+        var frame = _demoFrame?.Guide ?? _guideFrame;
+        var boss = frame.Boss;
         if (!ReferenceEquals(boss, _guideChecklistBoss)) { _guideChecklistBoss = boss; _guideChecklistPage = 0; }
-        var active = LiveGuideSignals().OrderByDescending(signal => signal.TargetID == _ws.Party[PartyState.PlayerSlot]?.InstanceID).ThenBy(signal => signal.Until).ToArray();
+        var active = (_demoFrame?.Guide.Active ?? LiveGuideSignals()).OrderByDescending(signal => signal.TargetID == _ws.Party[PartyState.PlayerSlot]?.InstanceID).ThenBy(signal => signal.Until).ToArray();
         var rows = boss?.Phases.SelectMany(phase => phase.Mechanics.Select(mechanic => (Phase: phase, Mechanic: mechanic,
             Live: active.FirstOrDefault(signal => ReferenceEquals(signal.Mechanic, mechanic) && ReferenceEquals(signal.Phase, phase))))).ToArray() ?? [];
         var viewport = ImGui.GetMainViewport();
@@ -63,7 +64,7 @@ public sealed partial class ForetellEngine
             { _guideChecklistDirty = false; _cfg.Modified.Fire(); }
             _guideChecklistWasUnlocked = _cfg.GuideChecklistUnlocked;
             if (!visible) return;
-            if (_liveGuide == null)
+            if (_demoFrame == null && _liveGuide == null)
             {
                 if (_guideSummaries?.Snapshot is { Stage: not "Ready" })
                 {
@@ -79,16 +80,16 @@ public sealed partial class ForetellEngine
             }
             if (boss == null)
             {
-                DrawGuideOverlayLine(_guideFrame.Ambiguous
+                DrawGuideOverlayLine(frame.Ambiguous
                     ? GuideText("Boss identification pending", "Boss à identifier", "Boss-Erkennung ausstehend", "ボス特定待ち")
                     : GuideText("Bosses completed", "Boss terminés", "Bosse abgeschlossen", "ボス撃破済み"), _cfg.GuideUnresolvedColor);
                 if (ImGui.IsItemHovered()) DrawGuideHeaderTooltip(null);
                 return;
             }
-            DrawGuideOverlayLine((_guideFrame.Upcoming ? GuideText("Upcoming: ", "À venir : ", "Als Nächstes: ", "次：") : "") + GuideBossName(boss), _cfg.GuideTextColor);
+            DrawGuideOverlayLine((frame.Upcoming ? GuideText("Upcoming: ", "À venir : ", "Als Nächstes: ", "次：") : "") + GuideBossName(boss), _cfg.GuideTextColor);
             var headerClicked = ImGui.IsItemClicked(ImGuiMouseButton.Left);
             if (ImGui.IsItemHovered()) DrawGuideHeaderTooltip(boss);
-            if (headerClicked) _guideEntryDismissed = false;
+            if (headerClicked && _demoFrame == null) _guideEntryDismissed = false;
             if (rows.Length == 0)
                 DrawGuideOverlayLine(GuideText("Preparing mechanics…", "Préparation des mécaniques…", "Mechaniken werden vorbereitet…", "ギミックを準備中…"), _cfg.GuideTextColor);
             for (var index = page.Start; index < page.Start + page.Count; ++index)

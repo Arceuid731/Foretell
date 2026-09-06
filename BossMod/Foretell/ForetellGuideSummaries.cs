@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
@@ -10,6 +11,7 @@ internal sealed record GuideSummarySnapshot(string SourceHash, GuideLanguage Lan
 {
     public GuideDocument? Prepared { get; init; }
     public string ModelID { get; init; } = GuideModelCatalog.DefaultID;
+    public GuideAnalysisTiming AnalysisTiming { get; init; } = new();
 }
 
 internal sealed class ForetellGuideSummaries : IDisposable
@@ -22,6 +24,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
         public bool Prepare;
         public GuideDocument? Partial;
         public readonly GuideAnalysisMemory Analysis = new();
+        public GuideAnalysisTiming AnalysisTiming = new();
     }
     private sealed record Cache(string Revision, string SourceHash, GuideLanguage Language, Dictionary<string, string> Summaries);
     private readonly string _directory;
@@ -39,8 +42,26 @@ internal sealed class ForetellGuideSummaries : IDisposable
     private readonly Func<bool, IGuideSummaryModel>? _modelFactory;
     private volatile IGuideSummaryModel? _activeModel;
     private volatile GuideModelRuntime _lastRuntime = new();
+    private (string ModelID, bool Gpu, long CheckedAt, GuideModelStorage Storage)? _storage;
     public GuideSummarySnapshot? Snapshot => _snapshot;
     public GuideModelRuntime Runtime => _activeModel?.Runtime ?? _lastRuntime;
+
+    public GuideModelStorage Storage(string modelID, bool gpu)
+    {
+        var profile = GuideModelCatalog.Get(modelID);
+        lock (_gate)
+        {
+            var now = Stopwatch.GetTimestamp();
+            if (_storage is { } cached && cached.ModelID == profile.ID && cached.Gpu == gpu && Stopwatch.GetElapsedTime(cached.CheckedAt, now).TotalSeconds < 2)
+                return cached.Storage;
+            var directory = Path.Combine(_directory, "runtime");
+            var storage = new GuideModelStorage(ForetellGuideLocalModel.InspectAsset(directory, profile.Asset),
+                ForetellGuideLocalModel.InspectAsset(directory, gpu ? ForetellGuideLocalModel.Vulkan : ForetellGuideLocalModel.Cpu));
+            _storage = (profile.ID, gpu, now, storage);
+            return storage;
+        }
+    }
+
     internal Task Completion => _worker;
     internal static string Key(GuideBoss boss, GuidePhase phase, GuideMechanic mechanic) => GuideNames.Hash(boss.Name + "\n" + phase.Name + "\n" + phase.ContextHash + "\n" + mechanic.Name + "\n" + mechanic.TextHash);
     internal static string ContextKey(GuideBoss boss, GuidePhase phase) => GuideNames.Hash("context\n" + boss.Name + "\n" + phase.Name + "\n" + phase.ContextHash);
@@ -109,8 +130,11 @@ internal sealed class ForetellGuideSummaries : IDisposable
     {
         lock (_gate)
             if (!_disposed && _latest == request && !request.Cancellation.IsCancellationRequested)
+            {
+                request.AnalysisTiming = request.AnalysisTiming.AtStage(stage, Stopwatch.GetTimestamp());
                 _snapshot = new(request.Document.SourceHash, request.Language, summaries, stage, completed, total, transfer, remaining, request.LastIssue)
-                { Prepared = prepared ?? request.Partial, ModelID = request.ModelID };
+                { Prepared = prepared ?? request.Partial, ModelID = request.ModelID, AnalysisTiming = request.AnalysisTiming };
+            }
     }
 
     private string CachePath(Request request) => Path.Combine(_directory, request.Document.Duty.Key + "-" + request.Language + ".json");

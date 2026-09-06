@@ -19,23 +19,24 @@ public sealed partial class ForetellEngine
     public void Draw()
     {
         _presentationFrame = null;
+        UpdateDemo();
         DrawSafely(DrawInspector, "inspector");
-        if (_cfg.EnableGuides && _cfg.GuideEntryPopup && _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell)
+        if (_demoFrame == null && _cfg.EnableGuides && _cfg.GuideEntryPopup && _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell)
             DrawSafely(DrawGuideEntry, "guide preparation");
-        if (_cfg.EnableGuides && (_cfg.GuideSidebar || _cfg.GuideChecklistUnlocked) && _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell)
+        if ((_demoFrame != null || _cfg.EnableGuides && _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell) && (_cfg.GuideSidebar || _cfg.GuideChecklistUnlocked))
             DrawSafely(DrawGuideSidebar, "guide sidebar");
         if (_cfg.MiniRadar)
-            DrawSafely(() => DrawRadar(_cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell), "radar");
-        if (_cfg.Mode is ForetellMode.Legacy or ForetellMode.Observe) return;
+            DrawSafely(() => DrawRadar(_demoFrame != null || _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell), "radar");
+        if (_demoFrame == null && _cfg.Mode is ForetellMode.Legacy or ForetellMode.Observe) return;
         DrawSafely(() =>
         {
-            foreach (var p in ForetellDecisionCore.SelectForDisplay(PresentationFrame, _cfg.VisualConfidence / 100f, _cfg.MaxRenderedMechanics))
+            foreach (var p in ForetellDecisionCore.SelectForDisplay(OverlayFrame, _cfg.VisualConfidence / 100f, _cfg.MaxRenderedMechanics))
             {
                 if (_cfg.WorldOverlay) DrawWorld(p);
             }
         }, "world overlay");
         if (_cfg.TextHints || _cfg.GuideCentralAlerts || _cfg.TextHintsUnlocked) DrawSafely(DrawTextHints, "text hints");
-        if (_cfg.SafePositionSuggestions) DrawSafely(DrawSafeSuggestion, "safe suggestion");
+        if (_demoFrame == null && _cfg.SafePositionSuggestions) DrawSafely(DrawSafeSuggestion, "safe suggestion");
     }
 
     private void DrawSafely(Action draw, string surface)
@@ -99,8 +100,8 @@ public sealed partial class ForetellEngine
         var y = actor?.PosRot.Y ?? 0;
         if (!float.IsFinite(y)) y = 0;
         var o = new Vector3(p.Origin.X, y + .05f, p.Origin.Y);
-        var color = p.GuideLinked && p.Geometry == GeometryKind.Unknown && p.Kind == MechanicKind.Marker ? _cfg.GuideActiveColor : ConfidenceColor(p.Confidence);
-        var thickness = ConfidenceThickness(p.Confidence) + (p.GuideLinked ? 1 : 0);
+        var color = OverlayOpacity(_cfg.WorldConfidenceColors ? ConfidenceColor(p.Confidence) : _cfg.WorldColor, _cfg.WorldOpacity);
+        var thickness = (ConfidenceThickness(p.Confidence) + (p.GuideLinked ? 1 : 0)) * OverlayScale(_cfg.WorldLineScale);
         switch (p.Geometry)
         {
             case GeometryKind.Polygon when p.Polygon is { Count: >= 3 } polygon:
@@ -132,7 +133,7 @@ public sealed partial class ForetellEngine
                 break;
         }
         DrawWorldGuidance(cam, p, o, color, thickness);
-        if (p.GuideLinked)
+        if (p.GuideLinked && _cfg.WorldLabels)
         {
             var clip = Vector4.Transform(new Vector4(o + new Vector3(0, 2, 0), 1), cam.ViewProj);
             if (float.IsFinite(clip.W) && clip.W > .01f)
@@ -142,7 +143,15 @@ public sealed partial class ForetellEngine
                 {
                     var viewport = ImGui.GetMainViewport();
                     var screen = viewport.Pos + new Vector2((normalized.X + 1) * .5f * viewport.Size.X, (1 - normalized.Y) * .5f * viewport.Size.Y);
-                    ImGui.GetBackgroundDrawList().AddText(screen, _cfg.GuideActiveColor, "▶ " + p.Label);
+                    var draw = ImGui.GetBackgroundDrawList();
+                    var labelScale = OverlayScale(_cfg.WorldLabelScale);
+                    var fontSize = ImGui.GetFontSize() * labelScale;
+                    var labelColor = OverlayOpacity(_cfg.WorldLabelColor, _cfg.WorldOpacity);
+                    var label = GuideChecklistPresentation.Fit("▶ " + p.Label, viewport.Size.X - 16, value => ImGui.CalcTextSize(value).X * labelScale);
+                    var extent = ImGui.CalcTextSize(label) * labelScale;
+                    screen = Vector2.Clamp(screen, viewport.Pos + new Vector2(4), viewport.Pos + Vector2.Max(new(4), viewport.Size - extent - new Vector2(4)));
+                    draw.AddText(ImGui.GetFont(), fontSize, screen + Vector2.One, OverlayOpacity(0xDD000000, _cfg.WorldOpacity), label);
+                    draw.AddText(ImGui.GetFont(), fontSize, screen, labelColor, label);
                 }
             }
         }
@@ -262,7 +271,8 @@ public sealed partial class ForetellEngine
         if (!_cfg.TextHintsUnlocked || !_textWasUnlocked)
             ImGui.SetNextWindowPos(savedPosition, ImGuiCond.Always);
 
-        var flags = ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
+        var flags = ImGuiWindowFlags.AlwaysAutoResize | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse
+            | ImGuiWindowFlags.NoFocusOnAppearing | ImGuiWindowFlags.NoNavFocus;
         if (!_cfg.TextHintsUnlocked)
             flags |= ImGuiWindowFlags.NoDecoration | ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.NoBackground
                 | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoFocusOnAppearing;
@@ -294,6 +304,11 @@ public sealed partial class ForetellEngine
             }
             _textWasUnlocked = _cfg.TextHintsUnlocked;
 
+            if (_demoFrame is { } demo)
+            {
+                DrawCentralAlert(_cfg, "DEMO · " + demo.Cue, demo.Guide.Active[0].Mechanic.Name, demo.Remaining, ForetellDemo.CastSeconds);
+                return;
+            }
             var playerContext = _ws.Party[PartyState.PlayerSlot];
             var active = !_cfg.TextHints ? [] : ForetellDecisionCore.Prioritize(PresentationFrame, playerContext == null ? Vector2.Zero : V(playerContext.Position), playerContext?.InstanceID ?? 0)
                 .Select(h => h.Prediction).Where(p => p.Confidence >= _cfg.VisualConfidence / 100f && !GuideOwnsCentralPrediction(p)).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
@@ -305,11 +320,11 @@ public sealed partial class ForetellEngine
                 var prediction = active[i];
                 if (i != 0) ImGui.Separator();
                 var remain = Math.Max(0, (prediction.Activation - _ws.CurrentTime).TotalSeconds);
-                ImGui.TextColored(ConfidenceTextColor(prediction.Confidence), $"{GuidanceInstruction(prediction.Guidance, prediction.Kind, prediction.Geometry)} — {UserFacingPredictionLabel(prediction)}");
-                ImGui.TextDisabled($"{remain:F1}s");
+                DrawCentralAlert(_cfg, GuidanceInstruction(prediction.Guidance, prediction.Kind, prediction.Geometry), UserFacingPredictionLabel(prediction), remain,
+                    _ws.Actors.Find(prediction.CasterID)?.CastInfo?.TotalTime ?? 0);
             }
             if (terrainCue)
-                ImGui.TextColored(new Vector4(.28f, .75f, 1, 1), GuideText("WATCH THE FLOOR", "SURVEILLE LE SOL", "BODEN BEACHTEN", "床に注意"));
+                DrawCentralAlert(_cfg, GuideText("WATCH THE FLOOR", "SURVEILLE LE SOL", "BODEN BEACHTEN", "床に注意"), "", -1, 0);
             if (!hasActive && _cfg.TextHintsUnlocked)
                 ImGui.TextDisabled(GuideText("Central alerts · drag to move", "Alertes centrales · déplacer ici", "Zentrale Warnungen · verschieben", "中央警告・ドラッグで移動"));
         }
@@ -474,7 +489,7 @@ public sealed partial class ForetellEngine
         var mapOrigin = view.Center;
         var worldRadius = view.Radius;
         DrawRadarCaption(draw, canvas + new Vector2(4, 1), size, 0xFFE0E0E0u,
-            $"Foretell · {shapeLabel} · {worldRadius:F0}y");
+            $"Foretell · {(_demoFrame != null ? "DEMO" : shapeLabel)} · {worldRadius:F0}y");
         var scale = radius / MathF.Max(1, worldRadius);
         if (arenaBoundary != null)
             DrawArenaBoundaryRadarFrame(draw, center, radius, mapOrigin, cameraAzimuth, scale, arenaBoundary);
@@ -490,14 +505,14 @@ public sealed partial class ForetellEngine
 
         if (showPredictions)
         {
-            foreach (var p in ForetellDecisionCore.SelectForDisplay(PresentationFrame, _cfg.VisualConfidence / 100f, _cfg.MaxRenderedMechanics))
+            foreach (var p in ForetellDecisionCore.SelectForDisplay(OverlayFrame, _cfg.VisualConfidence / 100f, _cfg.MaxRenderedMechanics))
             {
                 var col = p.GuideLinked && p.Geometry == GeometryKind.Unknown && p.Kind == MechanicKind.Marker ? _cfg.GuideActiveColor : ConfidenceColor(p.Confidence);
                 var thickness = ConfidenceThickness(p.Confidence) + (p.GuideLinked ? 1 : 0);
                 DrawRadarGeometry(draw, p, mapOrigin, cameraAzimuth, center, scale, col, thickness);
                 DrawRadarGuidance(draw, p, mapOrigin, cameraAzimuth, center, scale, col, thickness);
                 var c = RadarPoint(p.Origin, mapOrigin, cameraAzimuth, center, scale);
-                draw.AddText(c + new Vector2(5, -9), col, $"{Math.Max(0, (p.Activation - PresentationFrame.At).TotalSeconds):F1}s");
+                draw.AddText(c + new Vector2(5, -9), col, $"{Math.Max(0, (p.Activation - OverlayFrame.At).TotalSeconds):F1}s");
                 if (p.GuideLinked) draw.AddText(c + new Vector2(5, 8), _cfg.GuideActiveColor, "▶ " + p.Label);
             }
         }

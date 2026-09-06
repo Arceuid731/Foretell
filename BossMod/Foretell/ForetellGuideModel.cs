@@ -62,11 +62,16 @@ internal sealed record GuideDocument(int Schema, GuideDuty Duty, string Title, l
 internal static class GuideNames
 {
     private static readonly Regex Spaces = new(@"\s+", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex BossHeading = new(@"\A(?<title>[\p{L}][\p{L}\p{M}' -]*): (?<name>[\p{L}\p{N}][^:]*)\z", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+    private static readonly Regex Difficulty = new(@"\b(?:normal|hard|extreme|savage|ultimate|unreal)\b", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     public static string Normalize(string value) => Spaces.Replace(value.Normalize(NormalizationForm.FormKC)
         .Replace('’', '\'').Replace('_', ' ').Trim(), " ").ToLowerInvariant();
     public static string Boss(string value)
     {
         var name = Normalize(value);
+        var heading = BossHeading.Match(name);
+        if (heading.Success && !Difficulty.IsMatch(heading.Groups["title"].Value))
+            name = heading.Groups["name"].Value;
         return name.StartsWith("the ", StringComparison.Ordinal) ? name[4..] : name;
     }
     public static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));

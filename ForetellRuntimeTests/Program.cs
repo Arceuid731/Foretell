@@ -33,6 +33,7 @@ internal static class Program
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void Run()
     {
+        OverlayDemoTests.Run();
         var at = new DateTime(2026, 9, 5, 12, 0, 0, DateTimeKind.Utc);
         var context = new DecisionContextSnapshot
         {

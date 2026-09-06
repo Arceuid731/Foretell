@@ -316,21 +316,12 @@ public sealed partial class ForetellEngine
 
     private void DrawInspectorSettings()
     {
+        DrawDemoSettings();
+        DrawOverlaySettings();
         DrawGuideSettings();
         var changed = false;
         if (ImGui.CollapsingHeader("Combat presentation", ImGuiTreeNodeFlags.DefaultOpen))
         {
-            changed |= ImGui.Checkbox("World-space overlay", ref _cfg.WorldOverlay);
-            changed |= ImGui.Checkbox("Text hints", ref _cfg.TextHints);
-            changed |= ImGui.Checkbox("Unlock text hints to move them", ref _cfg.TextHintsUnlocked);
-            if (ImGui.Button("Reset text hints to top-center"))
-            {
-                _cfg.TextPositionX = -1;
-                _cfg.TextPositionY = -1;
-                changed = true;
-            }
-            ImGui.SameLine();
-            ImGui.TextDisabled(_cfg.TextHintsUnlocked ? "Drag the guidance window, then lock it here." : "Locked: text hints ignore mouse input.");
             changed |= ImGui.Checkbox("Safe-position suggestions", ref _cfg.SafePositionSuggestions);
             changed |= ImGui.SliderFloat("Visual threshold (%)", ref _cfg.VisualConfidence, 50, 100);
             changed |= ImGui.SliderFloat("Warning threshold (%)", ref _cfg.WarningConfidence, 50, 100);

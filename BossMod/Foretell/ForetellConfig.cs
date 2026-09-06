@@ -87,6 +87,10 @@ public sealed class ForetellConfig : ConfigNode
     public float GuideHeight = 520;
     public float GuideScale = 1;
     public float GuideAlertScale = 1.4f;
+    public float CentralAlertWidth = 620;
+    public uint CentralAlertColor = 0xFF47D4FF;
+    public uint CentralDetailColor = 0xFFE6E6E6;
+    public uint CentralBarColor = 0xFF47D4FF;
     public uint GuideBackgroundColor = 0xE61F1814;
     public uint GuideTextColor = 0xFFE6E6E6;
     public uint GuideActiveColor = 0xFF47D4FF;
@@ -95,6 +99,13 @@ public sealed class ForetellConfig : ConfigNode
 
     [PropertyDisplay("World-space overlay", tooltip: "Draw learned mechanic geometry directly in the game world when it passes the configured confidence threshold.")]
     public bool WorldOverlay = true;
+    public bool WorldConfidenceColors = true;
+    public uint WorldColor = 0xFF3C3CFF;
+    public float WorldOpacity = 1;
+    public float WorldLineScale = 1;
+    public bool WorldLabels = true;
+    public uint WorldLabelColor = 0xFF47D4FF;
+    public float WorldLabelScale = 1;
 
     [PropertyDisplay("Foretell mini radar", tooltip: "Show Foretell's permanent local terrain radar. Learned/predicted mechanics are added only in Hybrid and Foretell presentation modes.")]
     public bool MiniRadar = true;

@@ -1,9 +1,24 @@
+using System.Diagnostics;
+
 namespace BossMod.Foretell;
 
 internal enum GuideModelStage { Unloaded, Verifying, Downloading, Loading, Loaded, Tokenizing, Generating, Stopping, Failed }
 
 internal sealed record GuideModelRuntime(GuideModelStage Stage = GuideModelStage.Unloaded, int? ProcessID = null,
     string Backend = "", int ContextTokens = 0, int? PromptTokens = null, bool VerifiedThisSession = false, string ModelID = GuideModelCatalog.DefaultID);
+
+internal enum GuideModelFileState { Missing, Partial, OnDisk, InvalidSize, Unavailable }
+internal sealed record GuideModelFileStatus(GuideModelFileState State, long Bytes, long Total);
+internal sealed record GuideModelStorage(GuideModelFileStatus Model, GuideModelFileStatus Engine);
+
+internal sealed record GuideAnalysisTiming(double Seconds = 0, long? StartedAt = null)
+{
+    internal double Elapsed(long timestamp) => Seconds + (StartedAt is { } started ? Math.Max(0, Stopwatch.GetElapsedTime(started, timestamp).TotalSeconds) : 0);
+
+    internal GuideAnalysisTiming AtStage(string stage, long timestamp) => stage is "Analyzing" or "Summarizing"
+        ? StartedAt != null ? this : this with { StartedAt = timestamp }
+        : new(Elapsed(timestamp));
+}
 
 internal static class GuideModelLimits
 {

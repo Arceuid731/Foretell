@@ -58,7 +58,8 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
         {
             var previous = _runtime;
             if (previous.ProcessID == null && stage is GuideModelStage.Loaded or GuideModelStage.Tokenizing or GuideModelStage.Generating) return;
-            if (Interlocked.CompareExchange(ref _runtime, previous with { Stage = stage }, previous) == previous) return;
+            var next = previous with { Stage = stage, PromptTokens = stage == GuideModelStage.Tokenizing ? null : previous.PromptTokens };
+            if (Interlocked.CompareExchange(ref _runtime, next, previous) == previous) return;
         }
     }
 
@@ -78,6 +79,24 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int co
         if (!File.Exists(path) || new FileInfo(path).Length != asset.Bytes) return false;
         await using var stream = File.OpenRead(path);
         return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellation).ConfigureAwait(false)).Equals(asset.Hash, StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static GuideModelFileStatus InspectAsset(string directory, GuideModelAsset asset)
+    {
+        try
+        {
+            var installed = new FileInfo(Path.Combine(directory, asset.Name));
+            var installedBytes = installed.Exists ? installed.Length : (long?)null;
+            if (installedBytes == asset.Bytes) return new(GuideModelFileState.OnDisk, asset.Bytes, asset.Bytes);
+            var partial = new FileInfo(installed.FullName + ".part");
+            if (partial.Exists && partial.Length > 0)
+                return new(partial.Length <= asset.Bytes ? GuideModelFileState.Partial : GuideModelFileState.InvalidSize, partial.Length, asset.Bytes);
+            return new(installedBytes != null ? GuideModelFileState.InvalidSize : GuideModelFileState.Missing, installedBytes ?? 0, asset.Bytes);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return new(GuideModelFileState.Unavailable, 0, asset.Bytes);
+        }
     }
 
     private async Task<string> Download(GuideModelAsset asset, Action<GuideModelProgress> progress, CancellationToken cancellation)

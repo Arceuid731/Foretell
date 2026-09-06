@@ -67,12 +67,47 @@ public sealed partial class ForetellEngine
     private void DrawGuideModelStatus(bool details)
     {
         var runtime = _guideSummaries?.Runtime ?? new();
-        var profile = GuideModelCatalog.Get(runtime.ProcessID != null ? runtime.ModelID : _cfg.GuideModelID);
+        var active = runtime.Stage is not (GuideModelStage.Unloaded or GuideModelStage.Failed);
+        if (!details && !active && runtime.ModelID != GuideModelCatalog.Get(_cfg.GuideModelID).ID)
+            runtime = new(ModelID: GuideModelCatalog.Get(_cfg.GuideModelID).ID);
+        var profile = GuideModelCatalog.Get(active || details ? runtime.ModelID : _cfg.GuideModelID);
         ImGui.TextDisabled(profile.Name + " · " + GuideModelStageLabel(runtime.Stage, GuideClientLanguage));
+        if (runtime.ModelID == profile.ID)
+        {
+            if (runtime.Backend.Length > 0)
+                ImGui.TextDisabled((runtime.ProcessID != null
+                    ? GuideText("Backend", "Moteur", "Backend", "バックエンド")
+                    : GuideText("Last backend", "Dernier moteur", "Letztes Backend", "前回のバックエンド")) + ": " + runtime.Backend);
+            if (runtime.ContextTokens > 0)
+            {
+                var prompt = runtime.PromptTokens?.ToString() ?? "—";
+                var label = runtime.ProcessID != null
+                    ? GuideText("Prompt tokens", "Tokens du prompt", "Prompt-Tokens", "プロンプトトークン")
+                    : GuideText("Last prompt tokens", "Tokens du dernier prompt", "Letzte Prompt-Tokens", "前回のプロンプトトークン");
+                ImGui.TextDisabled(label + ": " + prompt + " · " + GuideText("Context", "Contexte", "Kontext", "コンテキスト") + $": {runtime.ContextTokens}");
+            }
+        }
         if (!details) return;
-        ImGui.TextWrapped($"Process: {runtime.ProcessID?.ToString() ?? "—"} · {runtime.Backend} · context {runtime.ContextTokens} · prompt {runtime.PromptTokens?.ToString() ?? "—"}");
+        ImGui.TextWrapped($"Process: {runtime.ProcessID?.ToString() ?? "—"}");
         ImGui.TextWrapped(profile.Revision);
         if (_guideSummaries?.Snapshot?.LastIssue is { } issue) ImGui.TextWrapped(issue);
+    }
+
+    internal static string GuideModelFileLabel(GuideModelFileStatus file, GuideLanguage language)
+    {
+        var state = file.State switch
+        {
+            GuideModelFileState.OnDisk => GuidePreparation.Local(language, "On disk", "Sur le disque", "Auf Datenträger", "保存済み"),
+            GuideModelFileState.Partial => GuidePreparation.Local(language, "Download saved", "Téléchargement conservé", "Download gespeichert", "ダウンロード保存済み"),
+            GuideModelFileState.Missing => GuidePreparation.Local(language, "Download required", "À télécharger", "Download erforderlich", "ダウンロードが必要"),
+            GuideModelFileState.InvalidSize => GuidePreparation.Local(language, "Download again", "À retélécharger", "Erneut herunterladen", "再ダウンロードが必要"),
+            _ => GuidePreparation.Local(language, "File status unavailable", "État des fichiers indisponible", "Dateistatus nicht verfügbar", "ファイル状態を取得できません")
+        };
+        var megabytes = GuidePreparation.Local(language, "MB", "Mo", "MB", "MB");
+        var size = file.State == GuideModelFileState.Partial ? $"{file.Bytes / 1e6:F1} / {file.Total / 1e6:F1} {megabytes}"
+            : file.Total >= 1e9 ? $"{file.Total / 1e9:F2} " + GuidePreparation.Local(language, "GB", "Go", "GB", "GB")
+            : $"{file.Total / 1e6:F1} {megabytes}";
+        return state + " · " + size;
     }
 
     private void DrawGuideModelManager()
@@ -87,10 +122,19 @@ public sealed partial class ForetellEngine
             ImGui.EndCombo();
         }
         selected = GuideModelCatalog.Get(_cfg.GuideModelID);
-        ImGui.TextDisabled(GuideText($"First download: {selected.Asset.Bytes / 1e9:F2} GB", $"Premier téléchargement : {selected.Asset.Bytes / 1e9:F2} Go",
-            $"Erster Download: {selected.Asset.Bytes / 1e9:F2} GB", $"初回ダウンロード：{selected.Asset.Bytes / 1e9:F2} GB"));
+        if (_guideSummaries?.Storage(selected.ID, _cfg.GuideSummaryGpu) is { } storage)
+        {
+            ImGui.TextDisabled(GuideText("Model", "Modèle", "Modell", "モデル") + ": " + GuideModelFileLabel(storage.Model, GuideClientLanguage));
+            ImGui.TextDisabled(GuideText("Engine", "Moteur", "Laufzeit", "エンジン") + $" ({(_cfg.GuideSummaryGpu ? "Vulkan" : "CPU")}): " + GuideModelFileLabel(storage.Engine, GuideClientLanguage));
+        }
         DrawGuideModelStatus(false);
         DrawGuideSummaryProgress(_guides?.Snapshot.Document);
+        if (_guideSummaries?.Snapshot is { } snapshot && snapshot.ModelID == selected.ID && snapshot.SourceHash == _guides?.Snapshot.Document?.SourceHash
+            && snapshot.Language == GuideContentLanguage && (snapshot.AnalysisTiming.StartedAt != null || snapshot.AnalysisTiming.Seconds > 0))
+        {
+            var elapsed = snapshot.AnalysisTiming.Elapsed(System.Diagnostics.Stopwatch.GetTimestamp());
+            ImGui.TextDisabled(GuideText($"Analysis time: {elapsed:F0}s", $"Temps d’analyse : {elapsed:F0}s", $"Analysezeit: {elapsed:F0}s", $"解析時間：{elapsed:F0}秒"));
+        }
         changed |= ImGui.Checkbox(GuideText("Prepare guides automatically", "Préparer les guides automatiquement", "Anleitungen automatisch vorbereiten", "攻略を自動準備"), ref _cfg.GuideLocalSummaries);
         changed |= ImGui.Checkbox(GuideText("Use graphics card", "Utiliser la carte graphique", "Grafikkarte verwenden", "GPUを使用"), ref _cfg.GuideSummaryGpu);
         ImGui.BeginDisabled(_guideCombat || _guides?.Snapshot.Document == null);

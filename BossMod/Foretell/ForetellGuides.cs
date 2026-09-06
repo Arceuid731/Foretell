@@ -286,17 +286,9 @@ public sealed partial class ForetellEngine
         foreach (var signal in CentralGuideSignals())
         {
             var remaining = Math.Max(0, (signal.Until - _ws.CurrentTime).TotalSeconds);
-            ImGui.SetWindowFontScale(_cfg.GuideAlertScale);
-            ImGui.PushStyleColor(ImGuiCol.Text, GuideColor(_cfg.GuideActiveColor));
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + Math.Min(720, ImGui.GetMainViewport().Size.X * .6f));
-            ImGui.TextWrapped(GuideRolePresentation.Prefix(signal.Mechanic.Advice?.Roles ?? []) + GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal));
-            ImGui.PopTextWrapPos(); ImGui.PopStyleColor();
-            ImGui.SetWindowFontScale(1);
-            ImGui.TextUnformatted(GuideMechanicName(signal.Boss, signal.Mechanic));
             var total = signal.Kind == GuideSignalKind.Cast ? _ws.Actors.Find(signal.SourceID)?.CastInfo?.TotalTime ?? 0 : 0;
-            if (signal.Kind != GuideSignalKind.Action)
-                ImGui.ProgressBar(total > 0 && float.IsFinite(total) ? Math.Clamp((float)remaining / total, 0, 1) : 0,
-                    new(360 * _cfg.GuideAlertScale, 0), $"{remaining:F1}s");
+            DrawCentralAlert(_cfg, GuideRolePresentation.Prefix(signal.Mechanic.Advice?.Roles ?? []) + GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal),
+                GuideMechanicName(signal.Boss, signal.Mechanic), signal.Kind == GuideSignalKind.Action ? -1 : remaining, total);
             shown = true;
         }
         return shown;

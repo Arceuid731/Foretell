@@ -67,18 +67,16 @@ public sealed partial class ForetellEngine
 
     private void DrawGuideSettings()
     {
-        if (!ImGui.CollapsingHeader(GuideText("Mechanic list and central alerts", "Liste des mécaniques et alertes centrales", "Mechanikliste und Warnungen", "ギミック一覧と中央警告"), ImGuiTreeNodeFlags.DefaultOpen)) return;
+        if (!ImGui.CollapsingHeader(GuideText("Mechanic list", "Liste des mécaniques", "Mechanikliste", "ギミック一覧"), ImGuiTreeNodeFlags.DefaultOpen)) return;
         var changed = ImGui.Checkbox(GuideText("Mechanic list overlay", "Liste des mécaniques en surimpression", "Mechaniklisten-Overlay", "ギミック一覧表示"), ref _cfg.GuideSidebar);
         changed |= ImGui.Checkbox(GuideText("Entry popup", "Panneau à l’entrée", "Fenster beim Betreten", "入場時の案内"), ref _cfg.GuideEntryPopup);
         changed |= ImGui.Checkbox(GuideText("Unlock mechanic list (drag / resize)", "Déverrouiller la liste (déplacer / redimensionner)", "Mechanikliste entsperren (bewegen / skalieren)", "ギミック一覧の移動・サイズ変更を許可"), ref _cfg.GuideChecklistUnlocked);
-        changed |= ImGui.Checkbox(GuideText("Central guide alerts", "Alertes centrales du guide", "Zentrale Guide-Warnungen", "攻略の中央警告"), ref _cfg.GuideCentralAlerts);
         changed |= ImGui.SliderFloat(GuideText("Width", "Largeur", "Breite", "幅"), ref _cfg.GuideWidth, 260, 1000, "%.0f");
         changed |= ImGui.SliderFloat(GuideText("Maximum height (automatic when locked)", "Hauteur maximale (automatique une fois verrouillée)", "Maximale Höhe (gesperrt automatisch)", "最大高さ（ロック中は自動）"), ref _cfg.GuideHeight, 180, 1000, "%.0f");
         changed |= ImGui.SliderFloat(GuideText("Text scale", "Échelle du texte", "Textgröße", "文字倍率"), ref _cfg.GuideScale, .7f, 1.8f, "%.2f");
-        changed |= ImGui.SliderFloat(GuideText("Central alert scale", "Taille de l’alerte centrale", "Größe der zentralen Warnung", "中央警告の倍率"), ref _cfg.GuideAlertScale, 1, 2.5f, "%.2f");
         changed |= EditGuideColor(GuideText("Editing background only", "Fond en édition uniquement", "Hintergrund nur beim Bearbeiten", "編集中のみの背景"), ref _cfg.GuideBackgroundColor);
         changed |= EditGuideColor(GuideText("Text", "Texte", "Text", "文字"), ref _cfg.GuideTextColor);
-        changed |= EditGuideColor(GuideText("Active mechanic / alert", "Mécanique active / alerte", "Aktive Mechanik / Warnung", "発動中・警告"), ref _cfg.GuideActiveColor);
+        changed |= EditGuideColor(GuideText("Active mechanic", "Mécanique active", "Aktive Mechanik", "発動中のギミック"), ref _cfg.GuideActiveColor);
         if (ImGui.Button(GuideText("Reset layout", "Réinitialiser la disposition", "Layout zurücksetzen", "配置をリセット")))
         { _cfg.GuidePositionX = _cfg.GuidePositionY = -1; _cfg.GuideWidth = 380; _cfg.GuideHeight = 520; _cfg.GuideScale = 1; _guideChecklistWasUnlocked = false; changed = true; }
         if (_guideDuty != null && ImGui.Button(GuideText("Show entry summary again", "Revoir le résumé d’entrée", "Zusammenfassung erneut anzeigen", "入場時の要約を再表示")))
