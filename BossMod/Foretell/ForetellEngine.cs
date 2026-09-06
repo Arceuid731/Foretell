@@ -182,6 +182,7 @@ public sealed partial class ForetellEngine : IDisposable
         try
         {
             _guides = new(Path.Combine(configDirectory, "foretell-guides"));
+            _guideSummaries = new(Path.Combine(configDirectory, "foretell-guide-summaries"));
             _capture = new(Path.Combine(configDirectory, "foretell-captures"));
             NormalizeStore();
             _preImpact = new(_store.PreImpact);
@@ -216,6 +217,7 @@ public sealed partial class ForetellEngine : IDisposable
             try { DisposeNativeHooks(); } catch { }
             _capture?.Dispose();
             _guides?.Dispose();
+            _guideSummaries?.Dispose();
             _replay?.Dispose();
             _replay = null;
             _raw.Dispose();
@@ -262,6 +264,7 @@ public sealed partial class ForetellEngine : IDisposable
         _disposed = true;
         _semanticReplayCancellation.Cancel();
         _guides?.Dispose();
+        _guideSummaries?.Dispose();
         try { FinalizeDue(DateTime.MaxValue, exhaustive: true); CompleteSession(); SaveStore(); }
         catch (Exception e) { Service.Log($"[Foretell] Final save during dispose failed safely: {e.Message}"); }
         _ws.Network.CaptureRawTransport = false;
@@ -528,6 +531,11 @@ public sealed partial class ForetellEngine : IDisposable
         changed |= NormalizeFinite(ref _cfg.RadarAutoMinimumRadius, 30, 10, 60);
         changed |= NormalizeFinite(ref _cfg.RadarAutoMaximumRadius, 65, Math.Max(20, _cfg.RadarAutoMinimumRadius), 120);
         changed |= NormalizeFinite(ref _cfg.RadarSize, 220, 140, 600);
+        changed |= NormalizeFinite(ref _cfg.GuideWidth, 380, 260, 1000);
+        changed |= NormalizeFinite(ref _cfg.GuideHeight, 520, 180, 1000);
+        changed |= NormalizeFinite(ref _cfg.GuideScale, 1, .7f, 1.8f);
+        changed |= NormalizeFinite(ref _cfg.GuidePositionX, -1, -1, 1);
+        changed |= NormalizeFinite(ref _cfg.GuidePositionY, -1, -1, 1);
         var maxRendered = Math.Clamp(_cfg.MaxRenderedMechanics, 1, 32);
         if (maxRendered != _cfg.MaxRenderedMechanics) { _cfg.MaxRenderedMechanics = maxRendered; changed = true; }
         var retentionDays = Math.Clamp(_cfg.RecordingRetentionDays, 1, 365);

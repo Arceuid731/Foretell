@@ -16,8 +16,20 @@ internal sealed class GuideMechanic(string name, string text, string anchor)
     public string Anchor { get; } = anchor;
     [System.Text.Json.Serialization.JsonIgnore]
     public GuideInstruction Prepared { get; } = GuidePreparation.Parse(text);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public GuideRule[] Rules { get; } = GuideRules.Prepare(text);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string TextHash { get; } = GuideNames.Hash(text);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public GuideStatusRule? StatusRule { get; } = GuideRules.PrepareStatus(text);
 }
-internal sealed record GuidePhase(string Name, string Context, GuideMechanic[] Mechanics);
+internal sealed record GuidePhase(string Name, string Context, GuideMechanic[] Mechanics)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string ContextHash { get; } = GuideNames.Hash(Context);
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool Conditional { get; } = GuideRules.HasConditions(Context);
+}
 internal sealed record GuideBoss(string Name, string Anchor, GuidePhase[] Phases);
 internal sealed record GuideDocument(int Schema, GuideDuty Duty, string Title, long Revision, DateTime RetrievedAt,
     string SourceHash, GuideBoss[] Bosses)

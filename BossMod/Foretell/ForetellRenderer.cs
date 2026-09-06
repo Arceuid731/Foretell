@@ -20,7 +20,9 @@ public sealed partial class ForetellEngine
     {
         _presentationFrame = null;
         DrawSafely(DrawInspector, "inspector");
-        if (_cfg.EnableGuides && _cfg.GuideSidebar && _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell)
+        if (_cfg.EnableGuides && _cfg.GuideEntryPopup && _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell)
+            DrawSafely(DrawGuideEntry, "guide preparation");
+        if (_cfg.EnableGuides && (_cfg.GuideSidebar || _cfg.GuideChecklistUnlocked) && _cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell)
             DrawSafely(DrawGuideSidebar, "guide sidebar");
         if (_cfg.MiniRadar)
             DrawSafely(() => DrawRadar(_cfg.Mode is ForetellMode.Hybrid or ForetellMode.Foretell), "radar");
@@ -97,8 +99,8 @@ public sealed partial class ForetellEngine
         var y = actor?.PosRot.Y ?? 0;
         if (!float.IsFinite(y)) y = 0;
         var o = new Vector3(p.Origin.X, y + .05f, p.Origin.Y);
-        var color = ConfidenceColor(p.Confidence);
-        var thickness = ConfidenceThickness(p.Confidence);
+        var color = p.GuideLinked && p.Geometry == GeometryKind.Unknown && p.Kind == MechanicKind.Marker ? _cfg.GuideActiveColor : ConfidenceColor(p.Confidence);
+        var thickness = ConfidenceThickness(p.Confidence) + (p.GuideLinked ? 1 : 0);
         switch (p.Geometry)
         {
             case GeometryKind.Polygon when p.Polygon is { Count: >= 3 } polygon:
@@ -130,6 +132,20 @@ public sealed partial class ForetellEngine
                 break;
         }
         DrawWorldGuidance(cam, p, o, color, thickness);
+        if (p.GuideLinked)
+        {
+            var clip = Vector4.Transform(new Vector4(o + new Vector3(0, 2, 0), 1), cam.ViewProj);
+            if (float.IsFinite(clip.W) && clip.W > .01f)
+            {
+                var normalized = new Vector2(clip.X / clip.W, clip.Y / clip.W);
+                if (float.IsFinite(normalized.X) && float.IsFinite(normalized.Y) && Math.Abs(normalized.X) < 1 && Math.Abs(normalized.Y) < 1)
+                {
+                    var viewport = ImGui.GetMainViewport();
+                    var screen = viewport.Pos + new Vector2((normalized.X + 1) * .5f * viewport.Size.X, (1 - normalized.Y) * .5f * viewport.Size.Y);
+                    ImGui.GetBackgroundDrawList().AddText(screen, _cfg.GuideActiveColor, "▶ " + p.Label);
+                }
+            }
+        }
     }
 
     private void DrawWorldGuidance(Camera cam, ActivePrediction p, Vector3 origin, uint color, float thickness)
@@ -280,7 +296,7 @@ public sealed partial class ForetellEngine
 
             var playerContext = _ws.Party[PartyState.PlayerSlot];
             var active = ForetellDecisionCore.Prioritize(PresentationFrame, playerContext == null ? Vector2.Zero : V(playerContext.Position), playerContext?.InstanceID ?? 0)
-                .Select(h => h.Prediction).Where(p => p.Confidence >= _cfg.VisualConfidence / 100f).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
+                .Select(h => h.Prediction).Where(p => p.Confidence >= _cfg.VisualConfidence / 100f && !GuideOwnsCentralPrediction(p)).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
             var terrainCue = _ws.Party[PartyState.PlayerSlot] is { } localPlayer
                 && ActiveDynamicTerrainWarnings().Any(w => ForetellArenaBoundaryCore.Contains(w.Points, V(localPlayer.Position)));
             var hasActive = DrawGuideCentralHints() || active.Length != 0 || terrainCue;
@@ -359,6 +375,7 @@ public sealed partial class ForetellEngine
 
     private string UserFacingPredictionLabel(ActivePrediction prediction)
     {
+        if (prediction.GuideLinked && prediction.Label.Length > 0) return prediction.Label;
         var actionName = DisplayActionName(prediction.ActionID);
         return !string.IsNullOrWhiteSpace(actionName) ? actionName : FriendlyMechanicLabel(prediction.Kind, prediction.Geometry);
     }
@@ -475,12 +492,13 @@ public sealed partial class ForetellEngine
         {
             foreach (var p in ForetellDecisionCore.SelectForDisplay(PresentationFrame, _cfg.VisualConfidence / 100f, _cfg.MaxRenderedMechanics))
             {
-                var col = ConfidenceColor(p.Confidence);
-                var thickness = ConfidenceThickness(p.Confidence);
+                var col = p.GuideLinked && p.Geometry == GeometryKind.Unknown && p.Kind == MechanicKind.Marker ? _cfg.GuideActiveColor : ConfidenceColor(p.Confidence);
+                var thickness = ConfidenceThickness(p.Confidence) + (p.GuideLinked ? 1 : 0);
                 DrawRadarGeometry(draw, p, mapOrigin, cameraAzimuth, center, scale, col, thickness);
                 DrawRadarGuidance(draw, p, mapOrigin, cameraAzimuth, center, scale, col, thickness);
                 var c = RadarPoint(p.Origin, mapOrigin, cameraAzimuth, center, scale);
                 draw.AddText(c + new Vector2(5, -9), col, $"{Math.Max(0, (p.Activation - PresentationFrame.At).TotalSeconds):F1}s");
+                if (p.GuideLinked) draw.AddText(c + new Vector2(5, 8), _cfg.GuideActiveColor, "▶ " + p.Label);
             }
         }
         var facing = ForetellInferenceCore.CameraRelativeRadarOffset(new(MathF.Sin(player.Rotation.Rad), MathF.Cos(player.Rotation.Rad)), cameraAzimuth);

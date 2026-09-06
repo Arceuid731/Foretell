@@ -19,6 +19,7 @@ public sealed partial class ForetellEngine
 
     private void OnActorRemoved(Actor actor)
     {
+        if (actor.IsDead) _guideEncounter.ObserveDeath(actor.InstanceID, actor.OID, actor.NameID);
         _acceptedActiveCasts.Remove(actor.InstanceID);
         ProcessObservation(Observation(ObservationKind.ActorRemoved, actor, detail: actor.Type.ToString()));
     }
@@ -64,6 +65,7 @@ public sealed partial class ForetellEngine
 
     private void OnCastEvent(Actor actor, ActorCastEvent ev)
     {
+        ResolveGuideAction(actor, ev.Action.ID);
         var action = ev.Action.ID;
         if (action == 0) return;
         var resolved = Observation(ObservationKind.ActionResolved, actor, action, target: ev.MainTargetID, value1: ev.Targets.Count);
@@ -138,7 +140,10 @@ public sealed partial class ForetellEngine
         => ProcessObservation(Observation(ObservationKind.TargetableChanged, actor, flag: actor.IsTargetable));
 
     private void OnDeathChanged(Actor actor)
-        => ProcessObservation(Observation(ObservationKind.DeathChanged, actor, flag: actor.IsDead));
+    {
+        if (actor.IsDead) _guideEncounter.ObserveDeath(actor.InstanceID, actor.OID, actor.NameID);
+        ProcessObservation(Observation(ObservationKind.DeathChanged, actor, flag: actor.IsDead));
+    }
 
     private void OnRenderFlagsChanged(Actor actor)
         => ProcessObservation(Observation(ObservationKind.RenderFlagsChanged, actor, detail: actor.Renderflags.ToString()));

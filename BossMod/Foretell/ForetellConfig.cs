@@ -72,6 +72,21 @@ public sealed class ForetellConfig : ConfigNode
 
     [PropertyDisplay("Encounter guide sidebar", tooltip: "Show documented bosses and mechanics, and highlight uniquely matched live casts. Guide extraction does not establish tactical or geometry coverage.")]
     public bool GuideSidebar = true;
+    public bool GuideEntryPopup = true;
+    public bool GuideChecklistUnlocked;
+    public bool GuideCentralAlerts = true;
+    public bool GuideLocalSummaries = true;
+    public bool GuideSummaryGpu = true;
+    public float GuidePositionX = -1;
+    public float GuidePositionY = -1;
+    public float GuideWidth = 380;
+    public float GuideHeight = 520;
+    public float GuideScale = 1;
+    public uint GuideBackgroundColor = 0xE61F1814;
+    public uint GuideTextColor = 0xFFE6E6E6;
+    public uint GuideActiveColor = 0xFF47D4FF;
+    public uint GuideResolvedColor = 0xFF99C47A;
+    public uint GuideUnresolvedColor = 0xFFAAAAAA;
 
     [PropertyDisplay("World-space overlay", tooltip: "Draw learned mechanic geometry directly in the game world when it passes the configured confidence threshold.")]
     public bool WorldOverlay = true;

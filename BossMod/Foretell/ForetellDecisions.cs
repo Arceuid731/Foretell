@@ -58,7 +58,9 @@ public sealed partial class ForetellEngine
                 Label: "Possible floor change") { Polygon = vertices, Provenance = "Terrain cue" };
             hazards.Add(new(unchecked((long)warning.ActorID), prediction, warning.Expires, true, true, prediction.Provenance));
         }
-        var complete = !invalidGeometry && hazards.Count <= 128 && (now - _lastOutcomeGapAt).TotalSeconds > 12 && !PerformanceThrottled && _semanticBudgetFrameTicks != _semanticBudgetTrippedFrameTicks;
+        AssociateGuideHazards(hazards);
+        var complete = !invalidGeometry && hazards.Count <= 128 && !hazards.Any(hazard => hazard.AdvisoryOnly && hazard.Prediction.GuideLinked)
+            && (now - _lastOutcomeGapAt).TotalSeconds > 12 && !PerformanceThrottled && _semanticBudgetFrameTicks != _semanticBudgetTrippedFrameTicks;
         return new(now, hazards.Where(h => h.ActiveUntil >= now).Take(128).ToArray(), HasFreshTopologyEvidence, complete);
     }
 

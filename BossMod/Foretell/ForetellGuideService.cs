@@ -7,7 +7,15 @@ using System.Threading.Channels;
 namespace BossMod.Foretell;
 
 internal enum GuideState { Idle, ReadingCache, Downloading, Preparing, Ready, Offline, Failed }
-internal sealed record GuideSnapshot(GuideDuty? Duty, GuideState State, GuideDocument? Document = null, string Error = "");
+internal sealed record GuideSnapshot(GuideDuty? Duty, GuideState State, GuideDocument? Document = null, string Error = "")
+{
+    public DateTime StartedAt { get; init; }
+    public double ElapsedSeconds { get; init; }
+    public double? EstimatedSeconds { get; init; }
+    public long ReceivedBytes { get; init; }
+    public long? TotalBytes { get; init; }
+    public bool FromCache { get; init; }
+}
 
 internal sealed class ForetellWikiSource : IDisposable
 {
@@ -19,7 +27,9 @@ internal sealed class ForetellWikiSource : IDisposable
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Foretell/0.11 (+https://github.com/Arceuid731/Foretell)");
     }
 
-    public async Task<string> Fetch(GuideDuty duty, CancellationToken cancellation)
+    public Task<string> Fetch(GuideDuty duty, CancellationToken cancellation) => Fetch(duty, cancellation, null);
+
+    public async Task<string> Fetch(GuideDuty duty, CancellationToken cancellation, Action<long, long?>? progress)
     {
         if (!duty.Valid) throw new InvalidDataException("Instance identity is missing.");
         var title = char.ToUpperInvariant(duty.EnglishName[0]) + duty.EnglishName[1..];
@@ -37,6 +47,7 @@ internal sealed class ForetellWikiSource : IDisposable
             if (read == 0) break;
             if (buffer.Length + read > ForetellGuideParser.MaxResponseBytes) throw new InvalidDataException("Wiki response is too large.");
             buffer.Write(chunk, 0, read);
+            progress?.Invoke(buffer.Length, response.Content.Headers.ContentLength);
         }
         return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
     }
@@ -106,7 +117,14 @@ internal sealed class ForetellGuideCache(string directory)
 
 internal sealed class ForetellGuideService : IDisposable
 {
-    private sealed record Request(long Serial, GuideDuty Duty, bool Refresh, CancellationTokenSource Cancellation);
+    private sealed record Request(long Serial, GuideDuty Duty, bool Refresh, CancellationTokenSource Cancellation)
+    {
+        public DateTime StartedAt { get; } = DateTime.UtcNow;
+        public System.Diagnostics.Stopwatch Watch { get; } = System.Diagnostics.Stopwatch.StartNew();
+        public long ReceivedBytes;
+        public long? TotalBytes;
+        public bool FromCache;
+    }
     private readonly object _gate = new();
     private readonly Channel<Request> _queue = Channel.CreateBounded<Request>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.Wait });
     private readonly CancellationTokenSource _lifetime = new();
@@ -118,12 +136,14 @@ internal sealed class ForetellGuideService : IDisposable
     private volatile GuideSnapshot _snapshot = new(null, GuideState.Idle);
     private long _serial;
     private bool _disposed;
+    private readonly GuideTimingHistory _timings;
     public GuideSnapshot Snapshot => _snapshot;
     internal Task Completion => _worker;
 
     public ForetellGuideService(string directory, Func<GuideDuty, CancellationToken, Task<string>>? fetch = null)
     {
         _cache = new(directory);
+        _timings = new(directory);
         if (fetch == null) { _source = new(); _fetch = _source.Fetch; }
         else _fetch = fetch;
         _worker = Task.Run(Run);
@@ -139,7 +159,7 @@ internal sealed class ForetellGuideService : IDisposable
             if (_queue.Reader.TryRead(out var dropped)) dropped.Cancellation.Dispose();
             var request = new Request(++_serial, duty, refresh, CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token));
             _latest = request;
-            _snapshot = new(duty, GuideState.ReadingCache);
+            _snapshot = new(duty, GuideState.ReadingCache) { StartedAt = request.StartedAt };
             _queue.Writer.TryWrite(request);
         }
     }
@@ -158,7 +178,13 @@ internal sealed class ForetellGuideService : IDisposable
     private void Publish(Request request, GuideState state, GuideDocument? document = null, string error = "")
     {
         lock (_gate)
-            if (!_disposed && request.Serial == _serial) _snapshot = new(request.Duty, state, document, error);
+            if (!_disposed && request.Serial == _serial)
+                _snapshot = new(request.Duty, state, document, error)
+                {
+                    StartedAt = request.StartedAt, ElapsedSeconds = request.Watch.Elapsed.TotalSeconds,
+                    EstimatedSeconds = request.FromCache ? null : _timings.Estimate,
+                    ReceivedBytes = request.ReceivedBytes, TotalBytes = request.TotalBytes, FromCache = request.FromCache
+                };
     }
 
     private async Task Run()
@@ -172,16 +198,24 @@ internal sealed class ForetellGuideService : IDisposable
                 {
                     request.Cancellation.Token.ThrowIfCancellationRequested();
                     document = _cache.Read(request.Duty);
+                    request.FromCache = document != null;
                     if (document != null) Publish(request, GuideState.Ready, document);
                     if (document == null || request.Refresh || DateTime.UtcNow - document.RetrievedAt > TimeSpan.FromDays(7))
                     {
+                        request.FromCache = false;
                         Publish(request, GuideState.Downloading, document);
                         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);
                         timeout.CancelAfter(TimeSpan.FromSeconds(25));
-                        var response = await _fetch(request.Duty, timeout.Token).ConfigureAwait(false);
+                        var response = _source == null ? await _fetch(request.Duty, timeout.Token).ConfigureAwait(false)
+                            : await _source.Fetch(request.Duty, timeout.Token, (received, total) =>
+                            {
+                                request.ReceivedBytes = received; request.TotalBytes = total;
+                                Publish(request, GuideState.Downloading, document);
+                            }).ConfigureAwait(false);
                         timeout.Token.ThrowIfCancellationRequested();
                         Publish(request, GuideState.Preparing, document);
                         document = ForetellGuideParser.Parse(response, request.Duty, DateTime.UtcNow);
+                        _timings.Record(request.Watch.Elapsed.TotalSeconds);
                         timeout.Token.ThrowIfCancellationRequested();
                         try { _cache.Write(document); }
                         catch (Exception error) when (error is IOException or UnauthorizedAccessException)

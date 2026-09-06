@@ -58,6 +58,7 @@ internal static class GuideTests
         var trial = ForetellGuideParser.Parse(Response(Duty, "<h2>Strategy</h2><h3>Lord of tests: <a>Keeper</a></h3><h3>Phase 1</h3><ul><li>Lance is an attack that hits the target.</li></ul><h3>Phase 2</h3><p>If marked, move outside.</p><h2>Loot</h2>"), Duty, Now);
         Check(trial.Bosses.Single().Name == "Keeper" && trial.Bosses[0].Phases.Length == 2 && trial.MechanicCount == 1, "Single-boss trial headings and sibling phase headings were misclassified");
         Synchronization(document);
+        GuideCombatTests.Run();
         AsyncChecks(document).GetAwaiter().GetResult();
         Console.WriteLine("Guide parsing, preserved conditions, ambiguous contexts, localization, bounded HTTP, cache and cancellation tests passed.");
     }
@@ -198,8 +199,11 @@ internal static class GuideTests
         foreach (var name in args.Skip(1))
         {
             var duty = new GuideDuty(1, 1, name);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
             var response = source.Fetch(duty, CancellationToken.None).GetAwaiter().GetResult();
+            var downloadSeconds = watch.Elapsed.TotalSeconds;
             var document = ForetellGuideParser.Parse(response, duty, DateTime.UtcNow);
+            Console.WriteLine($"Timing: download {downloadSeconds:F3}s, parse/rules {watch.Elapsed.TotalSeconds - downloadSeconds:F3}s; {document.Bosses.SelectMany(boss => boss.Phases).Sum(phase => phase.Mechanics.Count(mechanic => GuideRules.LiveGuidance(mechanic, phase) != GuidanceKind.None))} unconditional rule candidates (not encounter coverage).");
             Console.WriteLine($"{document.Title}: revision {document.Revision}; {document.Bosses.Length} bosses; {document.MechanicCount} mechanics; {document.Bosses.Sum(boss => boss.Phases.Length)} phase groups; {document.Bosses.SelectMany(boss => boss.Phases).SelectMany(phase => phase.Mechanics).Count(mechanic => GuidePreparation.Instruction(mechanic) != GuideInstruction.Unprepared)} simple responses prepared.");
             foreach (var boss in document.Bosses) Console.WriteLine($"  {boss.Name}: {string.Join(", ", boss.Phases.Select(phase => $"{phase.Name} ({phase.Mechanics.Length})"))}");
         }

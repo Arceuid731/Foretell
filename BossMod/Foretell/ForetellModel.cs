@@ -594,6 +594,7 @@ public readonly record struct ActivePrediction(
     public IReadOnlyList<HazardVertex>? Polygon { get; init; }
     public IReadOnlyList<HazardStage>? Stages { get; init; }
     public string Provenance { get; init; } = "Observed signal";
+    public bool GuideLinked { get; init; }
 }
 
 public readonly record struct ActionGeometryPrior(

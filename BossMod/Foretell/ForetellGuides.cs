@@ -5,6 +5,7 @@ namespace BossMod.Foretell;
 public sealed partial class ForetellEngine
 {
     private ForetellGuideService? _guides;
+    private ForetellGuideSummaries? _guideSummaries;
     private GuideDuty? _guideDuty;
     private GuideDocument? _liveGuide;
     private (uint Content, uint Territory) _guideIdentity;
@@ -19,6 +20,9 @@ public sealed partial class ForetellEngine
     private Task<(GuideDuty Duty, string Display)[]>? _guideCatalogue;
     private string _guideSearch = "";
     private bool _guideCombat;
+    private readonly GuideEncounterTracker _guideEncounter = new();
+    private GuideCombatFrame _guideFrame = GuideCombatFrame.Empty;
+    private readonly List<GuideSignal> _guideSignals = [];
 
     private static GuideLanguage GuideClientLanguage => Service.ClientState.ClientLanguage switch
     {
@@ -44,6 +48,7 @@ public sealed partial class ForetellEngine
         }
         if (!_cfg.EnableGuides)
         {
+            _guideSummaries?.Update(null, GuideClientLanguage, false, inCombat, _cfg.GuideSummaryGpu, "");
             if (_guideIdentity != default || _guides.Snapshot.State != GuideState.Idle) { _guides.Cancel(); ResetGuideContext(); }
             return;
         }
@@ -61,19 +66,62 @@ public sealed partial class ForetellEngine
         if (_guides.Snapshot is { Document: { } document } && document.Duty == _guideDuty) _liveGuide = document;
         if ((now - _guideSampleAt).TotalMilliseconds < 200 && now >= _guideSampleAt) return;
         _guideSampleAt = now; _guideMatches.Clear();
+        _guideSummaries?.Update(_liveGuide ?? (_guideDuty == null ? _guides.Snapshot.Document : null), GuideClientLanguage,
+            _cfg.GuideLocalSummaries, inCombat, _cfg.GuideSummaryGpu, _guideFrame.Boss?.Name ?? "");
         if (_liveGuide == null || _guideDuty == null) return;
+        var player = _ws.Party[PartyState.PlayerSlot];
+        List<GuideActorState> actors = [];
         foreach (var actor in _ws.Actors)
         {
-            if (actor.Type != ActorType.Enemy || actor.IsAlly || actor.IsDeadOrDestroyed || actor.NameID == 0) continue;
+            if (actor.Type != ActorType.Enemy || actor.IsAlly || actor.NameID == 0 || actor.IsDestroyed && !actor.IsDead) continue;
             var bossName = GuideSheetName("BNpcName", actor.NameID, false);
             if (bossName.Length == 0) continue;
             var bosses = _liveGuide.Bosses.Where(boss => GuideNames.Boss(boss.Name) == GuideNames.Boss(bossName)).ToArray();
             if (bosses.Length != 1) continue;
             _guideBossNames[bosses[0].Name] = actor.NameID;
+            actors.Add(new(actor.InstanceID, actor.OID, actor.NameID, bossName, actor.IsDead,
+                actor.InCombat || actor.CastInfo != null, player == null ? float.MaxValue : (actor.Position - player.Position).Length()));
             if (MatchGuideActor(_liveGuide, _guideDuty, actor, now, (sheet, id) => GuideSheetName(sheet, id, false)) is not { } match) continue;
             _guideMatches.Add(match);
             _guideActionNames[(match.Boss.Name, match.Mechanic.Name)] = match.Cast.ActionID;
         }
+        _guideEncounter.Update(_liveGuide, actors, false);
+        if (_guideEncounter.Frame is { Boss: { } ownerBoss, Upcoming: false, Ambiguous: false })
+        {
+            var owners = actors.Where(actor => !actor.Dead && GuideNames.Boss(actor.EnglishName) == GuideNames.Boss(ownerBoss.Name)).Select(actor => actor.ID).ToHashSet();
+            foreach (var helper in _ws.Actors.Where(actor => !actor.IsAlly && actor.Type is ActorType.Enemy or ActorType.Helper && owners.Contains(actor.OwnerID)))
+            {
+                if (MatchOwnedGuideActor(_liveGuide, _guideDuty, helper, _ws.Actors.Find(helper.OwnerID), now,
+                    (sheet, id) => GuideSheetName(sheet, id, false)) is not { } match) continue;
+                _guideMatches.Add(match); _guideActionNames[(match.Boss.Name, match.Mechanic.Name)] = match.Cast.ActionID;
+            }
+        }
+        _guideSignals.Clear();
+        foreach (var match in _guideMatches)
+        {
+            var actor = _ws.Actors.Find(match.Cast.ActorID);
+            _guideSignals.Add(new(match.Boss, match.Phase, match.Mechanic, GuideSignalKind.Cast, match.Cast.ActorID, match.Cast.ObjectID,
+                match.Cast.NameID, match.Cast.ActionID, actor?.CastInfo?.TargetID ?? 0, match.Cast.FinishAt,
+                GuideRules.LiveGuidance(match.Mechanic, match.Phase, match.Boss), "Action/BNpcName IDs + exact English names + current duty") { OwnerID = actor?.OwnerID ?? 0 });
+        }
+        if (_guideEncounter.Frame is { Boss: { } current, Upcoming: false, Ambiguous: false } && player != null)
+        {
+            foreach (var status in player.Statuses.Where(status => status.ID != 0 && status.ExpireAt > now))
+            {
+                if (_ws.Actors.Find(status.SourceID) is not { } source || !actors.Any(actor => actor.ID == source.InstanceID && GuideNames.Boss(actor.EnglishName) == GuideNames.Boss(current.Name))) continue;
+                var name = GuideSheetName("Status", status.ID, false);
+                if (name.Length == 0) continue;
+                var candidates = current.Phases.SelectMany(phase => phase.Mechanics.Select(mechanic => (phase, mechanic)))
+                    .Where(entry => GuideRules.Mentions(entry.mechanic.Text, name)).ToArray();
+                if (candidates.Length != 1) continue;
+                var candidate = candidates[0];
+                _guideSignals.Add(new(current, candidate.phase, candidate.mechanic, GuideSignalKind.Status, source.InstanceID, source.OID, source.NameID,
+                    status.ID, player.InstanceID, status.ExpireAt, GuideRules.StatusGuidance(candidate.mechanic, candidate.phase, name, current), "Status ID + exact name + current boss source"));
+            }
+        }
+        _guideEncounter.Synchronize(_guideSignals);
+        _guideFrame = _guideEncounter.Frame;
+        _presentationFrame = null;
     }
 
     internal static GuideMatch? MatchGuideActor(GuideDocument document, GuideDuty duty, Actor actor, DateTime now, Func<string, uint, string> name)
@@ -91,6 +139,15 @@ public sealed partial class ForetellEngine
             && cast.IsSpell() && cast.Action.ID == match.Cast.ActionID && float.IsFinite(cast.NPCRemainingTime) && cast.NPCRemainingTime is > 0 and <= 120
             && Math.Abs((now.AddSeconds(cast.NPCRemainingTime) - match.Cast.FinishAt).TotalSeconds) < .3;
 
+    internal static GuideMatch? MatchOwnedGuideActor(GuideDocument document, GuideDuty duty, Actor actor, Actor? owner, DateTime now, Func<string, uint, string> name)
+    {
+        if (owner is not { IsDeadOrDestroyed: false, IsAlly: false, Type: ActorType.Enemy } || owner.NameID == 0 || actor.OwnerID != owner.InstanceID || actor.OwnerID == 0
+            || actor.Type is not (ActorType.Enemy or ActorType.Helper) || actor.IsAlly || actor.IsDeadOrDestroyed || actor.NameID == 0
+            || actor.CastInfo is not { EventHappened: false } cast || !cast.IsSpell() || !float.IsFinite(cast.NPCRemainingTime) || cast.NPCRemainingTime is <= 0 or > 120) return null;
+        return GuideSynchronization.Match(document, new(duty, actor.InstanceID, actor.OID, actor.NameID, name("BNpcName", owner.NameID),
+            cast.Action.ID, name("Action", cast.Action.ID), now.AddSeconds(cast.NPCRemainingTime)), now);
+    }
+
     internal static GuideInstruction GuidePersonalResponse(GuideMatch match, ulong playerID, Actor? caster)
     {
         if (playerID == 0) return GuideInstruction.Unprepared;
@@ -104,6 +161,8 @@ public sealed partial class ForetellEngine
     {
         _guideIdentity = default; _guideDuty = null; _liveGuide = null; _guideSampleAt = default;
         _guideMatches.Clear(); _guideBossNames.Clear(); _guideActionNames.Clear();
+        _guideSignals.Clear(); _guideEncounter.Reset(); _guideFrame = GuideCombatFrame.Empty;
+        _guideEntryDismissed = false; _guideEntryReadyAt = default;
     }
 
     private string GuideSheetName(string sheet, uint id, bool localized)
@@ -150,37 +209,90 @@ public sealed partial class ForetellEngine
     }
 
     private IEnumerable<GuideMatch> LiveGuideMatches()
-        => _guideMatches.Where(match => _cfg.EnableGuides && GuideCastIsCurrent(match, _guideDuty, _ws.Actors.Find(match.Cast.ActorID), _ws.CurrentTime));
+        => _guideMatches.Where(match => ReferenceEquals(match.Boss, _guideFrame.Boss) && !_guideFrame.Upcoming && !_guideFrame.Ambiguous
+            && _cfg.EnableGuides && GuideCastIsCurrent(match, _guideDuty, _ws.Actors.Find(match.Cast.ActorID), _ws.CurrentTime));
+
+    private IEnumerable<GuideSignal> LiveGuideSignals()
+        => _guideFrame.Active.Where(signal => _cfg.EnableGuides && signal.Until > _ws.CurrentTime
+            && _guideDuty?.ContentID == _ws.CurrentCFCID && _guideDuty.TerritoryID == _ws.CurrentZone
+            && _ws.Actors.Find(signal.SourceID) is { IsDeadOrDestroyed: false } source && source.OID == signal.SourceOID && source.NameID == signal.SourceNameID
+            && (signal.OwnerID == 0 || source.OwnerID == signal.OwnerID && _ws.Actors.Find(signal.OwnerID) is { IsDeadOrDestroyed: false })
+            && (signal.Kind == GuideSignalKind.Cast
+                ? source.CastInfo is { EventHappened: false } cast && cast.IsSpell() && cast.Action.ID == signal.ID
+                    && float.IsFinite(cast.NPCRemainingTime) && cast.NPCRemainingTime > 0 && Math.Abs((_ws.CurrentTime.AddSeconds(cast.NPCRemainingTime) - signal.Until).TotalSeconds) < .3
+                : signal.Kind == GuideSignalKind.Status && _ws.Actors.Find(signal.TargetID) is { IsDeadOrDestroyed: false } target
+                    && target.Statuses.Any(status => status.ID == signal.ID && status.SourceID == signal.SourceID && status.ExpireAt > _ws.CurrentTime)));
+
+    private void ResolveGuideAction(Actor actor, uint action)
+    {
+        foreach (var signal in _guideFrame.Active.Where(signal => signal.Kind == GuideSignalKind.Cast && signal.SourceID == actor.InstanceID
+            && signal.SourceOID == actor.OID && signal.SourceNameID == actor.NameID && signal.ID == action))
+            _guideEncounter.Resolve(signal);
+    }
+
+    private void AssociateGuideHazards(List<DecisionHazard> hazards)
+    {
+        if (_liveGuide == null) return;
+        foreach (var signal in LiveGuideSignals())
+        {
+            var associated = false;
+            for (var index = 0; index < hazards.Count; ++index)
+            {
+                var linked = GuideDecisionBridge.Associate(hazards[index], signal, GuideMechanicName(signal.Boss, signal.Mechanic), _liveGuide.SourceUrl);
+                associated |= linked != hazards[index];
+                hazards[index] = linked;
+            }
+            if (!associated && hazards.Count < 128 && _ws.Actors.Find(signal.SourceID) is { } actor)
+                hazards.Add(GuideDecisionBridge.Annotation(signal, V(actor.Position), GuideMechanicName(signal.Boss, signal.Mechanic), _liveGuide.SourceUrl));
+        }
+    }
 
     private bool DrawGuideCentralHints()
     {
+        if (!_cfg.GuideCentralAlerts) return false;
         var shown = false;
         var player = _ws.Party[PartyState.PlayerSlot];
         if (player == null || player.IsDeadOrDestroyed) return false;
-        foreach (var match in LiveGuideMatches().Take(2))
+        foreach (var signal in LiveGuideSignals().OrderByDescending(signal => signal.TargetID == player.InstanceID).ThenBy(signal => signal.Until).Take(2))
         {
-            var instruction = GuidePersonalResponse(match, player.InstanceID, _ws.Actors.Find(match.Cast.ActorID));
-            if (instruction == GuideInstruction.Unprepared) continue;
-            ImGui.TextColored(ProductAccent, GuidePreparation.Text(instruction, GuideClientLanguage));
-            ImGui.TextDisabled(GuideMechanicName(match.Boss, match.Mechanic) + " · " + GuideText("Wiki + live cast", "Wiki + cast reçu", "Wiki + beobachteter Zauber", "Wiki＋詠唱検知"));
+            var guidance = GuideAlertGuidance(signal, player);
+            var remaining = Math.Max(0, (signal.Until - _ws.CurrentTime).TotalSeconds);
+            ImGui.TextColored(GuideColor(_cfg.GuideActiveColor), GuidanceInstruction(guidance, MechanicKind.Unknown, GeometryKind.Unknown)
+                + " — " + GuideMechanicName(signal.Boss, signal.Mechanic));
+            if (guidance == GuidanceKind.None)
+                ImGui.TextWrapped(GuideText("Signal matched · check the conditional response in the checklist.", "Signal relié · consulte la consigne conditionnelle dans la checklist.",
+                    "Signal zugeordnet · bedingte Reaktion in der Checkliste prüfen.", "シグナル対応・チェックリストの条件付き対処を確認。"));
+            var total = signal.Kind == GuideSignalKind.Cast ? _ws.Actors.Find(signal.SourceID)?.CastInfo?.TotalTime ?? 0 : 0;
+            ImGui.ProgressBar(total > 0 && float.IsFinite(total) ? Math.Clamp((float)remaining / total, 0, 1) : 0,
+                new(360 * _cfg.GuideScale, 0), $"{remaining:F1}s · {signal.Kind} · Wiki");
             shown = true;
         }
         return shown;
     }
 
+    private GuidanceKind GuideAlertGuidance(GuideSignal signal, Actor player)
+    {
+        var guidance = signal.Guidance;
+        if (guidance == GuidanceKind.Tankbuster && signal.TargetID != player.InstanceID) return GuidanceKind.None;
+        if (guidance is GuidanceKind.Stack or GuidanceKind.Soak)
+            return PresentationFrame.Hazards.Any(hazard => hazard.Prediction.CasterID == signal.SourceID && hazard.Prediction.ActionID == signal.ID
+                && hazard.Prediction.Guidance == guidance && hazard.Prediction.TargetID != 0 && hazard.Prediction.Confidence >= _cfg.WarningConfidence / 100f)
+                ? guidance : GuidanceKind.None;
+        if (guidance == GuidanceKind.Avoid)
+            return PresentationFrame.Hazards.Any(hazard => hazard.Prediction.CasterID == signal.SourceID && hazard.Prediction.ActionID == signal.ID
+                && hazard.SpatiallyKnown && hazard.Prediction.Confidence >= _cfg.VisualConfidence / 100f
+                && ForetellDecisionCore.Contains(hazard.Prediction, V(player.Position), hazard.Prediction.Activation)) ? guidance : GuidanceKind.None;
+        return guidance;
+    }
+
+    private bool GuideOwnsCentralPrediction(ActivePrediction prediction)
+        => _cfg.GuideCentralAlerts && LiveGuideSignals().Any(signal => signal.Kind == GuideSignalKind.Cast
+            && signal.SourceID == prediction.CasterID && signal.ID == prediction.ActionID && Math.Abs((signal.Until - prediction.Activation).TotalSeconds) < .4
+            && (prediction.Guidance is GuidanceKind.None or GuidanceKind.Marker || signal.Guidance == prediction.Guidance));
+
     private void DrawGuideSidebar()
     {
-        if (_guideDuty == null) return;
-        var viewport = ImGui.GetMainViewport();
-        ImGui.SetNextWindowPos(viewport.Pos + new Vector2(20, Math.Max(80, viewport.Size.Y * .2f)), ImGuiCond.FirstUseEver);
-        ImGui.SetNextWindowSize(new Vector2(360, Math.Min(600, viewport.Size.Y * .65f)), ImGuiCond.FirstUseEver);
-        if (ImGui.Begin(GuideText("Encounter guide", "Fiche de l’instance", "Instanzanleitung", "コンテンツ攻略") + "###ForetellGuideSidebar", ImGuiWindowFlags.NoFocusOnAppearing))
-        {
-            ImGui.TextWrapped(GuideDutyName(_guideDuty));
-            if (_guides?.Snapshot.Duty == _guideDuty) DrawGuideState(_guides.Snapshot);
-            if (_liveGuide != null) DrawGuideDocument(_liveGuide, true);
-        }
-        ImGui.End();
+        DrawGuideChecklist();
     }
 
     private void DrawGuideState(GuideSnapshot snapshot)
@@ -190,21 +302,22 @@ public sealed partial class ForetellEngine
             GuideState.ReadingCache => GuideText("Reading cache…", "Lecture du cache…", "Cache wird geladen…", "キャッシュ読込中…"),
             GuideState.Downloading => GuideText("Downloading wiki…", "Téléchargement du wiki…", "Wiki wird geladen…", "Wiki取得中…"),
             GuideState.Preparing => GuideText("Preparing guide…", "Préparation de la fiche…", "Anleitung wird aufbereitet…", "攻略準備中…"),
-            GuideState.Ready => GuideText("Document ready · synchronization partial", "Fiche prête · synchronisation partielle", "Dokument bereit · teilweise synchronisiert", "攻略読込済み・同期は部分対応"),
+            GuideState.Ready => GuideText("Guide ready", "Fiche prête", "Anleitung bereit", "攻略準備完了"),
             GuideState.Offline => GuideText("Source unavailable · cached guide retained", "Source indisponible · fiche en cache conservée", "Quelle nicht verfügbar · Cache bleibt nutzbar", "取得失敗・キャッシュを使用"),
             GuideState.Failed => GuideText("Guide unavailable or unsupported page structure", "Fiche indisponible ou structure de page non prise en charge", "Anleitung nicht verfügbar oder Seitenstruktur nicht unterstützt", "攻略取得不可、または未対応のページ構造"),
             _ => GuideText("Choose an instance to prepare", "Choisis une instance à préparer", "Instanz zum Vorbereiten auswählen", "準備するコンテンツを選択")
         };
         ImGui.TextWrapped(state);
+        DrawGuideProgress(snapshot);
         if (snapshot.Error.Length != 0) ImGui.TextDisabled(snapshot.Error);
     }
 
     private void DrawGuideDocument(GuideDocument document, bool live)
     {
-        ImGui.TextWrapped(GuideText("Source: Console Games Wiki (EN). Only received, uniquely matched casts are highlighted; phases and variants may be unresolved. Zones use independent game evidence.",
-            "Source : Console Games Wiki (EN). Seuls les casts reçus et reliés sans ambiguïté sont surlignés ; phases et variantes peuvent rester inconnues. Les zones utilisent les signaux du jeu séparément.",
-            "Quelle: Console Games Wiki (EN). Nur eindeutig zugeordnete beobachtete Zauber werden hervorgehoben; Phasen und Varianten können ungeklärt bleiben. Zonen verwenden separate Spieldaten.",
-            "出典：Console Games Wiki（英語）。一意に対応した詠唱のみ強調。フェーズ・派生は未確定の場合があります。範囲表示は別のゲームデータに基づきます。"));
+        ImGui.TextWrapped(GuideText("Source: Console Games Wiki (EN). The live checklist shows only the identified current/upcoming boss. Cast and status associations retain their evidence; geometry comes from client/observed data, never an AI summary.",
+            "Source : Console Games Wiki (EN). La checklist en jeu n’affiche que le boss actuel/à venir identifié. Les associations de casts et statuts conservent leurs preuves ; les zones proviennent des données du client/observées, jamais d’un résumé IA.",
+            "Quelle: Console Games Wiki (EN). Die Live-Checkliste zeigt nur den erkannten aktuellen/nächsten Boss. Zauber/Status bleiben nachvollziehbar; Geometrie stammt aus Spieldaten, nie aus KI-Zusammenfassungen.",
+            "出典：Console Games Wiki（英語）。ライブ表示は特定した現在・次のボスのみ。詠唱・ステータスの根拠を保持し、範囲はゲームデータに基づきます。AI要約は使用しません。"));
         if (ImGui.SmallButton(GuideText("Copy source link", "Copier le lien source", "Quellenlink kopieren", "出典リンクをコピー"))) ImGui.SetClipboardText(document.SourceUrl);
         ImGui.SameLine(); ImGui.TextDisabled($"r{document.Revision} · {document.RetrievedAt.ToLocalTime():g}");
         var matches = live ? LiveGuideMatches().ToArray() : [];
@@ -220,6 +333,7 @@ public sealed partial class ForetellEngine
                 {
                     var phaseName = GuidePhaseName(phase);
                     ImGui.TextColored(ProductAccent, phaseName);
+                    if (GuideContextSummary(boss, phase, document) is { } contextSummary) ImGui.TextWrapped(contextSummary);
                     if (phase.Context.Length != 0 && ImGui.TreeNode(phaseName + " · " + GuideText("Context (EN)", "Contexte (EN)", "Kontext (EN)", "背景（英語）")))
                     { ImGui.TextWrapped(phase.Context); ImGui.TreePop(); }
                     var mechanicIndex = 0;
@@ -228,9 +342,11 @@ public sealed partial class ForetellEngine
                         ImGui.PushID(phaseName + ":" + mechanicIndex++);
                         var active = matches.Any(match => ReferenceEquals(match.Mechanic, mechanic));
                         var instruction = GuidePreparation.Instruction(mechanic);
+                        var guidance = GuideRules.LiveGuidance(mechanic, phase, boss);
                         ImGui.TextColored(active ? new Vector4(1, .83f, .28f, 1) : new Vector4(.85f, .85f, .85f, 1),
                             (active ? "▶ " : "• ") + (live ? GuideMechanicName(boss, mechanic) : mechanic.Name + " [EN]"));
-                        ImGui.TextWrapped(GuidePreparation.Text(instruction, GuideClientLanguage));
+                        ImGui.TextWrapped(guidance != GuidanceKind.None ? GuidanceInstruction(guidance, MechanicKind.Unknown, GeometryKind.Unknown) : GuidePreparation.Text(instruction, GuideClientLanguage));
+                        if (GuideSummaryFor(boss, phase, mechanic, document) is { } summary) ImGui.TextWrapped(summary);
                         if (active) ImGui.TextDisabled(GuideText("Cast matched · response may be unresolved", "Cast relié · réponse éventuellement non résolue", "Zauber zugeordnet · Reaktion ggf. ungeklärt", "詠唱対応・対処は未確定の場合あり"));
                         if (ImGui.TreeNode(GuideText("Full source (EN)", "Source complète (EN)", "Vollständige Quelle (EN)", "原文（英語）")))
                         {
@@ -274,12 +390,14 @@ public sealed partial class ForetellEngine
         ImGui.SameLine();
         if (ImGui.Checkbox(GuideText("Sidebar", "Liste latérale", "Seitenleiste", "サイドバー"), ref _cfg.GuideSidebar)) _cfg.Modified.Fire();
         if (_guides == null) return;
+        DrawGuideSettings();
         var snapshot = _guides.Snapshot;
         DrawGuideState(snapshot);
-        ImGui.TextWrapped(GuideText("Local cache: up to 128 guides / 64 MiB, refreshed after 7 days on demand. Simple prepared instructions use the client language. Complex source text remains in English, with no automatic tactical translation yet.",
-            "Cache local : jusqu’à 128 fiches / 64 Mio, actualisées au besoin après 7 jours. Les consignes simples préparées utilisent la langue du client. Le texte source complexe reste en anglais ; sa traduction tactique automatique reste à réaliser.",
-            "Lokaler Cache: bis zu 128 Anleitungen / 64 MiB; nach 7 Tagen bei Bedarf aktualisiert. Einfache Anweisungen nutzen die Clientsprache. Komplexe Quelltexte bleiben vorerst auf Englisch.",
-            "ローカルキャッシュ：最大128件・64 MiB。7日経過後に必要に応じて更新。簡単な指示はクライアント言語、複雑な原文は英語のままで自動翻訳は未対応。"));
+        DrawGuideSummaryProgress(snapshot.Document);
+        ImGui.TextWrapped(GuideText("Local cache: 128 guides / 64 MiB, refreshed after 7 days on demand. Separate translated-summary cache: 128 entries / 64 MiB. Original conditions and English source remain accessible. Ambiguous signals never become confirmed instructions.",
+            "Cache local : 128 fiches / 64 Mio, actualisées au besoin après 7 jours. Cache distinct des résumés traduits : 128 entrées / 64 Mio. Les conditions et la source anglaise restent consultables. Un signal ambigu ne devient jamais une consigne confirmée.",
+            "Lokaler Cache: 128 Anleitungen / 64 MiB; nach 7 Tagen bei Bedarf aktualisiert. Separater Zusammenfassungs-Cache: 128 Einträge / 64 MiB. Bedingungen und englische Quelle bleiben verfügbar. Mehrdeutige Signale sind keine bestätigten Anweisungen.",
+            "攻略キャッシュ：128件・64 MiB、7日経過後に更新。翻訳要約は別キャッシュ128件・64 MiB。条件と英語原文を保持。曖昧なシグナルから確定指示は出しません。"));
         if (_cfg.Mode is ForetellMode.Observe or ForetellMode.Legacy)
             ImGui.TextWrapped(GuideText("Use Hybrid or Foretell mode for the live sidebar and central hints.", "Passe en mode Hybrid ou Foretell pour la liste en combat et les consignes centrales.", "Hybrid- oder Foretell-Modus zeigt Seitenleiste und zentrale Hinweise im Kampf.", "戦闘中の表示にはHybridまたはForetellモードを使用。"));
         ImGui.BeginDisabled(!_cfg.EnableGuides || _guideCombat || snapshot.State is GuideState.ReadingCache or GuideState.Downloading or GuideState.Preparing);

@@ -17,6 +17,8 @@ internal static class Program
         if (args.Length == 0) Run();
         else if (args[0] == "--wiki-smoke") GuideTests.Smoke(args);
         else if (args is ["--guide-sheets", var directory]) GuideTests.SheetSmoke(directory);
+        else if (args is ["--guide-model-smoke", var modelDirectory, var mode]) GuideCombatTests.ModelSmoke(modelDirectory, mode == "gpu");
+        else if (args is ["--guide-pipeline-smoke", var pipelineDirectory]) GuideCombatTests.PipelineSmoke(pipelineDirectory);
         else EvaluateFiles(args);
     }
 
