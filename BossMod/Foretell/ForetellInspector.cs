@@ -127,7 +127,7 @@ public sealed partial class ForetellEngine
     private static string ModeDescription(ForetellMode mode) => mode switch
     {
         ForetellMode.Legacy => "BossMod Reborn presentation only; Foretell guidance is hidden.",
-        ForetellMode.Observe => "Recommended first step: Foretell learns silently while BMR remains your guide.",
+        ForetellMode.Observe => "BMR presentation with background observation; Foretell combat overlays are hidden. Use Hybrid to see both.",
         ForetellMode.Hybrid => "Shows the complete BMR and Foretell presentations together.",
         ForetellMode.Foretell => "Pure Foretell presentation; legacy BMR encounter hints are hidden.",
         _ => ""
@@ -137,7 +137,7 @@ public sealed partial class ForetellEngine
     {
         if (!_inspectorOpen) return;
         ImGui.SetNextWindowSize(new Vector2(960, 720), ImGuiCond.FirstUseEver);
-        if (!ImGui.Begin("Foretell - Adaptive Encounter Intelligence###ForetellInspector", ref _inspectorOpen))
+        if (!ImGui.Begin(GuideText("Foretell · guides and combat", "Foretell · guides et combat", "Foretell · Anleitungen und Kampf", "Foretell・攻略と戦闘") + "###ForetellInspector", ref _inspectorOpen))
         {
             ImGui.End();
             return;
@@ -151,13 +151,11 @@ public sealed partial class ForetellEngine
             {
                 try
                 {
-                    DrawInspectorTab("Overview", DrawDashboard);
-                    DrawInspectorTab(GuideText("Guides", "Guides", "Anleitungen", "攻略"), DrawGuideManager);
-                    DrawInspectorTab("Knowledge", DrawKnowledgeExplorer);
-                    DrawInspectorTab("Timeline", DrawInspectorTimeline);
-                    DrawInspectorTab("Recordings", DrawInspectorReplay);
-                    DrawInspectorTab("Settings", DrawInspectorSettings);
-                    DrawInspectorTab("Diagnostics", DrawDiagnostics);
+                    DrawInspectorTab(GuideText("Instance", "Instance", "Instanz", "コンテンツ") + "###Instance", DrawInstanceDashboard);
+                    DrawInspectorTab(GuideText("Sources & guides", "Sources et guides", "Quellen und Anleitungen", "原典と攻略") + "###Guides", DrawGuideManager);
+                    DrawInspectorTab(GuideText("Local AI", "IA locale", "Lokale KI", "ローカルAI") + "###LocalAI", DrawGuideModelManager);
+                    DrawInspectorTab(GuideText("Display", "Affichage", "Anzeige", "表示") + "###Display", DrawInspectorSettings);
+                    DrawInspectorTab(GuideText("Advanced", "Avancé", "Erweitert", "詳細") + "###Advanced", DrawGuideAdvanced);
                 }
                 finally { ImGui.EndTabBar(); }
             }
@@ -171,14 +169,8 @@ public sealed partial class ForetellEngine
 
     private void DrawInspectorHeader()
     {
-        if (ImGui.BeginTable("ForetellHeader", 4, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.BordersInnerV))
-        {
-            DrawMetricCell(_cfg.EnableLearning ? "LEARNING" : "READ-ONLY", "Engine");
-            DrawMetricCell(EncounterName(_territory), "Current content");
-            DrawMetricCell(_session.Observations.ToString("N0"), "Observations");
-            DrawMetricCell(_session.MechanicsFinalized.ToString(), "Reviewed");
-            ImGui.EndTable();
-        }
+        ImGui.TextWrapped(_guideDuty != null ? GuideDutyName(_guideDuty) : GuideText("Outside an instance · guides can be prepared in Sources", "Hors instance · préparation possible dans Sources", "Außerhalb einer Instanz · Vorbereitung unter Quellen", "コンテンツ外・原典タブから準備可能"));
+        DrawGuideModelStatus(false);
 
         ImGui.TextUnformatted("Mode");
         ImGui.SameLine();
@@ -189,7 +181,11 @@ public sealed partial class ForetellEngine
         DrawModeButton(ForetellMode.Hybrid);
         ImGui.SameLine();
         DrawModeButton(ForetellMode.Foretell);
+        ImGui.Separator();
+    }
 
+    private void DrawObservedContentSelector()
+    {
         ImGui.Spacing();
         ImGui.TextUnformatted("Content");
         ImGui.SameLine();
@@ -308,7 +304,7 @@ public sealed partial class ForetellEngine
         else if (_captureSession.Rejected > 0) ImGui.TextWrapped("Capture is partial. The ZIP reports missing events; live learning continues independently.");
     }
 
-    private void DrawInspectorSettings()
+    private void DrawLearningSettings()
     {
         var changed = false;
 
@@ -325,6 +321,13 @@ public sealed partial class ForetellEngine
             ImGui.TextDisabled("This optional quota applies to extra raw/readable files. The automatic capture cache has its own fixed limits. Learned memory and exported ZIPs are preserved.");
         }
 
+        if (changed) _cfg.Modified.Fire();
+    }
+
+    private void DrawInspectorSettings()
+    {
+        DrawGuideSettings();
+        var changed = false;
         if (ImGui.CollapsingHeader("Combat presentation", ImGuiTreeNodeFlags.DefaultOpen))
         {
             changed |= ImGui.Checkbox("World-space overlay", ref _cfg.WorldOverlay);
@@ -1243,7 +1246,9 @@ public sealed partial class ForetellEngine
             ImGui.BulletText("Observe raw, semantic and native game evidence.");
             ImGui.BulletText("Correlate signals with effects, movement, statuses and deaths.");
             ImGui.BulletText("Surface guidance only after confidence gates are met.");
-            ImGui.BulletText("Never import hand-authored encounter answers.");
+            ImGui.BulletText("Download instance guides, retain source conditions and associate documented mechanics with the identified boss.");
+            ImGui.BulletText("Guide summaries are local translations, not yet whole-page AI extraction. They cannot invent geometry or targets.");
+            ImGui.BulletText("BMR modules remain separate. Observed memory verifies/fills gaps; it is not replaced by guide prose.");
         }
 
         if (ImGui.CollapsingHeader("Modes", ImGuiTreeNodeFlags.DefaultOpen))
@@ -1285,7 +1290,8 @@ public sealed partial class ForetellEngine
             ImGui.BulletText("foretell-captures/: automatic compressed decision captures, 256 MiB cache / 14 days. Included in Analysis ZIP.");
             ImGui.BulletText("foretell-replays/*.jsonl: optional extra readable recording for advanced diagnostics.");
             ImGui.BulletText("foretell-signal-filters.json: portable per-territory signal exclusions.");
-            ImGui.BulletText("No remote API, private player chat or process pointer addresses.");
+            ImGui.BulletText("Wiki/model downloads use remote HTTPS. Inference is local; game telemetry and guide prompts are not sent to a cloud model.");
+            ImGui.BulletText("Analysis ZIP includes session-bound guide sources, adaptations and model state; no private player chat or process pointer addresses.");
         }
     }
 }

@@ -67,7 +67,7 @@ public sealed partial class ForetellEngine
         if ((now - _guideSampleAt).TotalMilliseconds < 200 && now >= _guideSampleAt) return;
         _guideSampleAt = now; _guideMatches.Clear();
         _guideSummaries?.Update(_liveGuide ?? (_guideDuty == null ? _guides.Snapshot.Document : null), GuideClientLanguage,
-            _cfg.GuideLocalSummaries, inCombat, _cfg.GuideSummaryGpu, _guideFrame.Boss?.Name ?? "");
+            _cfg.GuideLocalSummaries, inCombat, _cfg.GuideSummaryGpu, _guideFrame.Boss?.Name ?? "", _cfg.GuideContextTokens, _cfg.GuideMemoryGiB);
         if (_liveGuide == null || _guideDuty == null) return;
         var player = _ws.Party[PartyState.PlayerSlot];
         List<GuideActorState> actors = [];
@@ -404,10 +404,11 @@ public sealed partial class ForetellEngine
     private void DrawGuideManager()
     {
         if (ImGui.Checkbox(GuideText("Automatic instance guides", "Fiches automatiques en instance", "Automatische Instanzanleitungen", "コンテンツ攻略の自動取得"), ref _cfg.EnableGuides)) _cfg.Modified.Fire();
-        ImGui.SameLine();
-        if (ImGui.Checkbox(GuideText("Checklist overlay", "Checklist en surimpression", "Checklisten-Overlay", "チェックリスト表示"), ref _cfg.GuideSidebar)) _cfg.Modified.Fire();
         if (_guides == null) return;
-        DrawGuideSettings();
+        ImGui.TextWrapped(GuideText("Available provider: Console Games Wiki (English source). Coverage is not guaranteed; other providers are not connected yet. Model controls are in Local AI; overlays are in Display.",
+            "Fournisseur disponible : Console Games Wiki (source anglaise). Couverture non garantie ; les autres sources ne sont pas encore raccordées. Réglages du modèle dans IA locale ; overlays dans Affichage.",
+            "Verfügbare Quelle: Console Games Wiki (Englisch). Keine vollständige Abdeckung; weitere Quellen noch nicht angebunden. Modell unter Lokale KI, Overlays unter Anzeige.",
+            "情報源：Console Games Wiki（英語）。全コンテンツ対応の保証なし。他の情報源は未接続。モデル設定はローカルAI、表示設定は表示タブ。"));
         var snapshot = _guides.Snapshot;
         DrawGuideState(snapshot);
         DrawGuideSummaryProgress(snapshot.Document);

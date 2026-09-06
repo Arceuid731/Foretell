@@ -536,6 +536,10 @@ public sealed partial class ForetellEngine : IDisposable
         changed |= NormalizeFinite(ref _cfg.GuideHeight, 520, 180, 1000);
         changed |= NormalizeFinite(ref _cfg.GuideScale, 1, .7f, 1.8f);
         changed |= NormalizeFinite(ref _cfg.GuideAlertScale, 1.4f, 1, 2.5f);
+        var contextTokens = GuideModelLimits.Context(_cfg.GuideContextTokens);
+        if (_cfg.GuideContextTokens != contextTokens) { _cfg.GuideContextTokens = contextTokens; changed = true; }
+        var memoryGiB = GuideModelLimits.MemoryGiB(_cfg.GuideMemoryGiB);
+        if (_cfg.GuideMemoryGiB != memoryGiB) { _cfg.GuideMemoryGiB = memoryGiB; changed = true; }
         changed |= NormalizeFinite(ref _cfg.GuidePositionX, -1, -1, 1);
         changed |= NormalizeFinite(ref _cfg.GuidePositionY, -1, -1, 1);
         var maxRendered = Math.Clamp(_cfg.MaxRenderedMechanics, 1, 32);

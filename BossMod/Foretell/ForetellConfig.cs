@@ -77,6 +77,8 @@ public sealed class ForetellConfig : ConfigNode
     public bool GuideCentralAlerts = true;
     public bool GuideLocalSummaries = true;
     public bool GuideSummaryGpu = true;
+    public int GuideContextTokens = GuideModelLimits.DefaultContext;
+    public int GuideMemoryGiB = GuideModelLimits.DefaultMemoryGiB;
     public float GuidePositionX = -1;
     public float GuidePositionY = -1;
     public float GuideWidth = 380;

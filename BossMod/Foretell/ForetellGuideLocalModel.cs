@@ -15,11 +15,13 @@ internal sealed record GuideModelAsset(string Name, string Url, long Bytes, stri
 
 internal interface IGuideSummaryModel : IDisposable
 {
+    GuideModelRuntime Runtime { get; }
     Task Start(Action<GuideModelProgress> progress, CancellationToken cancellation);
     Task<string> Summarize(string source, GuideLanguage language, CancellationToken cancellation);
 }
 
-internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGuideSummaryModel
+internal sealed class ForetellGuideLocalModel(string directory, bool gpu, int contextTokens = GuideModelLimits.DefaultContext,
+    int memoryGiB = GuideModelLimits.DefaultMemoryGiB) : IGuideSummaryModel
 {
     internal const string Revision = "qwen3-1.7b-q8-b10809-v2";
     internal static readonly GuideModelAsset Model = new("Qwen3-1.7B-Q8_0.gguf",
@@ -35,7 +37,40 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
     private GuideProcessBudget? _budget;
     private HttpClient? _client;
     private bool _useGpu = gpu;
+    private readonly int _contextTokens = GuideModelLimits.Context(contextTokens);
+    private volatile GuideModelRuntime _runtime = new();
+    public GuideModelRuntime Runtime => _runtime;
     internal int? ProcessID => _process?.Id;
+
+    private void UpdateRuntime(Func<GuideModelRuntime, GuideModelRuntime> update)
+    {
+        while (true)
+        {
+            var previous = _runtime;
+            if (Interlocked.CompareExchange(ref _runtime, update(previous), previous) == previous) return;
+        }
+    }
+
+    private void Stage(GuideModelStage stage)
+    {
+        while (true)
+        {
+            var previous = _runtime;
+            if (previous.ProcessID == null && stage is GuideModelStage.Loaded or GuideModelStage.Tokenizing or GuideModelStage.Generating) return;
+            if (Interlocked.CompareExchange(ref _runtime, previous with { Stage = stage }, previous) == previous) return;
+        }
+    }
+
+    private void ProcessExited(int processID)
+    {
+        while (true)
+        {
+            var previous = _runtime;
+            if (previous.ProcessID != processID) return;
+            var next = previous with { Stage = previous.Stage == GuideModelStage.Stopping ? GuideModelStage.Unloaded : GuideModelStage.Failed, ProcessID = null };
+            if (Interlocked.CompareExchange(ref _runtime, next, previous) == previous) return;
+        }
+    }
 
     internal static async Task<bool> Verify(string path, GuideModelAsset asset, CancellationToken cancellation)
     {
@@ -48,6 +83,7 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
     {
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, asset.Name);
+        Stage(GuideModelStage.Verifying);
         progress(new("Verifying " + asset.Name));
         if (await Verify(path, asset, cancellation).ConfigureAwait(false)) return path;
         var temporary = path + ".part";
@@ -55,6 +91,7 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
         if (received > asset.Bytes) { File.Delete(temporary); received = 0; }
         if (received < asset.Bytes)
         {
+            Stage(GuideModelStage.Downloading);
             using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 5 }) { Timeout = Timeout.InfiniteTimeSpan };
             http.DefaultRequestHeaders.UserAgent.ParseAdd("Foretell/0.12");
             using var request = new HttpRequestMessage(HttpMethod.Get, asset.Url);
@@ -91,6 +128,7 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
             }
         }
         progress(new("Verifying " + asset.Name, received, asset.Bytes));
+        Stage(GuideModelStage.Verifying);
         if (!await Verify(temporary, asset, cancellation).ConfigureAwait(false))
         { File.Delete(temporary); throw new InvalidDataException("Model asset SHA256 mismatch."); }
         File.Move(temporary, path, true);
@@ -128,6 +166,7 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
         var runtime = _useGpu ? Vulkan : Cpu;
         var archive = await Download(runtime, progress, cancellation).ConfigureAwait(false);
         var model = await Download(Model, progress, cancellation).ConfigureAwait(false);
+        UpdateRuntime(previous => previous with { VerifiedThisSession = true, ContextTokens = _contextTokens, Backend = _useGpu ? "Vulkan" : "CPU" });
         cancellation.ThrowIfCancellationRequested();
         var executable = ExtractRuntime(archive, Path.Combine(directory, _useGpu ? "vulkan-b10809" : "cpu-b10809"));
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -141,7 +180,7 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
             WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true, RedirectStandardError = true
         };
         foreach (var argument in new[] { "--model", model, "--host", "127.0.0.1", "--port", port.ToString(), "--api-key", key,
-            "--ctx-size", "4096", "--parallel", "1", "--threads", "2", "--threads-batch", "2", "--threads-http", "1", "--batch-size", "128", "--ubatch-size", "128",
+            "--ctx-size", _contextTokens.ToString(System.Globalization.CultureInfo.InvariantCulture), "--no-context-shift", "--parallel", "1", "--threads", "2", "--threads-batch", "2", "--threads-http", "1", "--batch-size", "128", "--ubatch-size", "128",
             "--n-gpu-layers", _useGpu ? "29" : "0", "--no-mmap", "--no-warmup", "--no-webui", "--no-slots", "--reasoning", "off",
             "--chat-template-kwargs", "{\"enable_thinking\":false}" }) start.ArgumentList.Add(argument);
         foreach (var variable in start.Environment.Keys.Where(name => name.StartsWith("LLAMA_", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(variable);
@@ -149,7 +188,11 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
         try
         {
             _process = Process.Start(start) ?? throw new InvalidOperationException("Cannot start local model.");
-            _budget = new(_process);
+            var processID = _process.Id;
+            UpdateRuntime(previous => previous with { Stage = GuideModelStage.Loading, ProcessID = processID, PromptTokens = null });
+            _process.Exited += (_, _) => ProcessExited(processID);
+            _process.EnableRaisingEvents = true;
+            _budget = new(_process, GuideModelLimits.MemoryGiB(memoryGiB));
             _process.PriorityClass = ProcessPriorityClass.BelowNormal;
             _process.OutputDataReceived += (_, _) => { };
             _process.ErrorDataReceived += (_, _) => { };
@@ -171,6 +214,8 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
                 catch (HttpRequestException) { }
                 await Task.Delay(250, deadline.Token).ConfigureAwait(false);
             }
+            if (_process.HasExited) throw new InvalidOperationException("Local model exited during startup.");
+            Stage(GuideModelStage.Loaded);
         }
         catch (Exception error) when (_useGpu && error is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
@@ -183,7 +228,7 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
 
     public async Task<string> Summarize(string source, GuideLanguage language, CancellationToken cancellation)
     {
-        if (source.Length is 0 or > 7000 || _client == null) throw new InvalidDataException("Summary source exceeds context budget.");
+        if (source.Length == 0 || _client == null) throw new InvalidDataException("Summary source or local model unavailable.");
         var body = new
         {
             messages = new[]
@@ -197,9 +242,18 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
                     "マーカー対象ならグループから離れ、対象でなければ集合。マークされた側をボスへ向け、ボスへは移動しない。") }) },
                 new { role = "user", content = "Translate this entire source into " + language + ":\n<source>\n" + source + "\n</source>" }
             },
-            temperature = 0, max_tokens = 600, stream = false,
+            temperature = 0, max_tokens = GuideModelLimits.OutputTokens, stream = false,
             response_format = new { type = "json_object", schema = new { type = "object", properties = new { summary = new { type = "string", maxLength = 1600 } }, required = new[] { "summary" }, additionalProperties = false } }
         };
+        Stage(GuideModelStage.Tokenizing);
+        var promptTokens = await CountPromptTokens(_client, body.messages, cancellation).ConfigureAwait(false);
+        UpdateRuntime(previous => previous with { PromptTokens = promptTokens });
+        if (!GuideModelLimits.Fits(promptTokens, _contextTokens))
+        {
+            Stage(GuideModelStage.Loaded);
+            throw new InvalidDataException($"Context overflow: {promptTokens} prompt + {GuideModelLimits.OutputTokens + GuideModelLimits.TemplateReserve} reserved > {_contextTokens}. Source retained without truncation.");
+        }
+        Stage(GuideModelStage.Generating);
         using var request = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
         using var response = await _client.PostAsync("v1/chat/completions", request, cancellation).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
@@ -219,17 +273,52 @@ internal sealed class ForetellGuideLocalModel(string directory, bool gpu) : IGui
         if (choice.GetProperty("finish_reason").GetString() != "stop") throw new InvalidDataException("Truncated summary rejected.");
         using var parsed = JsonDocument.Parse(choice.GetProperty("message").GetProperty("content").GetString()!);
         var summary = parsed.RootElement.GetProperty("summary").GetString() ?? "";
+        Stage(GuideModelStage.Loaded);
         if (!GuideSummaryValidation.Accept(summary, source) || !GuideSummaryValidation.LanguageAndConditions(summary, source, language))
             throw new InvalidDataException("Ungrounded or untranslated summary rejected.");
         return summary;
     }
 
+    internal static async Task<int> CountPromptTokens(HttpClient client, object messages, CancellationToken cancellation)
+    {
+        using var template = await PostJson(client, "apply-template", new { messages, add_generation_prompt = true }, 2 * 1024 * 1024, cancellation).ConfigureAwait(false);
+        var prompt = template.RootElement.GetProperty("prompt").GetString();
+        if (string.IsNullOrEmpty(prompt)) throw new InvalidDataException("Empty model chat template.");
+        using var tokens = await PostJson(client, "tokenize", new { content = prompt, add_special = true, parse_special = true }, 8 * 1024 * 1024, cancellation).ConfigureAwait(false);
+        return tokens.RootElement.GetProperty("tokens").GetArrayLength();
+    }
+
+    private static async Task<JsonDocument> PostJson(HttpClient client, string endpoint, object body, int limit, CancellationToken cancellation)
+    {
+        using var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint) { Content = content };
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellation).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength > limit) throw new InvalidDataException("Oversized local tokenizer response.");
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellation).ConfigureAwait(false);
+        using var output = new MemoryStream();
+        var buffer = new byte[8192];
+        while (true)
+        {
+            var read = await stream.ReadAsync(buffer, cancellation).ConfigureAwait(false);
+            if (read == 0) break;
+            if (output.Length + read > limit) throw new InvalidDataException("Oversized local tokenizer response.");
+            output.Write(buffer, 0, read);
+        }
+        return JsonDocument.Parse(output.ToArray());
+    }
+
     public void Dispose()
     {
+        Stage(GuideModelStage.Stopping);
         _client?.Dispose(); _client = null;
         try { if (_process is { HasExited: false }) _process.Kill(true); }
         catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception) { }
-        finally { _budget?.Dispose(); _budget = null; _process?.Dispose(); _process = null; }
+        finally
+        {
+            _budget?.Dispose(); _budget = null; _process?.Dispose(); _process = null;
+            UpdateRuntime(previous => previous with { Stage = GuideModelStage.Unloaded, ProcessID = null });
+        }
     }
 }
 
@@ -262,10 +351,10 @@ internal sealed class GuideProcessBudget : IDisposable
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint handle);
     private nint _job;
 
-    public unsafe GuideProcessBudget(Process process)
+    public unsafe GuideProcessBudget(Process process, int memoryGiB = GuideModelLimits.DefaultMemoryGiB)
     {
         _job = CreateJobObjectW(0, 0);
-        var limits = new ExtendedLimits { Basic = new() { Flags = 0x2000 | 0x100 | 0x8, ActiveProcesses = 1 }, ProcessMemory = unchecked((nuint)(4L * 1024 * 1024 * 1024)) };
+        var limits = new ExtendedLimits { Basic = new() { Flags = 0x2000 | 0x100 | 0x8, ActiveProcesses = 1 }, ProcessMemory = unchecked((nuint)(GuideModelLimits.MemoryGiB(memoryGiB) * 1024L * 1024 * 1024)) };
         var cpu = new CpuLimits { Flags = 1 | 4, Rate = 1500 };
         if (_job == 0 || !SetInformationJobObject(_job, 9, (nint)(&limits), (uint)sizeof(ExtendedLimits))
             || !SetInformationJobObject(_job, 15, (nint)(&cpu), (uint)sizeof(CpuLimits)) || !AssignProcessToJobObject(_job, process.Handle))

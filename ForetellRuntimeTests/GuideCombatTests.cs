@@ -87,6 +87,7 @@ internal static class GuideCombatTests
         }
         finally { Directory.Delete(directory, true); }
         SummaryWorker().GetAwaiter().GetResult();
+        GuideModelStateTests.Run();
         Console.WriteLine("Guide boss lifecycle, synchronized decision bridge, conditional rules, summary guardrails, measured ETA and archive safety passed.");
     }
 
@@ -140,9 +141,11 @@ internal static class GuideCombatTests
                 service.Update(document, GuideLanguage.French, true, true, false, "Boss");
                 await WaitFor(() => service.Snapshot?.Stage == "PausedInCombat");
                 Check(fake.Started == 0, "Model ran in combat");
+                Check(service.Runtime is { Stage: GuideModelStage.Unloaded, ProcessID: null }, "Queued/paused work reports a loaded model");
                 service.Update(document, GuideLanguage.French, true, false, false, "Boss");
                 await WaitFor(() => service.Snapshot?.Stage == "Ready");
                 Check(service.Snapshot?.Summaries.Count == 2, "Progressive local summary or context-only section missing");
+                Check(service.Runtime is { Stage: GuideModelStage.Unloaded, ProcessID: null }, "Finished preparation kept model loaded");
                 service.Update(null, GuideLanguage.French, false, false, false, "");
                 Check(service.Snapshot == null, "Disabled summaries remained attached to a duty");
                 service.Dispose();
@@ -153,16 +156,19 @@ internal static class GuideCombatTests
                 service.Update(document, GuideLanguage.French, true, true, false, "Boss");
                 await WaitFor(() => service.Snapshot?.Stage == "Ready");
                 Check(service.Snapshot?.Summaries.Count == 2, "Prepared summary unavailable offline/in combat");
+                Check(service.Runtime is { Stage: GuideModelStage.Unloaded, ProcessID: null }, "Cache-ready confused with model-loaded");
             }
             var blocked = new FakeModel { Block = true };
             var changed = document with { SourceHash = GuideNames.Hash("new-revision") };
             using (var service = new ForetellGuideSummaries(directory, _ => blocked))
             {
                 service.Update(changed, GuideLanguage.French, true, false, false, "Boss");
-                await WaitFor(() => blocked.Started != 0);
+                await WaitFor(() => service.Runtime.Stage == GuideModelStage.Generating);
+                Check(service.Runtime.ProcessID == 123, "Active inference has no runtime process identity");
                 service.Update(changed, GuideLanguage.French, true, true, false, "Boss");
                 await WaitFor(() => service.Snapshot?.Stage == "PausedInCombat");
                 Check(blocked.Canceled != 0, "Combat did not cancel active inference");
+                Check(service.Runtime is { Stage: GuideModelStage.Unloaded, ProcessID: null }, "Combat pause did not clear process activity");
                 service.Update(document, GuideLanguage.French, true, false, false, "Boss");
                 await WaitFor(() => service.Snapshot?.SourceHash == document.SourceHash && service.Snapshot.Stage == "Ready");
                 service.Dispose();
@@ -189,18 +195,60 @@ internal static class GuideCombatTests
                 await WaitFor(() => service.Snapshot?.Stage == "Ready");
                 Check(service.Snapshot?.Summaries.Count == 1 && narrative.MechanicCount == 0, "Narrative summary lost offline/in combat or became a named mechanic");
             }
+            var longSource = string.Concat(Enumerable.Repeat("Tankbuster. ", 2000));
+            var longDocument = narrative with { SourceHash = GuideNames.Hash(longSource), Bosses = [new("Long boss", "", [new("", longSource, [])])] };
+            var longModel = new FakeModel { Reject = true };
+            using (var service = new ForetellGuideSummaries(directory, _ => longModel))
+            {
+                service.Update(longDocument, GuideLanguage.French, true, false, false, "Long boss");
+                await WaitFor(() => service.Snapshot?.Stage == "ReadyWithUnresolved");
+                Check(longModel.SourceLength == longSource.Length && longModel.SourceLength > 7000, "Worker skipped or clipped a long excerpt before the model tokenizer");
+                Check(service.Snapshot?.LastIssue == "Synthetic context overflow" && service.Snapshot.Summaries.Count == 0, "Rejected excerpt disappeared without an explicit reason");
+                longModel.Reject = false;
+                service.Update(longDocument, GuideLanguage.French, true, false, false, "Long boss", 32768, 8);
+                await WaitFor(() => service.Snapshot?.Stage == "Ready");
+                Check(longModel.Started == 2 && service.Snapshot?.Summaries.Count == 1, "Changing context did not retry unresolved work");
+                service.Dispose();
+                await service.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+                Check(service.Runtime is { Stage: GuideModelStage.Unloaded, ProcessID: null }, "Disposed worker reports an active process");
+            }
+            var replacing = new FakeModel { Block = true };
+            using (var service = new ForetellGuideSummaries(directory, _ => replacing))
+            {
+                service.Update(changed, GuideLanguage.French, true, false, false, "Boss", 8192);
+                await WaitFor(() => service.Runtime.Stage == GuideModelStage.Generating);
+                service.Update(changed, GuideLanguage.French, true, false, false, "Boss", 16384);
+                await WaitFor(() => replacing.Canceled > 0 && replacing.Started >= 2 && service.Runtime.Stage == GuideModelStage.Generating);
+                service.Update(null, GuideLanguage.French, false, false, false, "Boss");
+                await WaitFor(() => service.Runtime is { Stage: GuideModelStage.Unloaded, ProcessID: null });
+                Check(service.Snapshot == null, "Disabled worker left guide results attached");
+                service.Dispose();
+                await service.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+            }
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }
 
     private sealed class FakeModel : IGuideSummaryModel
     {
+        private volatile GuideModelRuntime _runtime = new();
+        public GuideModelRuntime Runtime => _runtime;
         public int Started;
         public int Canceled;
         public bool Block;
-        public Task Start(Action<GuideModelProgress> progress, CancellationToken cancellation) { Interlocked.Increment(ref Started); return Task.CompletedTask; }
+        public bool Reject;
+        public int SourceLength;
+        public Task Start(Action<GuideModelProgress> progress, CancellationToken cancellation)
+        {
+            _runtime = new(GuideModelStage.Loaded, 123, "Fake", GuideModelLimits.DefaultContext);
+            Interlocked.Increment(ref Started);
+            return Task.CompletedTask;
+        }
         public async Task<string> Summarize(string source, GuideLanguage language, CancellationToken cancellation)
         {
+            _runtime = _runtime with { Stage = GuideModelStage.Generating };
+            SourceLength = source.Length;
+            if (Reject) throw new InvalidDataException("Synthetic context overflow");
             if (Block)
             {
                 try { await Task.Delay(Timeout.Infinite, cancellation); }
@@ -208,7 +256,7 @@ internal static class GuideCombatTests
             }
             return "Coup puissant sur le tank.";
         }
-        public void Dispose() { }
+        public void Dispose() { _runtime = _runtime with { Stage = GuideModelStage.Unloaded, ProcessID = null }; }
     }
 
     public static void ModelSmoke(string directory, bool gpu) => ModelSmokeAsync(directory, gpu).GetAwaiter().GetResult();

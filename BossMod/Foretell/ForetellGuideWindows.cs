@@ -47,6 +47,7 @@ public sealed partial class ForetellEngine
             ImGui.TextWrapped(GuideText("Stays open until dismissed; hidden during combat.", "Reste ouvert jusqu’à fermeture ; masqué pendant le combat.",
                 "Bleibt bis zum Schließen offen; im Kampf ausgeblendet.", "閉じるまで表示。戦闘中は一時的に非表示。"));
             DrawGuideState(snapshot);
+            DrawGuideModelStatus(false);
             DrawGuideSummaryProgress();
             if (snapshot.Document is { } document)
             {
@@ -58,9 +59,9 @@ public sealed partial class ForetellEngine
                     ImGui.TextWrapped(GuideBossName(boss));
                     DrawGuideBossSummary(boss);
                 }
-                ImGui.TextWrapped(GuideText("The checklist follows the upcoming boss, then only the boss identified in combat.", "La checklist suit le boss à venir, puis uniquement le boss identifié en combat.",
+                ImGui.TextWrapped(GuideText("The mechanic list follows the upcoming boss, then only the boss identified in combat.", "La liste des mécaniques suit le boss à venir, puis uniquement le boss identifié en combat.",
                     "Die Checkliste folgt dem nächsten, dann dem im Kampf erkannten Boss.", "チェックリストは次のボス、戦闘中は特定されたボスのみ表示。"));
-                if (ImGui.Button(GuideText("Show checklist", "Afficher la checklist", "Checkliste anzeigen", "チェックリストを表示")))
+                if (ImGui.Button(GuideText("Show mechanics", "Afficher les mécaniques", "Mechaniken anzeigen", "ギミックを表示")))
                 { _cfg.GuideSidebar = true; _cfg.Modified.Fire(); open = false; }
             }
             if (snapshot.State is GuideState.Failed or GuideState.Offline
@@ -87,16 +88,11 @@ public sealed partial class ForetellEngine
 
     private void DrawGuideSettings()
     {
-        if (!ImGui.CollapsingHeader(GuideText("Checklist and alerts", "Checklist et alertes", "Checkliste und Hinweise", "チェックリストと警告"))) return;
-        var changed = ImGui.Checkbox(GuideText("Entry popup", "Panneau à l’entrée", "Fenster beim Betreten", "入場時の案内"), ref _cfg.GuideEntryPopup);
-        changed |= ImGui.Checkbox(GuideText("Unlock checklist (drag / resize)", "Déverrouiller la checklist (déplacer / redimensionner)", "Checkliste entsperren (bewegen / skalieren)", "チェックリストの移動・サイズ変更を許可"), ref _cfg.GuideChecklistUnlocked);
+        if (!ImGui.CollapsingHeader(GuideText("Mechanic list and central alerts", "Liste des mécaniques et alertes centrales", "Mechanikliste und Warnungen", "ギミック一覧と中央警告"), ImGuiTreeNodeFlags.DefaultOpen)) return;
+        var changed = ImGui.Checkbox(GuideText("Mechanic list overlay", "Liste des mécaniques en surimpression", "Mechaniklisten-Overlay", "ギミック一覧表示"), ref _cfg.GuideSidebar);
+        changed |= ImGui.Checkbox(GuideText("Entry popup", "Panneau à l’entrée", "Fenster beim Betreten", "入場時の案内"), ref _cfg.GuideEntryPopup);
+        changed |= ImGui.Checkbox(GuideText("Unlock mechanic list (drag / resize)", "Déverrouiller la liste (déplacer / redimensionner)", "Mechanikliste entsperren (bewegen / skalieren)", "ギミック一覧の移動・サイズ変更を許可"), ref _cfg.GuideChecklistUnlocked);
         changed |= ImGui.Checkbox(GuideText("Central guide alerts", "Alertes centrales du guide", "Zentrale Guide-Warnungen", "攻略の中央警告"), ref _cfg.GuideCentralAlerts);
-        changed |= ImGui.Checkbox(GuideText("Local translated summaries", "Résumés traduits localement", "Lokal übersetzte Zusammenfassungen", "ローカル翻訳要約"), ref _cfg.GuideLocalSummaries);
-        changed |= ImGui.Checkbox(GuideText("Vulkan GPU (disable for CPU mode)", "GPU Vulkan (décocher pour le CPU)", "Vulkan-GPU (deaktivieren für CPU)", "Vulkan GPU（オフでCPU）"), ref _cfg.GuideSummaryGpu);
-        ImGui.TextWrapped(GuideText("One-time model download: 1.83 GB + runtime (18–35 MB). Isolated process: 2 CPU threads, 15% total CPU cap, 4 GiB committed RAM cap, 4096-token context. Stops inference in combat. Prepared cache needs no model or network. AI summaries never define live geometry or targeting.",
-            "Téléchargement initial : modèle de 1,83 Go + moteur (18–35 Mo). Processus isolé : 2 threads CPU, plafond de 15 % du CPU total, 4 Gio de mémoire engagée, contexte de 4096 tokens. Inférence arrêtée en combat. Le cache préparé fonctionne sans modèle ni réseau. Les résumés IA ne déterminent ni zones ni cibles en direct.",
-            "Einmalig: 1,83 GB Modell + 18–35 MB Laufzeit. Isoliert: 2 CPU-Threads, 15% Gesamt-CPU, 4 GiB zugesicherter RAM, 4096 Token. Keine Inferenz im Kampf. Cache funktioniert offline. KI-Zusammenfassungen bestimmen keine Live-Geometrie oder Ziele.",
-            "初回：モデル1.83 GB＋実行環境18～35 MB。別プロセス：CPU 2スレッド、全CPUの15%、コミットRAM 4 GiB、4096トークン上限。戦闘中は推論停止。キャッシュはオフライン対応。AI要約は範囲や対象を決定しません。"));
         changed |= ImGui.SliderFloat(GuideText("Width", "Largeur", "Breite", "幅"), ref _cfg.GuideWidth, 260, 1000, "%.0f");
         changed |= ImGui.SliderFloat(GuideText("Maximum height (automatic when locked)", "Hauteur maximale (automatique une fois verrouillée)", "Maximale Höhe (gesperrt automatisch)", "最大高さ（ロック中は自動）"), ref _cfg.GuideHeight, 180, 1000, "%.0f");
         changed |= ImGui.SliderFloat(GuideText("Text scale", "Échelle du texte", "Textgröße", "文字倍率"), ref _cfg.GuideScale, .7f, 1.8f, "%.2f");
@@ -110,7 +106,6 @@ public sealed partial class ForetellEngine
         { _cfg.GuidePositionX = _cfg.GuidePositionY = -1; _cfg.GuideWidth = 380; _cfg.GuideHeight = 520; _cfg.GuideScale = 1; _guideChecklistWasUnlocked = false; changed = true; }
         if (_guideDuty != null && ImGui.Button(GuideText("Show entry summary again", "Revoir le résumé d’entrée", "Zusammenfassung erneut anzeigen", "入場時の要約を再表示")))
         { _guideEntryDismissed = false; }
-        if (!_guideCombat && ImGui.Button(GuideText("Retry unfinished summaries", "Relancer les résumés non préparés", "Fehlende Zusammenfassungen erneut versuchen", "未完了の要約を再試行"))) _guideSummaries?.Retry();
         if (changed) { _guideChecklistWasUnlocked = false; _cfg.Modified.Fire(); }
     }
 
@@ -136,6 +131,7 @@ public sealed partial class ForetellEngine
             _ => GuideText("Local summaries unavailable · source retained", "Résumés locaux indisponibles · source conservée", "Lokale Zusammenfassungen nicht verfügbar · Quelle bleibt", "ローカル要約不可・原文は保持")
         };
         ImGui.TextWrapped(stage + $" · {snapshot.Completed}/{snapshot.Total}");
+        if (snapshot.LastIssue is { } issue) ImGui.TextWrapped(GuideText("Unresolved excerpt: ", "Passage non préparé : ", "Ungeklärter Abschnitt: ", "未準備の文章：") + issue);
         if (snapshot.Total > 0) ImGui.ProgressBar((float)snapshot.Completed / snapshot.Total, new(-1, 0));
         if (snapshot.RemainingSeconds is { } remaining) ImGui.TextDisabled(GuideText($"Estimate: ~{remaining:F0}s outside combat", $"Estimation : ~{remaining:F0}s hors combat", $"Schätzung: ~{remaining:F0}s außerhalb des Kampfes", $"推定残り約{remaining:F0}秒（非戦闘中）"));
         if (snapshot.Transfer is { } transfer)

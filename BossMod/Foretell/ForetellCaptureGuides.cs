@@ -21,11 +21,17 @@ internal sealed record GuideCaptureOptions(ForetellMode Mode, bool Enabled, bool
     public float VisualThreshold { get; init; }
     public float WarningThreshold { get; init; }
     public GuideCaptureLayout? Layout { get; init; }
+    public int ContextTokens { get; init; }
+    public int MemoryGiB { get; init; }
 }
 internal sealed record GuideCaptureLayout(bool Unlocked, float PositionX, float PositionY, float Width, float Height,
     uint TextColor, uint ActiveColor, uint ResolvedColor, uint UnresolvedColor, float AlertPositionX, float AlertPositionY);
 internal sealed record GuideCaptureState(string State, string Error, bool Cached, double ElapsedSeconds, string SummaryStage,
-    int SummariesCompleted, int SummariesTotal, string? Boss, bool Upcoming, bool Ambiguous, bool Combat);
+    int SummariesCompleted, int SummariesTotal, string? Boss, bool Upcoming, bool Ambiguous, bool Combat)
+{
+    public GuideModelRuntime? ModelRuntime { get; init; }
+    public string? SummaryIssue { get; init; }
+}
 internal sealed record GuideCaptureInput(DateTime At, string SessionID, uint TerritoryID, GuideDuty? Duty, GuideLanguage Language,
     GuideDocument? Document, GuideCaptureState State, GuideCaptureOptions Options, GuideAdaptedBoss[] Adapted, GuideCapturedSignal[] Signals)
 {

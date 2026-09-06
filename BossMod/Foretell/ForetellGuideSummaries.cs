@@ -6,13 +6,14 @@ using System.Threading.Channels;
 namespace BossMod.Foretell;
 
 internal sealed record GuideSummarySnapshot(string SourceHash, GuideLanguage Language, ImmutableDictionary<string, string> Summaries,
-    string Stage, int Completed, int Total, GuideModelProgress? Transfer = null, double? RemainingSeconds = null);
+    string Stage, int Completed, int Total, GuideModelProgress? Transfer = null, double? RemainingSeconds = null, string? LastIssue = null);
 
 internal sealed class ForetellGuideSummaries : IDisposable
 {
-    private sealed record Request(GuideDocument Document, GuideLanguage Language, bool Gpu, CancellationTokenSource Cancellation)
+    private sealed record Request(GuideDocument Document, GuideLanguage Language, bool Gpu, int ContextTokens, int MemoryGiB, CancellationTokenSource Cancellation)
     {
         public bool Finished;
+        public string? LastIssue;
     }
     private sealed record Cache(string Revision, string SourceHash, GuideLanguage Language, Dictionary<string, string> Summaries);
     private readonly string _directory;
@@ -26,8 +27,11 @@ internal sealed class ForetellGuideSummaries : IDisposable
     private volatile string _preferredBoss = "";
     private bool _disposed;
     private readonly Task _worker;
-    private readonly Func<bool, IGuideSummaryModel> _modelFactory;
+    private readonly Func<bool, IGuideSummaryModel>? _modelFactory;
+    private volatile IGuideSummaryModel? _activeModel;
+    private volatile GuideModelRuntime _lastRuntime = new();
     public GuideSummarySnapshot? Snapshot => _snapshot;
+    public GuideModelRuntime Runtime => _activeModel?.Runtime ?? _lastRuntime;
     internal Task Completion => _worker;
     internal static string Key(GuideBoss boss, GuidePhase phase, GuideMechanic mechanic) => GuideNames.Hash(boss.Name + "\n" + phase.Name + "\n" + phase.ContextHash + "\n" + mechanic.Name + "\n" + mechanic.TextHash);
     internal static string ContextKey(GuideBoss boss, GuidePhase phase) => GuideNames.Hash("context\n" + boss.Name + "\n" + phase.Name + "\n" + phase.ContextHash);
@@ -36,12 +40,15 @@ internal sealed class ForetellGuideSummaries : IDisposable
     public ForetellGuideSummaries(string directory, Func<bool, IGuideSummaryModel>? modelFactory = null)
     {
         _directory = directory;
-        _modelFactory = modelFactory ?? (gpu => new ForetellGuideLocalModel(Path.Combine(directory, "runtime"), gpu));
+        _modelFactory = modelFactory;
         _worker = Task.Run(Run);
     }
 
-    public void Update(GuideDocument? document, GuideLanguage language, bool enabled, bool combat, bool gpu, string preferredBoss)
+    public void Update(GuideDocument? document, GuideLanguage language, bool enabled, bool combat, bool gpu, string preferredBoss,
+        int contextTokens = GuideModelLimits.DefaultContext, int memoryGiB = GuideModelLimits.DefaultMemoryGiB)
     {
+        contextTokens = GuideModelLimits.Context(contextTokens);
+        memoryGiB = GuideModelLimits.MemoryGiB(memoryGiB);
         lock (_gate)
         {
             if (_disposed) return;
@@ -57,10 +64,11 @@ internal sealed class ForetellGuideSummaries : IDisposable
                 CancelLatest(); _latest = null; _snapshot = null;
                 return;
             }
-            if (_latest is { } latest && latest.Document.SourceHash == document.SourceHash && latest.Document.Duty == document.Duty && latest.Language == language && latest.Gpu == gpu) return;
+            if (_latest is { } latest && latest.Document.SourceHash == document.SourceHash && latest.Document.Duty == document.Duty && latest.Language == language
+                && latest.Gpu == gpu && latest.ContextTokens == contextTokens && latest.MemoryGiB == memoryGiB) return;
             CancelLatest();
             if (_queue.Reader.TryRead(out var dropped)) dropped.Cancellation.Dispose();
-            _latest = new(document, language, gpu, CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token));
+            _latest = new(document, language, gpu, contextTokens, memoryGiB, CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token));
             _snapshot = new(document.SourceHash, language, ImmutableDictionary<string, string>.Empty, "Queued", 0, ItemCount(document));
             _queue.Writer.TryWrite(_latest);
         }
@@ -87,7 +95,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
     {
         lock (_gate)
             if (!_disposed && _latest == request && !request.Cancellation.IsCancellationRequested)
-                _snapshot = new(request.Document.SourceHash, request.Language, summaries, stage, completed, total, transfer, remaining);
+                _snapshot = new(request.Document.SourceHash, request.Language, summaries, stage, completed, total, transfer, remaining, request.LastIssue);
     }
 
     private string CachePath(Request request) => Path.Combine(_directory, request.Document.Duty.Key + "-" + request.Language + ".json");
@@ -145,7 +153,8 @@ internal sealed class ForetellGuideSummaries : IDisposable
                     var skipped = 0;
                     var durations = new List<double>();
                     if (pending.Count == 0) { Publish(request, summaries, "Ready", summaries.Count, entries.Length); continue; }
-                    using var model = _modelFactory(request.Gpu);
+                    var model = _modelFactory?.Invoke(request.Gpu) ?? new ForetellGuideLocalModel(Path.Combine(_directory, "runtime"), request.Gpu, request.ContextTokens, request.MemoryGiB);
+                    _activeModel = model;
                     while (pending.Count > 0)
                     {
                         request.Cancellation.Token.ThrowIfCancellationRequested();
@@ -164,13 +173,12 @@ internal sealed class ForetellGuideSummaries : IDisposable
                             {
                                 var entry = pending.FirstOrDefault(entry => entry.Boss == _preferredBoss);
                                 if (entry.Key == null) entry = pending[0];
-                                if (entry.Source.Length > 7000) { pending.Remove(entry); ++skipped; continue; }
                                 await model.Start(transfer => Publish(request, summaries, "InstallingOrStarting", summaries.Count + skipped, entries.Length, transfer), active.Token).ConfigureAwait(false);
                                 Publish(request, summaries, "Summarizing", summaries.Count + skipped, entries.Length,
                                     remaining: durations.Count == 0 ? null : durations.Average() * pending.Count);
                                 var watch = System.Diagnostics.Stopwatch.StartNew();
                                 try { summaries = summaries.SetItem(entry.Key, await model.Summarize(entry.Source, request.Language, active.Token).ConfigureAwait(false)); }
-                                catch (InvalidDataException) { ++skipped; }
+                                catch (InvalidDataException error) { ++skipped; request.LastIssue = error.Message.Length <= 400 ? error.Message : error.Message[..400]; }
                                 durations.Add(watch.Elapsed.TotalSeconds);
                                 pending.Remove(entry);
                                 try { Write(request, summaries); }
@@ -180,12 +188,23 @@ internal sealed class ForetellGuideSummaries : IDisposable
                             catch (OperationCanceledException) when (!request.Cancellation.IsCancellationRequested && active.IsCancellationRequested) { model.Dispose(); }
                         }
                     }
+                    model.Dispose();
                     Publish(request, summaries, skipped == 0 ? "Ready" : "ReadyWithUnresolved", summaries.Count + skipped, entries.Length);
                 }
                 catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
-                catch (Exception error) { Publish(request, summaries, "Unavailable: " + error.GetType().Name, summaries.Count, ItemCount(request.Document)); }
+                catch (Exception error)
+                {
+                    request.LastIssue = error is InvalidDataException ? error.Message[..Math.Min(error.Message.Length, 400)] : error.GetType().Name;
+                    Publish(request, summaries, "Unavailable: " + error.GetType().Name, summaries.Count, ItemCount(request.Document));
+                }
                 finally
                 {
+                    if (_activeModel is { } model)
+                    {
+                        model.Dispose();
+                        _lastRuntime = model.Runtime;
+                        _activeModel = null;
+                    }
                     lock (_gate)
                     {
                         request.Finished = true;

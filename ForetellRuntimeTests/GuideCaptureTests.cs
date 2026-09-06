@@ -13,8 +13,9 @@ internal static class GuideCaptureTests
         var boss = new GuideBoss("Boss", "Boss", [phase]);
         var document = new GuideDocument(1, new(42, session.Territory, "Fixture"), "Fixture", 123, DateTime.UtcNow, GuideNames.Hash("fixture-source"), [boss]);
         return new(DateTime.UtcNow, session.ID, session.Territory, document.Duty, GuideLanguage.French, document,
-            new("Ready", "", true, .2, "Ready", 1, 1, boss.Name, false, false, true),
-            new(ForetellMode.Hybrid, true, true, true, false, true, true, true, false, 1, 1.4f),
+            new("Ready", "", true, .2, "Ready", 1, 1, boss.Name, false, false, true)
+            { ModelRuntime = new(GuideModelStage.Unloaded, null, "CPU", 16384, 8000, true), SummaryIssue = "Earlier excerpt exceeded context" },
+            new(ForetellMode.Hybrid, true, true, true, false, true, true, true, false, 1, 1.4f) { ContextTokens = 16384, MemoryGiB = 6 },
             [new(boss.Name, "Boss FR", 50, [new(phase.Name, "Si protégé, ne bouge pas.", true,
                 [new(mechanic.Name, "Tempête", 51, ForetellGuideSummaries.Key(boss, phase, mechanic), summary, GuidanceKind.None, "À VÉRIFIER", false, mechanic.Rules, null)])])],
             [new(boss.Name, phase.Name, mechanic.Name, GuideSignalKind.Cast, 100, 200, 50, 51, 0, 300, DateTime.UtcNow.AddSeconds(3), GuidanceKind.None, "À VÉRIFIER", "fixture exact-name association")]);
@@ -61,6 +62,12 @@ internal static class GuideCaptureTests
                 Check(row.GetProperty("Summary").GetString() == "Écarte-toi si marqué." && row.GetProperty("ActionID").GetUInt32() == 51
                     && row.GetProperty("Instruction").GetString() == "À VÉRIFIER", "Adapted text, contextual ID or abstention missing");
                 Check(adapted.RootElement.GetProperty("Signals")[0].GetProperty("SourceID").GetUInt64() == 100, "Live association missing");
+                var state = adapted.RootElement.GetProperty("State");
+                Check(state.GetProperty("ModelRuntime").GetProperty("ProcessID").ValueKind == JsonValueKind.Null
+                    && state.GetProperty("ModelRuntime").GetProperty("PromptTokens").GetInt32() == 8000
+                    && state.GetProperty("SummaryIssue").GetString() == "Earlier excerpt exceeded context", "Session-time model activity/context failure missing");
+                Check(adapted.RootElement.GetProperty("Options").GetProperty("ContextTokens").GetInt32() == 16384
+                    && adapted.RootElement.GetProperty("Options").GetProperty("MemoryGiB").GetInt32() == 6, "Session resource settings missing");
             }
             var reader = new ForetellRecordingReader(zip); reader.Inspect();
             Check(reader.Parsed == events.Count && reader.Complete, "Guide files changed observation completeness");
