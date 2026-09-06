@@ -20,6 +20,10 @@ For cast actions, Foretell also consumes useful local FFXIV client metadata as a
 
 Version 0.12.3 also accepts narrative-only boss guides, fixing the preparation error reproduced on Kugane Castle. Advice and optional summaries remain available per boss, including from cache. The UI explicitly labels these as narrative guides: no named abilities have been extracted, so these paragraphs cannot trigger automatic guide highlights or central alerts. Existing BMR/Foretell signals are unaffected; no instance-specific exception or invented cast association is added.
 
+## Non-interactive development tests
+
+Development test runners are non-interactive: both use the `dotnet` host rather than a generated apphost, configure process-local Windows error/WER no-UI flags, and report managed command failures to stderr with exit code 1. These settings apply only to test processes, not the game or Windows globally. CI verifies the flags and a controlled managed failure using `.github/scripts/check_test_host.ps1`; it does not deliberately crash a native process on the player's PC. Model/GPU benchmarks are explicit opt-in probes, not part of the ordinary test suite.
+
 ## Dalamud custom repository
 
 `https://raw.githubusercontent.com/Arceuid731/Foretell/main/repo.json`

@@ -14,7 +14,9 @@ static class Check
 
 static class ForetellCoreTests
 {
-    public static void Main(string[] args)
+    public static int Main(string[] args) => ConsoleTestHost.Run(args, RunCommand);
+
+    private static void RunCommand(string[] args)
     {
         if (args.Length == 2 && args[0] == "--raw")
         {

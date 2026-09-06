@@ -66,6 +66,10 @@ jobs:
       - name: Run deterministic Foretell core tests
         run: dotnet run --project ForetellCoreTests/ForetellCoreTests.csproj -c Release
 
+      - name: Verify non-interactive test failures
+        shell: pwsh
+        run: ./.github/scripts/check_test_host.ps1
+
       - name: Build release
         shell: pwsh
         run: |

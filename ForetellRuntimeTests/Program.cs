@@ -6,7 +6,9 @@ using BossMod.Foretell;
 
 internal static class Program
 {
-    public static void Main(string[] args)
+    public static int Main(string[] args) => ConsoleTestHost.Run(args, RunCommand);
+
+    private static void RunCommand(string[] args)
     {
         AssemblyLoadContext.Default.Resolving += (_, name) =>
         {
