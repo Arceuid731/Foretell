@@ -18,8 +18,7 @@ internal static class GuideCombatListPresentation
             .DistinctBy(entry => entry.Mechanic).ToArray();
         var live = entries.Where(entry => entry.Live != null).ToArray();
         var reminders = entries.Where(entry => entry.Live == null
-            && (!currentPhaseOnly || GuidePhaseSelection.Visible(frame, entry.Phase, entry.Mechanic))
-            && GuideRolePresentation.Relevant(entry.Mechanic.Advice?.Roles ?? [], playerClass))
+            && (!currentPhaseOnly || GuidePhaseSelection.Visible(frame, entry.Phase, entry.Mechanic)))
             .Select(entry => (Entry: entry, Priority: GuideCombatRelevance.Rank(entry.Mechanic, playerClass)))
             .Where(candidate => candidate.Priority > 0)
             .OrderByDescending(candidate => candidate.Priority)

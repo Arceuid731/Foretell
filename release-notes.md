@@ -1,7 +1,7 @@
-# Foretell 0.13.7 — combat overlay diagnostics
+# Foretell 0.13.8 — prevent empty mechanic lists
 
-- Preserve guide and overlay diagnostics when detailed combat recording reaches its size limit.
-- Store compact combat transitions without repeating the full guide on every mechanic.
-- Include highlighted rows, central alerts, clipping, hidden overlays and drawing failures in Analysis exports.
+- Fix prepared guides showing zero mechanics when their role tags omit your job.
+- Prioritize active mechanics, then advice for your role and the whole party. Other reminders fill the remaining space instead of disappearing.
+- Keep the compact list limit, role icons and current-phase filtering.
 
-No guide reanalysis or model download is required. This release improves diagnosis of missing highlights; it does not claim to fix an unconfirmed display failure.
+The fix applies to existing prepared guides. No reanalysis or model download is required.
