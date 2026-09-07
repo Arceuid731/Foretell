@@ -40,6 +40,7 @@ internal static class Program
         OverlayDemoTests.Run();
         CentralAlertTests.Run();
         GuideListFlowTests.Run();
+        GuidePresentationCaptureTests.Run();
         GuidePauseTests.Run();
         GuideJournalTests.Run();
         GuideModelTransportTests.Run();

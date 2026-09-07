@@ -6,7 +6,10 @@ using System.Threading;
 
 namespace BossMod.Foretell;
 
-internal sealed record GuideCaptureFile(string File, string Sha256, long Bytes, string Kind, DateTime At, string SourceHash);
+internal sealed record GuideCaptureFile(string File, string Sha256, long Bytes, string Kind, DateTime At, string SourceHash)
+{
+    public long ExpandedBytes { get; init; }
+}
 internal sealed record GuideAdaptedMechanic(string Name, string DisplayName, uint ActionID, string SummaryKey, string? Summary,
     GuidanceKind Guidance, string Instruction, bool Resolved, GuideRule[] Rules, GuideStatusRule? StatusRule)
 {
@@ -42,38 +45,79 @@ internal sealed record GuideCaptureState(string State, string Error, bool Cached
 internal sealed record GuideCaptureInput(DateTime At, string SessionID, uint TerritoryID, GuideDuty? Duty, GuideLanguage Language,
     GuideDocument? Document, GuideCaptureState State, GuideCaptureOptions Options, GuideAdaptedBoss[] Adapted, GuideCapturedSignal[] Signals)
 {
+    public GuidePresentationCapture? Presentation { get; init; }
     public long EstimatedBytes => 4096 + (Document?.Bosses.Sum(boss => boss.Phases.Sum(phase => phase.Context.Length + phase.Mechanics.Sum(mechanic => mechanic.Text.Length + mechanic.Name.Length))) ?? 0) * 8L
         + ((Document?.Page?.Text.Length ?? 0) + (Document?.Page?.Html.Length ?? 0)) * 6L
         + (Document?.Sources.Sum(source => (long)source.Text.Length + source.Original.Length) ?? 0) * 6L
-        + Adapted.Sum(boss => boss.Phases.Sum(phase => (phase.Summary?.Length ?? 0) + phase.Mechanics.Sum(mechanic => (mechanic.Summary?.Length ?? 0) + mechanic.DisplayName.Length))) * 4L;
+        + Adapted.Sum(boss => boss.Phases.Sum(phase => (phase.Summary?.Length ?? 0) + phase.Mechanics.Sum(mechanic => (mechanic.Summary?.Length ?? 0) + mechanic.DisplayName.Length))) * 4L
+        + Signals.Sum(signal => 256L + (signal.Boss.Length + signal.Phase.Length + signal.Mechanic.Length + signal.Instruction.Length + signal.Evidence.Length) * 2L);
 }
 
 internal sealed partial class ForetellCapture
 {
     internal const int GuideExpandedLimit = 24 * 1024 * 1024;
     internal const long GuideSessionLimit = 16L * 1024 * 1024;
+    private long GuideBudget => Math.Min(GuideSessionLimit, _sessionLimit / 4);
+    private long GuideExpandedBudget => Math.Min(128L * 1024 * 1024, _expandedLimit / 4);
+    private int IndexReserve => (int)Math.Min(128 * 1024, _sessionLimit / 8);
+    private int GuideFrameLimit => Math.Max(256, IndexReserve / 4);
+    private int GuideBatchLimit => (int)Math.Min(256 * 1024, GuideExpandedBudget / 4);
     private static readonly JsonSerializerOptions GuideJson = new(Json) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never };
-    private sealed record GuideEvent(Session Session, GuideCaptureInput Input, long Bytes);
+    private sealed record GuideEvent(Session Session, GuideCaptureInput Input, long Bytes, string? SourceHash, string? ModelRevision, string? Gap, bool AdaptationOmitted);
     private readonly List<GuideCaptureFile> _guideFiles = [];
     private int _guideSnapshotNumber;
     private long _guideBytes;
+    private long _guideExpandedBytes;
+    private long _guideArtifactBytes;
+    private long _guideArtifactExpandedBytes;
+    private long _guideSequence;
+    private long _guideTimelineOmitted;
+    private int _guideTimelineNumber;
+    private int _guideTimelineBytes;
+    private readonly List<byte[]> _guideTimeline = [];
+    private JsonElement? _guideLatest;
+    private GuideCaptureInput? _guideLastInput;
+    private DateTime _guideBatchStarted;
+    private string? _guideAdaptationHash;
+    private string? _guideAdaptationFile;
+    private string? _guideAttemptedSource;
+    private string? _guideAttemptedAdaptation;
 
     internal static bool ValidGuideFilename(string name) => System.Text.RegularExpressions.Regex.IsMatch(name,
-        @"^guide-(?:source-[A-F0-9]{64}|snapshot-[0-9]{6})\.json\.gz$", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+        @"^guide-(?:source-[A-F0-9]{64}|snapshot-[0-9]{6}|timeline-[0-9]{6})\.json\.gz$", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
 
     public bool EnqueueGuide(Session session, GuideCaptureInput input)
     {
         var bytes = input.EstimatedBytes;
+        var sourceHash = input.Document?.SourceHash;
+        var modelRevision = input.Document?.ModelRevision;
+        string? gap = null;
+        var adaptationOmitted = false;
         if (input.SessionID != session.ID || input.TerritoryID != session.Territory
             || input.Duty != null && input.Duty.TerritoryID != session.Territory
             || input.Document != null && input.Document.Duty != input.Duty)
         { RejectGuide(session, "Guide snapshot identity does not match the capture session"); return false; }
-        if (Volatile.Read(ref _disposed) != 0 || bytes > QueueLimit / 2 || PendingBytes + bytes > QueueLimit)
+        bytes += JsonSerializer.SerializeToUtf8Bytes(input.Presentation, GuideJson).Length * 2L;
+        var available = QueueLimit / 2 - Interlocked.Read(ref _guideQueuedBytes);
+        if (bytes > available)
+        {
+            input = input with { Document = null };
+            gap = "Full guide source omitted from queue; essential timeline retained";
+            bytes = input.EstimatedBytes + JsonSerializer.SerializeToUtf8Bytes(input.Presentation, GuideJson).Length * 2L;
+            if (bytes > available)
+            {
+                input = input with { Adapted = [] };
+                adaptationOmitted = true;
+                gap = "Full guide source/adaptation omitted from queue; essential timeline retained";
+                bytes = input.EstimatedBytes + JsonSerializer.SerializeToUtf8Bytes(input.Presentation, GuideJson).Length * 2L;
+            }
+        }
+        if (Volatile.Read(ref _disposed) != 0 || bytes > QueueLimit / 2 || Interlocked.Read(ref _guideQueuedBytes) + bytes > QueueLimit / 2)
         { RejectGuide(session, "Guide snapshot queue unavailable or input too large"); return false; }
-        Interlocked.Add(ref _queuedBytes, bytes);
-        try { if (_queue.TryAdd(new GuideEvent(session, input, bytes))) return true; }
+        Interlocked.Add(ref _guideQueuedBytes, bytes);
+        try { if (_queue.TryAdd(new GuideEvent(session, input, bytes, sourceHash, modelRevision, gap, adaptationOmitted))) return true; }
         catch (InvalidOperationException) { }
-        Interlocked.Add(ref _queuedBytes, -bytes);
+        Interlocked.Add(ref _guideQueuedBytes, -bytes);
         RejectGuide(session, "Guide snapshot queue full");
         return false;
     }
@@ -84,38 +128,139 @@ internal sealed partial class ForetellCapture
     private void SelectSession(Session session)
     {
         if (_active == session) return;
-        ClosePart(); SaveIndex();
+        ClosePart(); FlushGuideTimeline(); SaveIndex();
         _active = session; _part = 0; _parts.Clear(); _hashes.Clear(); _counts.Clear(); _first = _last = default;
         _guideFiles.Clear(); _guideSnapshotNumber = 0; _guideBytes = 0;
+        _guideExpandedBytes = _guideArtifactBytes = _guideArtifactExpandedBytes = _guideSequence = _guideTimelineOmitted = 0;
+        _guideTimelineNumber = _guideTimelineBytes = 0; _guideTimeline.Clear(); _guideLatest = null; _guideLastInput = null;
+        _guideAdaptationHash = _guideAdaptationFile = _guideAttemptedSource = _guideAttemptedAdaptation = null;
     }
 
     private void WriteGuide(GuideEvent item)
     {
         SelectSession(item.Session);
-        if (_guideSnapshotNumber >= 128) { RejectGuide(item.Session, "Guide snapshot count limit reached (128)"); return; }
         var input = item.Input;
-        var sourceFile = input.Document == null ? null : "guide-source-" + input.Document.SourceHash + ".json.gz";
-        if (sourceFile != null && !_guideFiles.Any(file => file.File == sourceFile))
+        if (item.Gap != null) RejectGuide(item.Session, item.Gap);
+        var sourceFile = item.SourceHash == null ? null : "guide-source-" + item.SourceHash + ".json.gz";
+        if (input.Document != null && sourceFile != null && sourceFile != _guideAttemptedSource && !_guideFiles.Any(file => file.File == sourceFile))
         {
-            if (_guideFiles.Count(file => file.Kind == "source") >= 16) { RejectGuide(item.Session, "Guide source revision limit reached (16)"); return; }
-            WriteGuideArtifact(sourceFile, "source", input.Document!, input);
+            _guideAttemptedSource = sourceFile;
+            TryWriteGuideArtifact(sourceFile, "source", input.Document!, input);
         }
-        WriteGuideArtifact($"guide-snapshot-{++_guideSnapshotNumber:D6}.json.gz", "adapted", new
+        string? guideHash = null;
+        try
         {
-            schema = 1, input.At, input.SessionID, input.TerritoryID, input.Duty, input.Language,
-            sourceFile, sourceHash = input.Document?.SourceHash, modelRevision = input.Document?.ModelRevision,
-            sourceCoverage = input.Document?.Coverage,
-            input.State, input.Options, input.Adapted, input.Signals,
-            availableSummaries = input.Adapted.Sum(boss => boss.Phases.Sum(phase => (phase.Summary == null ? 0 : 1) + phase.Mechanics.Count(mechanic => mechanic.Summary != null))),
-            semantics = "Session-time guide preparation and sampled matching state, not proof of rendered pixels. Source/conditions remain authoritative; automatic summaries are documentary. No guides are loaded into the learner by replay."
-        }, input);
+            if (!item.AdaptationOmitted)
+            {
+                var adaptation = SerializeGuide(new
+                {
+                    input.Duty, input.Language, sourceHash = item.SourceHash,
+                    modelRevision = item.ModelRevision, sourceCoverage = input.Document?.Coverage, input.Adapted
+                }, GuideExpandedLimit);
+                guideHash = Convert.ToHexString(SHA256.HashData(adaptation));
+            }
+        }
+        catch (IOException error) { RejectGuide(item.Session, $"Guide adaptation omitted: {error.Message}"); }
+        if (guideHash != null && guideHash != _guideAttemptedAdaptation)
+        {
+            _guideAttemptedAdaptation = guideHash;
+            var filename = $"guide-snapshot-{++_guideSnapshotNumber:D6}.json.gz";
+            if (TryWriteGuideArtifact(filename, "adapted", new
+            {
+                schema = 2, input.At, input.SessionID, input.TerritoryID, input.Duty, input.Language,
+                sourceFile, sourceHash = item.SourceHash, guideHash, modelRevision = item.ModelRevision, gap = item.Gap,
+                sourceCoverage = input.Document?.Coverage, input.State, input.Options, input.Adapted, input.Signals, input.Presentation,
+                availableSummaries = input.Adapted.Sum(boss => boss.Phases.Sum(phase => (phase.Summary == null ? 0 : 1) + phase.Mechanics.Count(mechanic => mechanic.Summary != null)))
+            }, input))
+            { _guideAdaptationHash = guideHash; _guideAdaptationFile = filename; }
+        }
+        var sourceAvailable = sourceFile == null || _guideFiles.Any(file => file.File == sourceFile);
+        var adaptationAvailable = guideHash != null && guideHash == _guideAdaptationHash;
+        var sequence = ++_guideSequence;
+        byte[] frame;
+        try
+        {
+            frame = SerializeGuide(new
+            {
+                sequence, input.At, input.SessionID, input.TerritoryID, input.Duty, input.Language,
+                sourceHash = item.SourceHash, sourceFile = sourceAvailable ? sourceFile : null,
+                guideHash, adaptedFile = adaptationAvailable ? _guideAdaptationFile : null,
+                sourceAvailable, adaptationAvailable, input.State, input.Options, input.Signals, input.Presentation,
+                gap = item.Gap, rejected = Interlocked.Read(ref item.Session.GuideRejected), timelineOmitted = _guideTimelineOmitted
+            }, GuideFrameLimit);
+        }
+        catch (IOException)
+        {
+            RejectGuide(item.Session, "Guide timeline sample exceeds its bounded frame size");
+            ++_guideTimelineOmitted;
+            frame = JsonSerializer.SerializeToUtf8Bytes(new { sequence, input.At, sourceHash = item.SourceHash, guideHash,
+                state = input.State.State[..Math.Min(256, input.State.State.Length)],
+                boss = input.State.Boss?[..Math.Min(256, input.State.Boss.Length)],
+                listState = input.Presentation?.ListState[..Math.Min(256, input.Presentation.ListState.Length)],
+                centralState = input.Presentation?.CentralState[..Math.Min(256, input.Presentation.CentralState.Length)],
+                gap = "Sample exceeds frame size limit; signals, options and presentation rows omitted", rejected = item.Session.GuideRejected }, GuideJson);
+        }
+        using (var document = JsonDocument.Parse(frame)) _guideLatest = document.RootElement.Clone();
+        if (_guideTimelineBytes + frame.Length + 1 > GuideBatchLimit || _guideTimeline.Count >= 256
+            || _guideTimeline.Count > 0 && input.At - _guideBatchStarted >= TimeSpan.FromMinutes(1)) FlushGuideTimeline();
+        if (_guideTimeline.Count == 0) _guideBatchStarted = input.At;
+        _guideTimeline.Add(frame); _guideTimelineBytes += frame.Length + 1;
+        _guideLastInput = input with { Document = null, Adapted = [], Signals = [], Presentation = null };
+    }
+
+    private void FlushGuideTimeline()
+    {
+        if (_guideTimeline.Count == 0) return;
+        using var output = new MemoryStream();
+        output.Write("{\"schema\":2,\"frames\":["u8);
+        for (var index = 0; index < _guideTimeline.Count; ++index)
+        {
+            if (index != 0) output.WriteByte((byte)',');
+            output.Write(_guideTimeline[index]);
+        }
+        output.Write("]}"u8);
+        try { WriteGuideArtifact($"guide-timeline-{++_guideTimelineNumber:D6}.json.gz", "timeline", output.ToArray(), _guideLastInput!); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            _guideTimelineOmitted += _guideTimeline.Count;
+            RejectGuide(_active!, $"Guide timeline gap: {error.Message}");
+        }
+        _guideTimeline.Clear(); _guideTimelineBytes = 0; _guideLastInput = null;
         SaveIndex();
     }
 
-    private void WriteGuideArtifact(string filename, string kind, object payload, GuideCaptureInput input)
+    private bool TryWriteGuideArtifact(string filename, string kind, object payload, GuideCaptureInput input)
+    {
+        try { WriteGuideArtifact(filename, kind, SerializeGuide(payload, GuideExpandedLimit), input); return true; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { RejectGuide(_active!, $"Guide {kind} omitted: {error.Message}"); return false; }
+    }
+
+    private sealed class GuideBuffer(int limit) : MemoryStream
+    {
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (Length + count > limit) throw new IOException("Guide expanded size limit reached");
+            base.Write(buffer, offset, count);
+        }
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            if (Length + buffer.Length > limit) throw new IOException("Guide expanded size limit reached");
+            var bytes = buffer.ToArray();
+            base.Write(bytes, 0, bytes.Length);
+        }
+    }
+
+    private static byte[] SerializeGuide(object payload, int limit)
+    {
+        using var output = new GuideBuffer(limit);
+        JsonSerializer.Serialize(output, payload, GuideJson);
+        return output.ToArray();
+    }
+
+    private void WriteGuideArtifact(string filename, string kind, byte[] bytes, GuideCaptureInput input)
     {
         if (!ValidGuideFilename(filename)) throw new InvalidDataException("Invalid guide artifact filename");
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, GuideJson);
         if (bytes.Length > GuideExpandedLimit) throw new IOException("Guide artifact exceeds expanded size limit");
         using var compressed = new MemoryStream();
         using (var gzip = new GZipStream(compressed, CompressionLevel.Fastest, leaveOpen: true)) gzip.Write(bytes);
@@ -124,16 +269,22 @@ internal sealed partial class ForetellCapture
         lock (_filesLock)
         {
             Directory.CreateDirectory(session.Directory);
-            PruneCache(session.Directory);
+            var reserve = (_file != null ? SegmentReserve : 0) + 2L * IndexReserve;
+            PruneCache(session.Directory, reserve + data.Length);
             var used = Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories).Sum(path => new FileInfo(path).Length);
-            if (_guideBytes + data.Length > GuideSessionLimit || session.Bytes + data.Length + SegmentReserve > _sessionLimit
-                || session.ExpandedBytes + bytes.Length + _segmentLimit > _expandedLimit || used + data.Length + SegmentReserve > _cacheLimit)
-                throw new IOException("Guide artifact omitted to preserve guide/session/cache quotas");
+            if (_guideBytes + data.Length > GuideBudget || _guideExpandedBytes + bytes.Length > GuideExpandedBudget
+                || kind != "timeline" && (_guideArtifactBytes + data.Length > GuideBudget / 2 || _guideArtifactExpandedBytes + bytes.Length > GuideExpandedBudget / 2
+                    || _guideFiles.Count(file => file.Kind != "timeline") >= 192
+                    || Index().Length + GuideFrameLimit + IndexReserve / 8 + 1024 > IndexReserve)
+                || used + data.Length + reserve > _cacheLimit || _guideFiles.Count >= 256
+                || Index().Length + GuideFrameLimit + 1024 > IndexReserve)
+                throw new IOException("Reserved guide storage or index limit reached");
             var final = Path.Combine(session.Directory, filename);
             File.WriteAllBytes(final + ".tmp", data);
             File.Move(final + ".tmp", final, overwrite: false);
-            _guideFiles.Add(new(filename, Convert.ToHexString(SHA256.HashData(data)), data.Length, kind, input.At, input.Document?.SourceHash ?? ""));
-            _guideBytes += data.Length; session.Bytes += data.Length; session.ExpandedBytes += bytes.Length;
+            _guideFiles.Add(new(filename, Convert.ToHexString(SHA256.HashData(data)), data.Length, kind, input.At, input.Document?.SourceHash ?? "") { ExpandedBytes = bytes.Length });
+            _guideBytes += data.Length; _guideExpandedBytes += bytes.Length;
+            if (kind != "timeline") { _guideArtifactBytes += data.Length; _guideArtifactExpandedBytes += bytes.Length; }
         }
     }
 }

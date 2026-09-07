@@ -14,10 +14,10 @@ public sealed partial class ForetellEngine
 
     private void DrawGuideChecklist()
     {
-        if (_demoFrame == null && _guideDuty == null && !_cfg.GuideChecklistUnlocked) return;
+        if (_demoFrame == null && _guideDuty == null && !_cfg.GuideChecklistUnlocked) { GuideListDrawState("NoDuty"); return; }
         var frame = _demoFrame?.Guide ?? _guideFrame;
         var boss = frame.Boss;
-        var active = _demoFrame?.Guide.Active ?? LiveGuideSignals();
+        var active = (_demoFrame?.Guide.Active ?? LiveGuideSignals()).ToArray();
         var rows = GuideCombatListPresentation.Select(frame, active, _ws.Party[PartyState.PlayerSlot]?.Class ?? Class.None, _cfg.GuideCurrentPhaseOnly)
             .Select(entry => new GuideListRow(entry.Phase, entry.Mechanic, entry.Live, GuideMechanicName(boss!, entry.Mechanic),
                 GuideListFlow.Instruction(entry.Mechanic, GuideChecklistInstruction(boss!, entry.Phase, entry.Mechanic)),
@@ -44,6 +44,11 @@ public sealed partial class ForetellEngine
             _guideListMeasuredAt = _ws.CurrentTime;
         }
         var layout = _guideListLayout;
+        List<GuideDrawnRow> drawn = [];
+        foreach (var signal in active.Where(signal => !rows.Any(row => ReferenceEquals(row.Mechanic, signal.Mechanic))))
+            drawn.Add(new(signal.Boss.Name, signal.Phase.Name, signal.Mechanic.Name, signal.SourceID, signal.ID, false, "NotSelected", null, signal.Mechanic.Advice?.Cue ?? ""));
+        foreach (var row in rows.Skip(layout.Heights.Length))
+            drawn.Add(new(boss!.Name, row.Phase.Name, row.Mechanic.Name, row.Live?.SourceID ?? 0, row.Live?.ID ?? 0, false, "LayoutOmitted", null, row.Instruction));
         rows = rows[..layout.Heights.Length];
         var dimensions = Vector2.Min(size - new Vector2(8), new Vector2(layout.Width, Math.Max(rows.Length == 0 ? 60 : 1, layout.Height) + heading + chrome) + padding * 2);
         if (_cfg.GuideChecklistUnlocked) dimensions.Y = Math.Max(dimensions.Y, Math.Clamp(_cfg.GuideHeight, Math.Min(180, size.Y), size.Y));
@@ -79,11 +84,12 @@ public sealed partial class ForetellEngine
             if (_guideChecklistDirty && (!ImGui.IsMouseDown(ImGuiMouseButton.Left) || !_cfg.GuideChecklistUnlocked))
             { _guideChecklistDirty = false; _cfg.Modified.Fire(); }
             _guideChecklistWasUnlocked = _cfg.GuideChecklistUnlocked;
-            if (!visible) return;
+            if (!visible) { GuideListDrawState("WindowHidden"); return; }
             if (!_cfg.GuideChecklistUnlocked && _cfg.GuidePanelOpacity > 0)
                 ImGui.GetWindowDrawList().AddRectFilled(ImGui.GetWindowPos(), ImGui.GetWindowPos() + ImGui.GetWindowSize(), OverlayOpacity(_cfg.GuideBackgroundColor, _cfg.GuidePanelOpacity), 8);
             if (_demoFrame == null && _liveGuide == null)
             {
+                GuideListDrawState("PreparingGuide");
                 if (_guideSummaries?.Snapshot is { Stage: not "Ready" }) { DrawGuideSummaryProgress(); return; }
                 DrawGuideOverlayLine(_guideDuty == null ? GuideText("Foretell · boss mechanics", "Foretell · mécaniques du boss", "Foretell · Bossmechaniken", "Foretell・ボスギミック")
                     : GuideText("Preparing guide…", "Préparation du guide…", "Anleitung vorbereiten…", "攻略準備中…"), _cfg.GuideTextColor);
@@ -91,6 +97,7 @@ public sealed partial class ForetellEngine
             }
             if (boss == null)
             {
+                GuideListDrawState(frame.Ambiguous ? "BossAmbiguous" : "NoBoss");
                 DrawGuideOverlayLine(frame.Ambiguous ? GuideText("Boss identification pending", "Boss à identifier", "Boss-Erkennung ausstehend", "ボス特定待ち")
                     : GuideText("Bosses completed", "Bosse terminés", "Bosse abgeschlossen", "ボス撃破済み"), _cfg.GuideUnresolvedColor);
                 return;
@@ -101,6 +108,7 @@ public sealed partial class ForetellEngine
             if (ImGui.IsItemClicked() && _demoFrame == null) _guideEntryDismissed = false;
             if (_demoFrame == null && boss.Phases.Length == 0 && _guideSummaries?.Snapshot is { Stage: not "Ready" })
             {
+                GuideListDrawState("PreparingBoss");
                 DrawGuideSummaryProgress();
                 return;
             }
@@ -119,12 +127,18 @@ public sealed partial class ForetellEngine
                     var rowPosition = origin + new Vector2(layout.Column[index] * (layout.ColumnWidth + GuideListFlow.Gap), layout.Top[index]);
                     DrawGuideListRow(_cfg, rowPosition, layout.ColumnWidth, layout.Heights[index], layout.Scale, layout.Compact,
                         row.Name, row.Instruction, row.Roles, row.Live != null, row.Live == null ? null : Math.Max(0, (row.Live.Until - _ws.CurrentTime).TotalSeconds));
+                    var draw = ImGui.GetWindowDrawList();
+                    var bounds = GuideDrawBounds.From(rowPosition, rowPosition + new Vector2(layout.ColumnWidth, layout.Heights[index]));
+                    var clip = GuideDrawBounds.From(Vector2.Max(draw.GetClipRectMin(), viewport.Pos), Vector2.Min(draw.GetClipRectMax(), viewport.Pos + size));
+                    drawn.Add(new(boss.Name, row.Phase.Name, row.Mechanic.Name, row.Live?.SourceID ?? 0, row.Live?.ID ?? 0, row.Live != null,
+                        bounds.Visibility(clip, row.Live != null ? _cfg.GuideActiveColor : _cfg.GuideTextColor), bounds, row.Instruction));
                     ImGui.SetCursorScreenPos(rowPosition);
                     ImGui.Dummy(new(layout.ColumnWidth, layout.Heights[index]));
                     if (ImGui.IsItemHovered() && ImGui.IsMouseHoveringRect(origin, clipEnd)) DrawGuideMechanicTooltip(boss, row.Phase, row.Mechanic);
                 }
             }
             finally { ImGui.GetWindowDrawList().PopClipRect(); }
+            if (_guidePresentation != null) _guidePresentation = _guidePresentation with { ListState = rows.Length == 0 ? "NoMechanics" : "Drawn", Rows = drawn.ToArray() };
             ImGui.SetScrollY(0);
         }
         finally { ImGui.SetWindowFontScale(1); ImGui.End(); ImGui.PopStyleColor(); }

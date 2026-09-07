@@ -4,6 +4,7 @@ public sealed partial class ForetellEngine
 {
     private string _guideDiagnosticSignature = "";
     private DateTime _guideDiagnosticSampleAt;
+    private GuidePresentationCapture? _guideDiagnosticPresentation;
 
     private void CaptureGuideDiagnostics(bool force = false)
     {
@@ -45,7 +46,11 @@ public sealed partial class ForetellEngine
             _guideBossNames.Values.Count(id => _guideNames.ContainsKey(("BNpcName", id, true))),
             _guideActionNames.Values.Count(id => _guideNames.ContainsKey(("Action", id, true))), options,
             string.Join(';', signals.Select(signal => $"{signal.SourceID}:{signal.ID}:{signal.Kind}:{signal.TargetID}:{signal.Until.Ticks / TimeSpan.TicksPerSecond}")));
-        if (!force && signature == _guideDiagnosticSignature) return;
+        var presentation = _guidePresentation is { } drawn && drawn.SessionID == _captureSession.ID
+            && drawn.TerritoryID == _ws.CurrentZone && drawn.ContentID == (uint)_ws.CurrentCFCID ? drawn : null;
+        if (presentation != null && now - presentation.At > TimeSpan.FromSeconds(2))
+            presentation = presentation with { ListState = "NoRecentDraw", CentralState = "NoRecentDraw", Rows = [], Alerts = [] };
+        if (!force && signature == _guideDiagnosticSignature && (presentation?.SameContent(_guideDiagnosticPresentation) ?? _guideDiagnosticPresentation == null)) return;
         var adapted = document?.Bosses.Select(boss => new GuideAdaptedBoss(boss.Name, GuideBossName(boss), _guideBossNames.GetValueOrDefault(boss.Name),
             boss.Phases.Select(phase => new GuideAdaptedPhase(phase.Name, GuideContextSummary(boss, phase), phase.Conditional,
                 phase.Mechanics.Select(mechanic => new GuideAdaptedMechanic(mechanic.Name, GuideMechanicName(boss, mechanic),
@@ -59,7 +64,7 @@ public sealed partial class ForetellEngine
             new(state?.State.ToString() ?? (_cfg.EnableGuides ? "Unavailable" : "Disabled"), state?.Error ?? "", state?.FromCache ?? false, state?.ElapsedSeconds ?? 0,
                 summary?.Stage ?? "Unavailable", summary?.Completed ?? 0, summary?.Total ?? 0, _guideFrame.Boss?.Name, _guideFrame.Upcoming, _guideFrame.Ambiguous, _guideCombat)
             { ModelRuntime = runtime, SummaryIssue = summary?.LastIssue, CurrentPhase = _guideFrame.KnownPhase },
-            options, adapted, live);
-        if (_capture.EnqueueGuide(_captureSession, input)) _guideDiagnosticSignature = signature;
+            options, adapted, live) { Presentation = presentation };
+        if (_capture.EnqueueGuide(_captureSession, input)) { _guideDiagnosticSignature = signature; _guideDiagnosticPresentation = presentation; }
     }
 }

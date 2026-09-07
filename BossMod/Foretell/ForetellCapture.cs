@@ -62,6 +62,8 @@ internal sealed partial class ForetellCapture : IDisposable
     private readonly Dictionary<string, int> _pins = new(StringComparer.OrdinalIgnoreCase);
     private int _disposed;
     private long _queuedBytes;
+    private long _guideQueuedBytes;
+    private int _observationQueued;
     private Session? _active;
     private FileStream? _file;
     private GZipStream? _gzip;
@@ -74,7 +76,7 @@ internal sealed partial class ForetellCapture : IDisposable
     private readonly List<string> _parts = [];
     private readonly Dictionary<string, string> _hashes = [];
     private readonly Dictionary<ObservationKind, long> _counts = [];
-    public long PendingBytes => Interlocked.Read(ref _queuedBytes);
+    public long PendingBytes => Interlocked.Read(ref _queuedBytes) + Interlocked.Read(ref _guideQueuedBytes);
 
     public ForetellCapture(string root, long sessionLimit = SessionLimit, long cacheLimit = CacheLimit,
         int segmentLimit = SegmentLimit, long expandedLimit = ExpandedSessionLimit)
@@ -101,13 +103,15 @@ internal sealed partial class ForetellCapture : IDisposable
         foreach (var pair in source.Numeric) bytes += 96 + pair.Key.Length * 2L;
         foreach (var pair in source.Text) bytes += 96 + (pair.Key.Length + (pair.Value?.Length ?? 0)) * 2L;
         foreach (var pair in source.Binary) bytes += 96 + pair.Key.Length * 2L + (pair.Value?.Length ?? 0);
-        if (bytes > ObservationLimit || Interlocked.Read(ref _queuedBytes) + bytes > QueueLimit)
+        if (bytes > ObservationLimit || Interlocked.Read(ref _queuedBytes) + bytes > QueueLimit || Volatile.Read(ref _observationQueued) >= 896)
         { Interlocked.Increment(ref session.Rejected); return; }
         var copy = source.CopyForRecording();
         Interlocked.Add(ref _queuedBytes, bytes);
+        Interlocked.Increment(ref _observationQueued);
         try { if (_queue.TryAdd(new Event(session, copy, bytes))) return; }
         catch (InvalidOperationException) { }
         Interlocked.Add(ref _queuedBytes, -bytes);
+        Interlocked.Decrement(ref _observationQueued);
         Interlocked.Increment(ref session.Rejected);
     }
 
@@ -133,14 +137,14 @@ internal sealed partial class ForetellCapture : IDisposable
             {
                 try { WriteGuide(guide); }
                 catch (Exception error) { RejectGuide(guide.Session, $"{error.GetType().Name}: {error.Message}"); }
-                finally { Interlocked.Add(ref _queuedBytes, -guide.Bytes); }
+                finally { Interlocked.Add(ref _guideQueuedBytes, -guide.Bytes); }
                 continue;
             }
             if (item is Seal seal)
             {
                 try
                 {
-                    if (_active?.Directory == seal.Directory) { ClosePart(); SaveIndex(); }
+                    if (_active?.Directory == seal.Directory) { ClosePart(); FlushGuideTimeline(); SaveIndex(); }
                     seal.Completion.SetResult(PinSnapshot(seal.Directory));
                 }
                 catch (Exception e) { seal.Completion.SetException(e); }
@@ -155,9 +159,9 @@ internal sealed partial class ForetellCapture : IDisposable
                 Volatile.Write(ref entry.Session.Capped, 1);
                 try { ClosePart(); SaveIndex(); } catch { }
             }
-            finally { Interlocked.Add(ref _queuedBytes, -entry.Bytes); }
+            finally { Interlocked.Add(ref _queuedBytes, -entry.Bytes); Interlocked.Decrement(ref _observationQueued); }
         }
-        try { ClosePart(); SaveIndex(); } catch { }
+        try { ClosePart(); FlushGuideTimeline(); SaveIndex(); } catch { }
     }
 
     private void Write(Event item)
@@ -193,14 +197,17 @@ internal sealed partial class ForetellCapture : IDisposable
     private bool OpenPart()
     {
         var session = _active!;
-        if (session.Bytes + SegmentReserve > _sessionLimit || session.ExpandedBytes + _segmentLimit > _expandedLimit || _part >= 512)
+        if (session.Bytes + SegmentReserve > _sessionLimit - GuideBudget - 2L * IndexReserve
+            || session.ExpandedBytes + _segmentLimit > _expandedLimit - GuideExpandedBudget || _part >= 512
+            || Index().Length + GuideFrameLimit + 1024 > IndexReserve)
         { session.Error = "Session capture limit reached; subsequent events are not recorded"; Volatile.Write(ref session.Capped, 1); return false; }
         lock (_filesLock)
         {
             Directory.CreateDirectory(session.Directory);
-            PruneCache(session.Directory);
+            var reserve = SegmentReserve + Math.Max(0, GuideBudget - _guideBytes) + 2L * IndexReserve;
+            PruneCache(session.Directory, reserve);
             var used = Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories).Sum(path => new FileInfo(path).Length);
-            if (used + SegmentReserve > _cacheLimit)
+            if (used + reserve > _cacheLimit)
             { session.Error = "Automatic capture cache is full or protected by an export"; Volatile.Write(ref session.Capped, 1); return false; }
             _temporary = Path.Combine(session.Directory, $"{++_part:D6}.jsonl.gz.tmp");
             _file = new(_temporary, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 65536);
@@ -233,7 +240,11 @@ internal sealed partial class ForetellCapture : IDisposable
         complete = _active.Rejected == 0 && _active.Error.Length == 0, error = _active.Error,
         compressedBytes = _active.Bytes, expandedBytes = _active.ExpandedBytes, parts = _parts, hashes = _hashes, counts = _counts,
         semantics = "Accepted normalized events in arrival order, including recorded client priors and world context. Cold-start semantic evaluation; no initial learned-memory checkpoint, rendered pixels or historical collision scene.",
-        guides = _guideFiles, guideRejected = _active.GuideRejected, guideError = _active.GuideError
+        guides = _guideFiles, guideRejected = _active.GuideRejected, guideError = _active.GuideError,
+        guideCapture = new { schema = 2, compressedBytes = _guideBytes, expandedBytes = _guideExpandedBytes,
+            compressedLimit = GuideBudget, expandedLimit = GuideExpandedBudget, samples = _guideSequence,
+            timelineOmitted = _guideTimelineOmitted, latest = _guideLatest,
+            semantics = "Timeline samples reference immutable source/adaptation hashes. latest is the final accepted sample, including when timeline storage is exhausted; omitted samples and artifacts are explicit gaps." }
     }, Json);
 
     private void SaveIndex()
@@ -265,7 +276,7 @@ internal sealed partial class ForetellCapture : IDisposable
         }
     }
 
-    private void PruneCache(string active)
+    private void PruneCache(string active, long reserve)
     {
         // Resolve and validate every target before deletion. Only known files in our dedicated session folders.
         var directories = Directory.GetDirectories(_root, "foretell-T*")
@@ -274,7 +285,7 @@ internal sealed partial class ForetellCapture : IDisposable
         var used = Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories).Sum(p => new FileInfo(p).Length);
         foreach (var directory in directories)
         {
-            if (used + SegmentReserve <= _cacheLimit && directory.LastWriteTimeUtc >= DateTime.UtcNow.AddDays(-14)) continue;
+            if (used + reserve <= _cacheLimit && directory.LastWriteTimeUtc >= DateTime.UtcNow.AddDays(-14)) continue;
             if (!directory.FullName.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
                 || directory.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
             foreach (var file in directory.GetFiles())

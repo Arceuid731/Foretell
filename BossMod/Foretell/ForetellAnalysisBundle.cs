@@ -288,6 +288,7 @@ public sealed partial class ForetellEngine
             if (bytes > bundleLimit - 1024 * 1024) throw new IOException("Required analysis/capture exceeds the 128 MiB export limit");
             var guideFiles = new List<(GuideCaptureFile Metadata, byte[] Data)>();
             var guideWarnings = new List<string>();
+            JsonElement? guideCapture = null;
             if (capture == null || capture.Guides.Length == 0)
                 guideWarnings.Add("No session-time guides were recorded. Older versions did not capture them; current wiki/summary caches are not substituted for historical evidence.");
             if (capture != null)
@@ -297,6 +298,12 @@ public sealed partial class ForetellEngine
                     throw new InvalidDataException("Capture does not belong to the selected session");
                 if (index.RootElement.TryGetProperty("guideRejected", out var rejected) && rejected.GetInt64() > 0)
                     guideWarnings.Add($"{rejected.GetInt64()} guide snapshot(s) omitted: " + (index.RootElement.TryGetProperty("guideError", out var error) ? error.GetString() : "unknown reason"));
+                if (index.RootElement.TryGetProperty("guideCapture", out var timeline))
+                {
+                    guideCapture = timeline.Clone();
+                    if (timeline.TryGetProperty("timelineOmitted", out var omitted) && omitted.GetInt64() > 0)
+                        guideWarnings.Add($"{omitted.GetInt64()} guide timeline sample(s) omitted; see guideCapture.latest for the final sampled state.");
+                }
                 foreach (var guide in capture.Guides)
                 {
                     try
@@ -333,12 +340,14 @@ public sealed partial class ForetellEngine
                 foreach (var guide in guideFiles) WriteBundleBytes(archive, "guides/" + guide.Metadata.File, guide.Data);
                 WriteBundleBytes(archive, "guides/index.json", JsonSerializer.SerializeToUtf8Bytes(new
                 {
-                    schema = 1, work.SessionID, work.TerritoryID, work.SessionPluginVersion,
-                    availability = guideFiles.Any(guide => guide.Metadata.Kind == "adapted") ? "captured" : "unavailable",
+                    schema = guideCapture.HasValue ? 2 : 1, work.SessionID, work.TerritoryID, work.SessionPluginVersion,
+                    availability = guideFiles.Any(guide => guide.Metadata.Kind is "adapted" or "timeline")
+                        || guideCapture.HasValue && guideCapture.Value.TryGetProperty("latest", out var latest) && latest.ValueKind == JsonValueKind.Object ? "captured" : "unavailable",
                     complete = guideWarnings.Count == 0,
-                    files = guideFiles.Select(guide => new { path = "guides/" + guide.Metadata.File, guide.Metadata.Kind, guide.Metadata.Sha256, guide.Metadata.Bytes, guide.Metadata.At, guide.Metadata.SourceHash }),
+                    files = guideFiles.Select(guide => new { path = "guides/" + guide.Metadata.File, guide.Metadata.Kind, guide.Metadata.Sha256, guide.Metadata.Bytes, guide.Metadata.ExpandedBytes, guide.Metadata.At, guide.Metadata.SourceHash }),
+                    guideCapture,
                     warnings = guideWarnings,
-                    semantics = "Immutable session-time snapshots: extracted English source with revision, adapted checklist/conditions/local summaries, contextual IDs, settings and sampled live matches. Not raw wiki HTML, continuous match telemetry or proof of rendered pixels. Old sessions cannot be reconstructed from the current cache."
+                    semantics = "Immutable source/adaptation artifacts and sampled state/signal/presentation timeline segments. Frames reference source and guide hashes; guideCapture.latest preserves the final sample if timeline storage fills. Gaps are explicit. Legacy snapshot-only ZIPs remain supported. Presentation records describe submitted draw outcomes, not proof of rendered pixels."
                 }, new JsonSerializerOptions { WriteIndented = true }));
                 if (capture != null)
                 {

@@ -18,6 +18,13 @@ public sealed partial class ForetellEngine
 
     public void Draw()
     {
+        BeginGuidePresentationCapture();
+        try { DrawOverlays(); }
+        finally { EndGuidePresentationCapture(); }
+    }
+
+    private void DrawOverlays()
+    {
         _presentationFrame = null;
         UpdateDemo();
         DrawSafely(DrawInspector, "inspector");
@@ -44,6 +51,8 @@ public sealed partial class ForetellEngine
         try { draw(); }
         catch (Exception e)
         {
+            if (surface == "guide sidebar") GuideListDrawState("DrawError: " + e.GetType().Name + ": " + e.Message);
+            if (surface == "text hints") GuideCentralDrawState("DrawError: " + e.GetType().Name + ": " + e.Message);
             ++_drawFailures;
             var now = DateTime.UtcNow;
             if ((now - _lastDrawFailureLog).TotalSeconds < 5) return;
@@ -278,6 +287,7 @@ public sealed partial class ForetellEngine
                 | ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoFocusOnAppearing;
         if (!ImGui.Begin("Foretell guidance - drag to move###ForetellTextHintsWindow", flags))
         {
+            GuideCentralDrawState("WindowHidden");
             ImGui.End();
             _textWasUnlocked = _cfg.TextHintsUnlocked;
             return;
@@ -327,8 +337,19 @@ public sealed partial class ForetellEngine
             }
             if (terrainCue)
                 alerts.Add(new(GuideText("WATCH THE FLOOR", "SURVEILLE LE SOL", "BODEN BEACHTEN", "床に注意"), "", -1, 0, _ws.CurrentTime, true, false));
-            foreach (var alert in ForetellCentralPresentation.Select(alerts, _cfg.MaxRenderedMechanics))
-                DrawCentralAlert(_cfg, alert.Cue, alert.Label, alert.Remaining, alert.Total);
+            List<GuideDrawnAlert> drawn = [];
+            var selectedAlerts = ForetellCentralPresentation.Select(alerts, _cfg.MaxRenderedMechanics);
+            foreach (var alert in selectedAlerts)
+            {
+                var bounds = DrawCentralAlert(_cfg, alert.Cue, alert.Label, alert.Remaining, alert.Total);
+                var draw = ImGui.GetWindowDrawList();
+                var clip = GuideDrawBounds.From(Vector2.Max(draw.GetClipRectMin(), mainViewport.Pos), Vector2.Min(draw.GetClipRectMax(), mainViewport.Pos + mainViewport.Size));
+                drawn.Add(new(alert.Cue, alert.Label, alert.FromGuide, bounds.Visibility(clip, _cfg.CentralAlertColor), bounds));
+            }
+            foreach (var omitted in alerts.Where(alert => !selectedAlerts.Contains(alert)))
+                drawn.Add(new(omitted.Cue, omitted.Label, omitted.FromGuide, "PriorityOmitted", null));
+            if (_guidePresentation != null)
+                _guidePresentation = _guidePresentation with { CentralState = selectedAlerts.Length == 0 ? "NoAlerts" : "Drawn", Alerts = drawn.ToArray() };
             if (alerts.Count == 0 && _cfg.TextHintsUnlocked)
                 ImGui.TextDisabled(GuideText("Central alerts · drag to move", "Alertes centrales · déplacer ici", "Zentrale Warnungen · verschieben", "中央警告・ドラッグで移動"));
         }

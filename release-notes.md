@@ -1,8 +1,7 @@
-# Foretell 0.13.6 — faster multi-boss guide preparation
+# Foretell 0.13.7 — combat overlay diagnostics
 
-- Prepare a dungeon's bosses together instead of rereading all sources for each boss.
-- Reduce request overhead while retaining the complete source text and evidence checks.
-- Repair an invalid boss separately without rewriting the other bosses. Oversized responses retain the per-boss fallback and interruption recovery.
-- Reject boss titles incorrectly presented as combat phases.
+- Preserve guide and overlay diagnostics when detailed combat recording reaches its size limit.
+- Store compact combat transitions without repeating the full guide on every mechanic.
+- Include highlighted rows, central alerts, clipping, hidden overlays and drawing failures in Analysis exports.
 
-Existing prepared guides remain available; no reanalysis is required to benefit from their cache.
+No guide reanalysis or model download is required. This release improves diagnosis of missing highlights; it does not claim to fix an unconfirmed display failure.

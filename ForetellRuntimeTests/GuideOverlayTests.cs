@@ -47,6 +47,31 @@ internal static class GuideOverlayTests
                 if (frame > 0) Check(ImGui.GetDrawData().TotalVtxCount > 0, "Overlay submitted no text geometry");
             }
             Check(!ForetellEngine.GuideEntryFlags.HasFlag(ImGuiWindowFlags.NoSavedSettings), "Entry summary cannot retain its layout");
+            for (var frame = 0; frame < 2; ++frame)
+            {
+                ImGui.NewFrame();
+                ImGui.SetNextWindowPos(new(20, 20));
+                ImGui.SetNextWindowSize(new(430, 220));
+                ImGui.Begin("Highlight drawing evidence", flags);
+                var draw = ImGui.GetWindowDrawList();
+                var start = ImGui.GetCursorScreenPos();
+                var config = new ForetellConfig { GuideActiveColor = 0xFF00FFFF };
+                var before = draw.VtxBuffer.Size;
+                ForetellEngine.DrawGuideListRow(config, start, 380, 70, 1, false, "Storm", "Move away", ["healer"], false, null);
+                var inactiveVertices = draw.VtxBuffer.Size - before;
+                before = draw.VtxBuffer.Size;
+                var activeStart = start + new Vector2(0, 80);
+                ForetellEngine.DrawGuideListRow(config, activeStart, 380, 70, 1, false, "Storm", "Move away", ["healer"], true, 4);
+                if (frame > 0)
+                {
+                    Check(draw.VtxBuffer.Size - before > inactiveVertices, "Active row submitted no highlight/timer geometry");
+                    var bounds = GuideDrawBounds.From(activeStart, activeStart + new Vector2(380, 70));
+                    var clip = GuideDrawBounds.From(draw.GetClipRectMin(), draw.GetClipRectMax());
+                    Check(bounds.Visibility(clip, config.GuideActiveColor) == "Submitted", "Headless highlighted row is clipped");
+                }
+                ImGui.End();
+                ImGui.Render();
+            }
             Check(ForetellEngine.GuideJournalFlags.HasFlag(ImGuiWindowFlags.NoFocusOnAppearing)
                 && !ForetellEngine.GuideJournalFlags.HasFlag(ImGuiWindowFlags.AlwaysAutoResize)
                 && !ForetellEngine.GuideJournalFlags.HasFlag(ImGuiWindowFlags.NoResize), "Analysis journal steals focus or prevents resizing");

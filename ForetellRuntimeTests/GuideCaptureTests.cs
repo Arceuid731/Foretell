@@ -55,7 +55,13 @@ internal static class GuideCaptureTests
             foreach (var item in events) capture.Enqueue(first, item);
             Check(capture.EnqueueGuide(first, Input(first)), "Initial guide snapshot rejected");
             using var original = capture.SnapshotAsync(first.Directory).GetAwaiter().GetResult()!;
-            Check(original.Guides.Length == 2, "Source and adaptation were not captured");
+            Check(original.Guides.Length == 3, "Source, adaptation and timeline were not captured");
+            using (var captureIndex = JsonDocument.Parse(original.Index))
+            {
+                var guideCapture = captureIndex.RootElement.GetProperty("guideCapture");
+                Check(!guideCapture.TryGetProperty("timelineOmitted", out var omitted) || omitted.GetInt64() == 0,
+                    "Initial timeline unexpectedly omitted samples");
+            }
             var zip = Export(root, "with-guides.zip", original, first.ID);
             using (var archive = ZipFile.OpenRead(zip))
             {
@@ -85,7 +91,7 @@ internal static class GuideCaptureTests
             Check(ForetellEngine.EvaluateRecordedStream(reader.Read(), captureComplete: reader.Complete).Report.DecisionDigest == expectedDigest, "Guide prose contaminated replay learning");
             capture.EnqueueGuide(first, Input(first, "New summary"));
             using var updated = capture.SnapshotAsync(first.Directory).GetAwaiter().GetResult()!;
-            Check(updated.Guides.Length == 3 && original.Guides.Length == 2, "Later adaptation mutated a sealed snapshot or duplicated source");
+            Check(updated.Guides.Length == 5 && original.Guides.Length == 3, "Later adaptation mutated a sealed snapshot or duplicated source");
             var second = capture.NewSession(1, "second", "capture-version");
             capture.Enqueue(second, events[0]);
             using var other = capture.SnapshotAsync(second.Directory).GetAwaiter().GetResult()!;
@@ -100,7 +106,7 @@ internal static class GuideCaptureTests
         using (var reopened = new ForetellCapture(directory))
         {
             using var snapshot = reopened.SnapshotAsync(firstDirectory).GetAwaiter().GetResult()!;
-            Check(snapshot.Guides.Length == 3, "Historical guides lost after leaving/restarting");
+            Check(snapshot.Guides.Length == 5, "Historical guides lost after leaving/restarting");
             var artifact = snapshot.Guides.First();
             var data = File.ReadAllBytes(Path.Combine(firstDirectory, artifact.File)); data[^1] ^= 1;
             File.WriteAllBytes(Path.Combine(firstDirectory, artifact.File), data);
@@ -111,13 +117,179 @@ internal static class GuideCaptureTests
             try { ForetellEngine.ReadGuideArtifact(firstDirectory, artifact with { File = "../escape.json.gz" }); throw new Exception("Traversal accepted"); }
             catch (InvalidDataException) { }
         }
-        using (var capped = new ForetellCapture(Path.Combine(root, "guide-cap")))
+        TestLongTimeline(root);
+        TestChangingAdaptations(root);
+        TestReservedQuotas(root, events[0]);
+        TestTimelineBounds(root);
+        TestOversizedSource(root);
+        TestLegacyGuideIndex(root);
+        Console.WriteLine("Guide export: reserved quotas, long timelines, change-only adaptations, final state/gaps, pin safety, legacy ZIPs and bounds passed.");
+    }
+
+    private static JsonElement[] Frames(ForetellCapture.Snapshot snapshot)
+    {
+        return snapshot.Guides.Where(file => file.Kind == "timeline").SelectMany(file =>
         {
-            var session = capped.NewSession(1, "bounded", "capture-version");
-            for (var count = 0; count < 130; ++count) capped.EnqueueGuide(session, Input(session));
-            using var snapshot = capped.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
-            Check(snapshot.Guides.Length <= 129 && session.GuideRejected > 0 && session.Rejected == 0, "Guide bound lost or broke decision capture");
+            var bytes = ForetellEngine.ReadGuideArtifact(snapshot.Directory, file);
+            using var input = new MemoryStream(bytes);
+            using var gzip = new GZipStream(input, CompressionMode.Decompress);
+            using var document = JsonDocument.Parse(gzip);
+            Check(document.RootElement.ValueKind == JsonValueKind.Object, "Timeline was serialized as base64 instead of JSON");
+            return document.RootElement.GetProperty("frames").EnumerateArray().Select(frame => frame.Clone()).ToArray();
+        }).ToArray();
+    }
+
+    private static void TestLongTimeline(string root)
+    {
+        using var capture = new ForetellCapture(Path.Combine(root, "guide-long"));
+        var session = capture.NewSession(1, "long", "capture-version");
+        var initial = Input(session);
+        var presentation = new GuidePresentationCapture(initial.At, session.ID, 1, 42, "Submitted", "Submitted",
+            [new("Boss", "Phase 1", "Storm", 100, 51, true, "Submitted", new(10, 20, 200, 30), "Spread")], []);
+        Check(capture.EnqueueGuide(session, initial with { Presentation = presentation }), "Initial presentation rejected");
+        using var pinned = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+        var originalFiles = pinned.Guides.ToDictionary(file => file.File, file => File.ReadAllBytes(Path.Combine(pinned.Directory, file.File)));
+        for (var count = 1; count < 600; ++count)
+        {
+            var at = initial.At.AddSeconds(count);
+            var input = initial with { At = at, State = initial.State with { Boss = "Boss " + count },
+                Presentation = presentation with { At = at, ListState = count == 599 ? "Clipped" : "Submitted" } };
+            Check(capture.EnqueueGuide(session, input), "Long-run guide queue rejected a bounded batch");
+            if (count % 24 == 0) capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!.Dispose();
         }
-        Console.WriteLine("Session guide/source/adaptation export, historical isolation, immutable barriers, replay neutrality, hashes and quotas passed.");
+        using var snapshot = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+        var frames = Frames(snapshot);
+        Check(frames.Length == 600 && session.GuideRejected == 0, "Lightweight timeline stopped after 128 changes");
+        Check(snapshot.Guides.Count(file => file.Kind == "source") == 1 && snapshot.Guides.Count(file => file.Kind == "adapted") == 1,
+            "State/presentation transitions duplicated full source or adapted artifacts");
+        Check(frames.Select(frame => frame.GetProperty("sequence").GetInt64()).SequenceEqual(Enumerable.Range(1, 600).Select(value => (long)value)), "Timeline order lost");
+        Check(frames[^1].GetProperty("Presentation").GetProperty("ListState").GetString() == "Clipped", "Final presentation transition lost");
+        Check(frames.All(frame => frame.GetProperty("sourceHash").GetString() == initial.Document!.SourceHash
+            && frame.GetProperty("guideHash").GetString()!.Length == 64), "Timeline source/guide references missing");
+        Check(!frames[0].TryGetProperty("Adapted", out _) && !frames[0].TryGetProperty("Document", out _), "Timeline contains repeated full artifacts");
+        foreach (var file in originalFiles)
+            Check(file.Value.SequenceEqual(File.ReadAllBytes(Path.Combine(pinned.Directory, file.Key))), "Pinned guide file changed while capture continued");
+        Check(Frames(pinned).Length == 1, "Pinned snapshot acquired later frames");
+        var zip = Export(root, "long-guides.zip", snapshot, session.ID);
+        using var archive = ZipFile.OpenRead(zip);
+        using var index = Read(archive, "guides/index.json");
+        Check(index.RootElement.GetProperty("complete").GetBoolean()
+            && index.RootElement.GetProperty("guideCapture").GetProperty("latest").GetProperty("State").GetProperty("Boss").GetString() == "Boss 599",
+            "Export lost final guide state");
+    }
+
+    private static void TestChangingAdaptations(string root)
+    {
+        using var capture = new ForetellCapture(Path.Combine(root, "guide-adaptation-changes"));
+        var session = capture.NewSession(1, "adaptations", "capture-version");
+        for (var count = 0; count < 160; ++count)
+        {
+            Check(capture.EnqueueGuide(session, Input(session, "Summary " + count)), "Changed adaptation rejected at enqueue");
+            if (count % 24 == 23) capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!.Dispose();
+        }
+        using var snapshot = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+        Check(Frames(snapshot).Length == 160 && snapshot.Guides.Count(file => file.Kind == "adapted") == 160 && session.GuideRejected == 0,
+            "Full adaptation changes still hit the old 128 snapshot limit");
+        Check(snapshot.Index.Length <= 128 * 1024, "Guide metadata exceeds legacy recording-reader index bound");
+    }
+
+    private static void TestReservedQuotas(string root, ForetellObservation template)
+    {
+        foreach (var expandedLimit in new long[] { ForetellCapture.ExpandedSessionLimit, 64 * 1024 })
+        {
+            var directory = Path.Combine(root, "guide-reserved-" + expandedLimit);
+            const int sessionLimit = 256 * 1024, cacheLimit = 512 * 1024;
+            using var capture = new ForetellCapture(directory, sessionLimit, cacheLimit, segmentLimit: 16 * 1024, expandedLimit: expandedLimit);
+            var session = capture.NewSession(1, "reserved", "capture-version");
+            var random = new Random(73);
+            for (var count = 0; count < 80; ++count)
+            {
+                var observation = template.CopyForRecording();
+                var payload = new byte[4 * 1024]; random.NextBytes(payload);
+                observation.Text["payload"] = Convert.ToBase64String(payload);
+                capture.Enqueue(session, observation);
+            }
+            using var raw = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+            Check(session.Capped != 0 && session.Rejected > 0 && session.Written > 0, "Fixture did not exhaust the raw stream quota");
+            var input = Input(session);
+            Check(capture.EnqueueGuide(session, input with { State = input.State with { Boss = "Final boss" } }), "Raw cap rejected later guide input");
+            using var snapshot = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+            Check(session.GuideRejected == 0 && Frames(snapshot).Single().GetProperty("State").GetProperty("Boss").GetString() == "Final boss",
+                "Capped raw stream starved the later boss guide");
+            Check(snapshot.Guides.Any(file => file.Kind == "source") && snapshot.Guides.Any(file => file.Kind == "adapted"), "Later boss full artifacts missing");
+            var zip = Export(root, "reserved-guides-" + expandedLimit + ".zip", snapshot, session.ID);
+            using var archive = ZipFile.OpenRead(zip);
+            using var index = Read(archive, "guides/index.json");
+            Check(index.RootElement.GetProperty("complete").GetBoolean(), "Raw incompleteness incorrectly marked guide capture incomplete");
+            Check(Directory.EnumerateFiles(session.Directory).Sum(path => new FileInfo(path).Length) <= sessionLimit, "Combined capture exceeded session quota");
+            Check(Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Sum(path => new FileInfo(path).Length) <= cacheLimit, "Combined capture exceeded cache quota");
+            Check(session.ExpandedBytes + snapshot.Guides.Sum(file => file.ExpandedBytes) <= expandedLimit, "Combined capture exceeded expanded quota");
+        }
+    }
+
+    private static void TestTimelineBounds(string root)
+    {
+        var directory = Path.Combine(root, "guide-timeline-bounds");
+        const int sessionLimit = 256 * 1024;
+        using var capture = new ForetellCapture(directory, sessionLimit, 512 * 1024, segmentLimit: 16 * 1024, expandedLimit: 64 * 1024);
+        var session = capture.NewSession(1, "bounds", "capture-version");
+        var initial = Input(session);
+        Check(capture.EnqueueGuide(session, initial), "Initial bounded guide rejected");
+        using var pinned = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+        var pinnedBytes = pinned.Guides.ToDictionary(file => file.File, file => File.ReadAllBytes(Path.Combine(pinned.Directory, file.File)));
+        for (var count = 1; count < 180; ++count)
+        {
+            Check(capture.EnqueueGuide(session, initial with { At = initial.At.AddSeconds(count), State = initial.State with { Boss = "Boss " + count } }), "Bounded guide input unexpectedly rejected");
+            if (count % 16 == 0) capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!.Dispose();
+        }
+        using var snapshot = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+        using var document = JsonDocument.Parse(snapshot.Index);
+        var state = document.RootElement.GetProperty("guideCapture");
+        Check(state.GetProperty("timelineOmitted").GetInt64() > 0 && session.GuideRejected > 0, "Timeline exhaustion did not expose gaps");
+        Check(state.GetProperty("latest").GetProperty("State").GetProperty("Boss").GetString() == "Boss 179", "Quota exhaustion lost the final state");
+        Check(Frames(snapshot).Length + state.GetProperty("timelineOmitted").GetInt64() == 180, "Stored/omitted timeline accounting does not cover every sample");
+        Check(state.GetProperty("compressedBytes").GetInt64() <= state.GetProperty("compressedLimit").GetInt64()
+            && state.GetProperty("expandedBytes").GetInt64() <= state.GetProperty("expandedLimit").GetInt64(), "Reserved guide bounds exceeded");
+        Check(snapshot.Guides.Length <= 256 && snapshot.Index.Length <= 128 * 1024
+            && Directory.EnumerateFiles(session.Directory).Sum(path => new FileInfo(path).Length) <= sessionLimit, "Guide files/index/session grew without bound");
+        foreach (var file in pinnedBytes)
+            Check(file.Value.SequenceEqual(File.ReadAllBytes(Path.Combine(pinned.Directory, file.Key))), "Storage pressure mutated a pinned artifact");
+        var zip = Export(root, "bounded-guides.zip", snapshot, session.ID);
+        using var archive = ZipFile.OpenRead(zip);
+        using var index = Read(archive, "guides/index.json");
+        Check(!index.RootElement.GetProperty("complete").GetBoolean() && index.RootElement.GetProperty("warnings").GetArrayLength() > 0,
+            "Export concealed guide timeline gaps");
+    }
+
+    private static void TestLegacyGuideIndex(string root)
+    {
+        using var capture = new ForetellCapture(Path.Combine(root, "guide-legacy"));
+        var session = capture.NewSession(1, "legacy", "capture-version");
+        Check(capture.EnqueueGuide(session, Input(session)), "Legacy fixture rejected");
+        using var snapshot = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+        var guides = snapshot.Guides.Where(file => file.Kind != "timeline").ToArray();
+        var legacyIndex = JsonSerializer.SerializeToUtf8Bytes(new { schema = 1, sessionID = session.ID, territory = 1, complete = true, parts = Array.Empty<string>(), guides });
+        using var legacy = new ForetellCapture.Snapshot(snapshot.Directory, legacyIndex, [], () => { }, guides);
+        var zip = Export(root, "legacy-guides.zip", legacy, session.ID);
+        using var archive = ZipFile.OpenRead(zip);
+        using var index = Read(archive, "guides/index.json");
+        Check(index.RootElement.GetProperty("schema").GetInt32() == 1 && index.RootElement.GetProperty("complete").GetBoolean()
+            && index.RootElement.GetProperty("availability").GetString() == "captured", "Legacy snapshot-only guide index no longer exports");
+    }
+
+    private static void TestOversizedSource(string root)
+    {
+        using var capture = new ForetellCapture(Path.Combine(root, "guide-large-source"));
+        var session = capture.NewSession(1, "large-source", "capture-version");
+        var input = Input(session);
+        input = input with { Document = input.Document! with { Page = new("Fixture", "https://example.org/fixture", new string('x', 1_500_000), "") },
+            Presentation = new(input.At, session.ID, 1, 42, "Submitted", "Submitted", [], []) };
+        Check(capture.EnqueueGuide(session, input), "Oversized source rejected essential guide state");
+        using var snapshot = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+        var frame = Frames(snapshot).Single();
+        Check(frame.GetProperty("State").GetProperty("Boss").GetString() == "Boss"
+            && frame.GetProperty("Presentation").GetProperty("ListState").GetString() == "Submitted", "Source omission lost state/presentation");
+        Check(!frame.GetProperty("sourceAvailable").GetBoolean() && frame.GetProperty("sourceHash").GetString() == input.Document!.SourceHash
+            && frame.GetProperty("guideHash").GetString()!.Length == 64 && session.GuideRejected > 0, "Oversized source gap/hash not retained");
     }
 }
