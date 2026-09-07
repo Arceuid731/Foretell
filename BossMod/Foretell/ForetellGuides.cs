@@ -106,6 +106,12 @@ public sealed partial class ForetellEngine
                     (sheet, id) => GuideSheetName(sheet, id, false)) is not { } match) continue;
                 _guideMatches.Add(match); _guideActionNames[(match.Boss.Name, match.Mechanic.Name)] = match.Cast.ActionID;
             }
+            foreach (var helper in _ws.Actors.Where(actor => actor.Type == ActorType.Helper && actor.OwnerID == 0))
+            {
+                if (MatchNamedGuideHelper(_liveGuide, _guideDuty, helper, _guideEncounter.Frame, now,
+                    (sheet, id) => GuideSheetName(sheet, id, false)) is not { } match) continue;
+                _guideMatches.Add(match); _guideActionNames[(match.Boss.Name, match.Mechanic.Name)] = match.Cast.ActionID;
+            }
         }
         _guideSignals.Clear();
         foreach (var match in _guideMatches)
@@ -154,6 +160,17 @@ public sealed partial class ForetellEngine
             || actor.CastInfo is not { EventHappened: false } cast || !cast.IsSpell() || !float.IsFinite(cast.NPCRemainingTime) || cast.NPCRemainingTime is <= 0 or > 120) return null;
         return GuideSynchronization.Match(document, new(duty, actor.InstanceID, actor.OID, actor.NameID, name("BNpcName", owner.NameID),
             cast.Action.ID, name("Action", cast.Action.ID), now.AddSeconds(cast.NPCRemainingTime)), now);
+    }
+
+    internal static GuideMatch? MatchNamedGuideHelper(GuideDocument document, GuideDuty duty, Actor helper, GuideCombatFrame frame, DateTime now, Func<string, uint, string> name)
+    {
+        if (frame is not { Boss: { } boss, Upcoming: false, Ambiguous: false } || helper.Type != ActorType.Helper || helper.OwnerID != 0
+            || helper.IsAlly || helper.IsDeadOrDestroyed || helper.NameID == 0
+            || helper.CastInfo is not { EventHappened: false } cast || !cast.IsSpell() || !float.IsFinite(cast.NPCRemainingTime) || cast.NPCRemainingTime is <= 0 or > 120
+            || GuideNames.Boss(name("BNpcName", helper.NameID)) != GuideNames.Boss(boss.Name)) return null;
+        var match = GuideSynchronization.Match(document, new(duty, helper.InstanceID, helper.OID, helper.NameID, boss.Name,
+            cast.Action.ID, name("Action", cast.Action.ID), now.AddSeconds(cast.NPCRemainingTime)), now);
+        return ReferenceEquals(match?.Boss, boss) ? match : null;
     }
 
     internal static GuideInstruction GuidePersonalResponse(GuideMatch match, ulong playerID, Actor? caster)
@@ -224,7 +241,7 @@ public sealed partial class ForetellEngine
         => _guideFrame.Active.Where(signal => _cfg.EnableGuides && signal.Until > _ws.CurrentTime
             && _guideDuty?.ContentID == _ws.CurrentCFCID && _guideDuty.TerritoryID == _ws.CurrentZone
             && _ws.Actors.Find(signal.SourceID) is { IsDeadOrDestroyed: false } source && source.OID == signal.SourceOID && source.NameID == signal.SourceNameID
-            && (signal.OwnerID == 0 || source.OwnerID == signal.OwnerID && _ws.Actors.Find(signal.OwnerID) is { IsDeadOrDestroyed: false })
+            && source.OwnerID == signal.OwnerID && (signal.OwnerID == 0 || _ws.Actors.Find(signal.OwnerID) is { IsDeadOrDestroyed: false })
             && (signal.Kind == GuideSignalKind.Cast
                 ? source.CastInfo is { EventHappened: false } cast && cast.IsSpell() && cast.Action.ID == signal.ID
                     && float.IsFinite(cast.NPCRemainingTime) && cast.NPCRemainingTime > 0 && Math.Abs((_ws.CurrentTime.AddSeconds(cast.NPCRemainingTime) - signal.Until).TotalSeconds) < .3
@@ -280,26 +297,27 @@ public sealed partial class ForetellEngine
         }
     }
 
-    private bool DrawGuideCentralHints()
+    private IEnumerable<ForetellCentralAlert> GuideCentralHints()
     {
-        if (!_cfg.GuideCentralAlerts) return false;
-        var shown = false;
+        if (!_cfg.GuideCentralAlerts) yield break;
         var player = _ws.Party[PartyState.PlayerSlot];
-        if (player == null || player.IsDeadOrDestroyed) return false;
+        if (player == null || player.IsDeadOrDestroyed) yield break;
         foreach (var signal in CentralGuideSignals())
         {
             var remaining = Math.Max(0, (signal.Until - _ws.CurrentTime).TotalSeconds);
             var total = signal.Kind == GuideSignalKind.Cast ? _ws.Actors.Find(signal.SourceID)?.CastInfo?.TotalTime ?? 0 : 0;
-            DrawCentralAlert(_cfg, GuideRolePresentation.Prefix(signal.Mechanic.Advice?.Roles ?? []) + GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal),
-                GuideMechanicName(signal.Boss, signal.Mechanic), signal.Kind == GuideSignalKind.Action ? -1 : remaining, total);
-            shown = true;
+            var personal = signal.TargetID == player.InstanceID || PresentationFrame.Hazards.Any(hazard =>
+                ForetellCentralPresentation.Personal(hazard.Prediction, V(player.Position), player.InstanceID)
+                && GuideOwnsCentralPrediction(hazard.Prediction, [signal]));
+            yield return new(GuideRolePresentation.Prefix(signal.Mechanic.Advice?.Roles ?? []) + GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal),
+                GuideMechanicName(signal.Boss, signal.Mechanic), signal.Kind == GuideSignalKind.Action ? -1 : remaining, total,
+                signal.Until, personal, true);
         }
-        return shown;
     }
 
     private string GuideChecklistInstruction(GuideBoss boss, GuidePhase phase, GuideMechanic mechanic, GuideSignal? live = null)
     {
-        if (mechanic.Advice is { } advice && advice.Language == GuideContentLanguage) return advice.Cue;
+        if (mechanic.Advice is { } advice && advice.Language == GuideContentLanguage) return GuideListFlow.Instruction(mechanic, advice.Cue);
         if (live == null) return GuideChecklistPresentation.Instruction(GuideRules.LiveGuidance(mechanic, phase, boss), GuideClientLanguage);
         var confirmed = _ws.Party[PartyState.PlayerSlot] is { IsDeadOrDestroyed: false } player && GuideAlertGuidance(live, player) != GuidanceKind.None;
         return GuideChecklistPresentation.Instruction(live.Guidance, GuideClientLanguage, confirmed);
@@ -321,11 +339,18 @@ public sealed partial class ForetellEngine
     }
 
     private bool GuideOwnsCentralPrediction(ActivePrediction prediction)
-        => GuideCentralPresentation.Owns(prediction, CentralGuideSignals());
+        => GuideOwnsCentralPrediction(prediction, CentralGuideSignals());
+
+    private bool GuideOwnsCentralPrediction(ActivePrediction prediction, GuideSignal[] displayed)
+    {
+        var actor = _ws.Actors.Find(prediction.CasterID);
+        return GuideCentralPresentation.Owns(prediction, displayed)
+            || GuideCentralPresentation.OwnsRelated(prediction, displayed, GuideSheetName("Action", prediction.ActionID, false), actor?.NameID ?? 0, actor?.OwnerID ?? 0);
+    }
 
     private GuideSignal[] CentralGuideSignals()
         => _cfg.GuideCentralAlerts && _ws.Party[PartyState.PlayerSlot] is { IsDeadOrDestroyed: false } player
-            ? GuideCentralPresentation.Select(LiveGuideSignals(), player.InstanceID) : [];
+            ? GuideCentralPresentation.Select(LiveGuideSignals().Where(signal => GuideCombatRelevance.IsActionable(signal.Mechanic)), player.InstanceID) : [];
 
     private void DrawGuideSidebar()
     {

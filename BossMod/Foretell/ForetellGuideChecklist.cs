@@ -10,7 +10,6 @@ public sealed partial class ForetellEngine
     private GuideListLayout? _guideListLayout;
     private int _guideListLayoutKey;
     private DateTime _guideListMeasuredAt;
-    private DateTime _guideListFlowStartedAt;
     private sealed record GuideListRow(GuidePhase Phase, GuideMechanic Mechanic, GuideSignal? Live, string Name, string Instruction, string[] Roles);
 
     private void DrawGuideChecklist()
@@ -19,39 +18,46 @@ public sealed partial class ForetellEngine
         var frame = _demoFrame?.Guide ?? _guideFrame;
         var boss = frame.Boss;
         var active = _demoFrame?.Guide.Active ?? LiveGuideSignals();
-        var rows = boss?.Phases.SelectMany(phase => phase.Mechanics.Select(mechanic => new GuideListRow(phase, mechanic,
-            active.FirstOrDefault(signal => ReferenceEquals(signal.Mechanic, mechanic)), GuideMechanicName(boss, mechanic),
-            GuideListFlow.Instruction(mechanic, GuideChecklistInstruction(boss, phase, mechanic)), _cfg.GuideRoleIcons ? GuideRolePresentation.Icons(mechanic.Advice?.Roles ?? []) : [])))
-            .Where(row => !_cfg.GuideCurrentPhaseOnly || row.Live != null || GuidePhaseSelection.Visible(frame, row.Phase, row.Mechanic)).ToArray() ?? [];
+        var rows = GuideCombatListPresentation.Select(frame, active, _ws.Party[PartyState.PlayerSlot]?.Class ?? Class.None, _cfg.GuideCurrentPhaseOnly)
+            .Select(entry => new GuideListRow(entry.Phase, entry.Mechanic, entry.Live, GuideMechanicName(boss!, entry.Mechanic),
+                GuideListFlow.Instruction(entry.Mechanic, GuideChecklistInstruction(boss!, entry.Phase, entry.Mechanic)),
+                _cfg.GuideRoleIcons ? GuideRolePresentation.Icons(entry.Mechanic.Advice?.Roles ?? []) : [])).ToArray();
+        var activeCount = rows.Count(row => row.Live != null);
         var viewport = ImGui.GetMainViewport();
         var size = FiniteViewport(viewport.Size) ? viewport.Size : new Vector2(1920, 1080);
         var padding = ImGui.GetStyle().WindowPadding;
         var heading = ImGui.GetTextLineHeight() * OverlayScale(_cfg.GuideScale) * 2 + ImGui.GetStyle().ItemSpacing.Y * 2 + 6;
         var chrome = _cfg.GuideChecklistUnlocked ? ImGui.GetFrameHeight() : 0;
         var available = size - padding * 2 - new Vector2(16, 16 + heading + chrome);
-        if (_cfg.GuideChecklistUnlocked && _guideChecklistWasUnlocked && _guideListEditSize.X > 0)
-            available = Vector2.Min(available, _guideListEditSize - padding * 2 - new Vector2(0, heading + chrome));
+        if (activeCount == 0 && _cfg.GuideChecklistUnlocked && _guideChecklistWasUnlocked && _guideListEditSize.X > 0)
+            available.X = Math.Min(available.X, _guideListEditSize.X - padding.X * 2);
         available = Vector2.Max(Vector2.One, available);
         var hash = new HashCode();
         hash.Add(available); hash.Add(_cfg.GuideWidth); hash.Add(_cfg.GuideHeight); hash.Add(_cfg.GuideScale); hash.Add(_cfg.GuideRowSpacing); hash.Add(ImGui.GetFontSize()); hash.Add(ImGui.GetFont().GetHashCode());
-        foreach (var row in rows) { hash.Add(row.Name); hash.Add(row.Instruction); hash.Add(row.Roles.Length); }
+        foreach (var row in rows) { hash.Add(row.Mechanic); hash.Add(row.Name); hash.Add(row.Instruction); hash.Add(row.Roles.Length); hash.Add(row.Live != null); }
         var key = hash.ToHashCode();
         if (_guideListLayout == null || key != _guideListLayoutKey || (_ws.CurrentTime - _guideListMeasuredAt).TotalSeconds >= 2)
         {
-            if (_guideListLayout == null || key != _guideListLayoutKey) _guideListFlowStartedAt = _ws.CurrentTime;
             _guideListLayout = GuideListFlow.Build(rows.Length, _cfg.GuideWidth, _cfg.GuideHeight - heading - chrome - padding.Y * 2, available, _cfg.GuideScale,
-                (index, width, scale, compact) => MeasureGuideListRow(rows[index].Name, rows[index].Instruction, rows[index].Roles.Length, width, scale, compact, _cfg.GuideRowSpacing));
+                (index, width, scale, compact) => MeasureGuideListRow(rows[index].Name, rows[index].Instruction, rows[index].Roles.Length, width, scale, compact, _cfg.GuideRowSpacing), activeCount);
             _guideListLayoutKey = key;
             _guideListMeasuredAt = _ws.CurrentTime;
         }
         var layout = _guideListLayout;
+        rows = rows[..layout.Heights.Length];
         var dimensions = Vector2.Min(size - new Vector2(8), new Vector2(layout.Width, Math.Max(rows.Length == 0 ? 60 : 1, layout.Height) + heading + chrome) + padding * 2);
-        if (_cfg.GuideChecklistUnlocked) dimensions.Y = Math.Clamp(_cfg.GuideHeight, Math.Min(180, size.Y), size.Y);
+        if (_cfg.GuideChecklistUnlocked) dimensions.Y = Math.Max(dimensions.Y, Math.Clamp(_cfg.GuideHeight, Math.Min(180, size.Y), size.Y));
         var position = viewport.Pos + new Vector2(_cfg.GuidePositionX < 0 ? 20 : _cfg.GuidePositionX * size.X,
             _cfg.GuidePositionY < 0 ? size.Y * .2f : _cfg.GuidePositionY * size.Y);
         position = Vector2.Clamp(position, viewport.Pos, viewport.Pos + Vector2.Max(Vector2.Zero, size - dimensions));
         if (!_cfg.GuideChecklistUnlocked || !_guideChecklistWasUnlocked)
         { ImGui.SetNextWindowPos(position, ImGuiCond.Always); ImGui.SetNextWindowSize(dimensions, ImGuiCond.Always); }
+        else if (activeCount > 0 && (_guideListEditSize.Y < dimensions.Y || _guideListEditSize.X < dimensions.X))
+        {
+            var expanded = Vector2.Min(size, Vector2.Max(_guideListEditSize, dimensions));
+            ImGui.SetNextWindowSize(expanded, ImGuiCond.Always);
+            ImGui.SetNextWindowPos(Vector2.Clamp(position, viewport.Pos, viewport.Pos + Vector2.Max(Vector2.Zero, size - expanded)), ImGuiCond.Always);
+        }
         ImGui.SetNextWindowSizeConstraints(new(Math.Min(260, size.X), _cfg.GuideChecklistUnlocked ? 180 : 1), size);
         ImGui.PushStyleColor(ImGuiCol.WindowBg, GuideColor(_cfg.GuideBackgroundColor));
         var visible = ImGui.Begin(GuideText("Foretell · drag / resize, then lock", "Foretell · déplacer / redimensionner, puis verrouiller", "Foretell · bewegen / skalieren, dann sperren", "Foretell・移動・サイズ変更後にロック") + "###ForetellGuideChecklist", GuideChecklistFlags(_cfg.GuideChecklistUnlocked));
@@ -99,12 +105,10 @@ public sealed partial class ForetellEngine
                 return;
             }
             var phaseName = frame.KnownPhase?.Name ?? "";
-            DrawGuideOverlayLine((phaseName.Length > 0 ? phaseName + " · " : "") + GuideText($"{rows.Length} mechanics", $"{rows.Length} mécaniques", $"{rows.Length} Mechaniken", $"{rows.Length}ギミック")
-                + (layout.Height > available.Y ? " · " + GuideText("auto-scroll", "défilement auto", "automatischer Bildlauf", "自動スクロール") : ""), _cfg.GuideTextColor);
+            DrawGuideOverlayLine((phaseName.Length > 0 ? phaseName + " · " : "") + GuideText($"{rows.Length} mechanics", $"{rows.Length} mécaniques", $"{rows.Length} Mechaniken", $"{rows.Length}ギミック"), _cfg.GuideTextColor);
             ImGui.SetWindowFontScale(1);
             var origin = ImGui.GetCursorScreenPos() + new Vector2(0, 6);
             var visibleHeight = Math.Max(1, ImGui.GetWindowPos().Y + ImGui.GetWindowSize().Y - padding.Y - origin.Y);
-            var offset = GuideListFlow.Offset(layout, visibleHeight, (_ws.CurrentTime - _guideListFlowStartedAt).TotalSeconds, Array.FindIndex(rows, row => row.Live != null));
             var clipEnd = origin + new Vector2(layout.Width, visibleHeight);
             ImGui.GetWindowDrawList().PushClipRect(origin, clipEnd, true);
             try
@@ -112,7 +116,7 @@ public sealed partial class ForetellEngine
                 for (var index = 0; index < rows.Length; ++index)
                 {
                     var row = rows[index];
-                    var rowPosition = origin + new Vector2(layout.Column[index] * (layout.ColumnWidth + GuideListFlow.Gap), layout.Top[index] - offset);
+                    var rowPosition = origin + new Vector2(layout.Column[index] * (layout.ColumnWidth + GuideListFlow.Gap), layout.Top[index]);
                     DrawGuideListRow(_cfg, rowPosition, layout.ColumnWidth, layout.Heights[index], layout.Scale, layout.Compact,
                         row.Name, row.Instruction, row.Roles, row.Live != null, row.Live == null ? null : Math.Max(0, (row.Live.Until - _ws.CurrentTime).TotalSeconds));
                     ImGui.SetCursorScreenPos(rowPosition);

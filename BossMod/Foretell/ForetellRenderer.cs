@@ -310,24 +310,26 @@ public sealed partial class ForetellEngine
                 return;
             }
             var playerContext = _ws.Party[PartyState.PlayerSlot];
-            var active = !_cfg.TextHints ? [] : ForetellDecisionCore.Prioritize(PresentationFrame, playerContext == null ? Vector2.Zero : V(playerContext.Position), playerContext?.InstanceID ?? 0)
-                .Select(h => h.Prediction).Where(p => p.Confidence >= _cfg.VisualConfidence / 100f && !GuideOwnsCentralPrediction(p)).Take(Math.Min(3, _cfg.MaxRenderedMechanics)).ToArray();
+            var active = !_cfg.TextHints ? [] : ForetellCentralPresentation.Predictions(ForetellDecisionCore.Prioritize(PresentationFrame,
+                playerContext == null ? Vector2.Zero : V(playerContext.Position), playerContext?.InstanceID ?? 0)
+                .Select(h => h.Prediction).Where(p => p.Confidence >= _cfg.VisualConfidence / 100f && !GuideOwnsCentralPrediction(p)));
             var terrainCue = _cfg.TextHints && _ws.Party[PartyState.PlayerSlot] is { } localPlayer
                 && ActiveDynamicTerrainWarnings().Any(w => ForetellArenaBoundaryCore.Contains(w.Points, V(localPlayer.Position)));
-            var hasActive = DrawGuideCentralHints() || active.Length != 0 || terrainCue;
-            for (var i = 0; i < active.Length; ++i)
+            var alerts = GuideCentralHints().ToList();
+            foreach (var prediction in active)
             {
-                var prediction = active[i];
-                if (i != 0) ImGui.Separator();
                 var remain = Math.Max(0, (prediction.Activation - _ws.CurrentTime).TotalSeconds);
                 var cue = GuidanceInstruction(prediction.Guidance, prediction.Kind, prediction.Geometry);
                 var label = UserFacingPredictionLabel(prediction);
-                DrawCentralAlert(_cfg, cue.Length > 0 ? cue : label, cue.Length > 0 ? label : "", remain,
-                    _ws.Actors.Find(prediction.CasterID)?.CastInfo?.TotalTime ?? 0);
+                var personal = playerContext != null && ForetellCentralPresentation.Personal(prediction, V(playerContext.Position), playerContext.InstanceID);
+                alerts.Add(new(cue.Length > 0 ? cue : label, cue.Length > 0 ? label : "", remain,
+                    _ws.Actors.Find(prediction.CasterID)?.CastInfo?.TotalTime ?? 0, prediction.Activation, personal, false));
             }
             if (terrainCue)
-                DrawCentralAlert(_cfg, GuideText("WATCH THE FLOOR", "SURVEILLE LE SOL", "BODEN BEACHTEN", "床に注意"), "", -1, 0);
-            if (!hasActive && _cfg.TextHintsUnlocked)
+                alerts.Add(new(GuideText("WATCH THE FLOOR", "SURVEILLE LE SOL", "BODEN BEACHTEN", "床に注意"), "", -1, 0, _ws.CurrentTime, true, false));
+            foreach (var alert in ForetellCentralPresentation.Select(alerts, _cfg.MaxRenderedMechanics))
+                DrawCentralAlert(_cfg, alert.Cue, alert.Label, alert.Remaining, alert.Total);
+            if (alerts.Count == 0 && _cfg.TextHintsUnlocked)
                 ImGui.TextDisabled(GuideText("Central alerts · drag to move", "Alertes centrales · déplacer ici", "Zentrale Warnungen · verschieben", "中央警告・ドラッグで移動"));
         }
         finally { ImGui.End(); }
@@ -530,8 +532,6 @@ public sealed partial class ForetellEngine
             DrawRadarCaption(draw, new(center.X - radius, legendY), column, ConfidenceColor(_cfg.VisualConfidence / 100f), "Learning");
             DrawRadarCaption(draw, new(center.X - radius + column, legendY), column, ConfidenceColor(_cfg.WarningConfidence / 100f), "Confident");
             DrawRadarCaption(draw, new(center.X - radius + 2 * column, legendY), column, ConfidenceColor(_cfg.SafeConfidence / 100f), "Very high");
-            DrawRadarCaption(draw, new(center.X - radius, legendY + ImGui.GetFontSize()), size,
-                Pack(165, 180, 195, 180), "Confidence · not damage severity");
         }
         else
             draw.AddText(new(center.X - radius, legendY), Pack(165, 180, 195, 180), "terrain only · guidance silent");

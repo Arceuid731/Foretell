@@ -73,8 +73,9 @@ public sealed partial class ForetellEngine
         changed |= ImGui.Checkbox(GuideText("Unlock mechanic list (drag / resize)", "Déverrouiller la liste (déplacer / redimensionner)", "Mechanikliste entsperren (bewegen / skalieren)", "ギミック一覧の移動・サイズ変更を許可"), ref _cfg.GuideChecklistUnlocked);
         changed |= ImGui.Checkbox(GuideText("Follow the current phase", "Suivre la phase actuelle", "Aktueller Phase folgen", "現在のフェーズに追従"), ref _cfg.GuideCurrentPhaseOnly);
         changed |= ImGui.Checkbox(GuideText("Role icons", "Icônes de rôle", "Rollensymbole", "ロールアイコン"), ref _cfg.GuideRoleIcons);
-        changed |= ImGui.SliderFloat(GuideText("Column width", "Largeur des colonnes", "Spaltenbreite", "列の幅"), ref _cfg.GuideWidth, 260, 1000, "%.0f");
-        changed |= ImGui.SliderFloat(GuideText("Maximum height (automatic when locked)", "Hauteur maximale (automatique une fois verrouillée)", "Maximale Höhe (gesperrt automatisch)", "最大高さ（ロック中は自動）"), ref _cfg.GuideHeight, 180, 1000, "%.0f");
+        ImGui.TextDisabled(GuideText("Full guide in Sources and guides", "Guide complet dans Sources et guides", "Vollständige Anleitung unter Quellen und Anleitungen", "攻略の全項目は原典と攻略に表示"));
+        changed |= ImGui.SliderFloat(GuideText("List width", "Largeur de la liste", "Listenbreite", "一覧の幅"), ref _cfg.GuideWidth, 260, 1000, "%.0f");
+        changed |= ImGui.SliderFloat(GuideText("Preferred height", "Hauteur souhaitée", "Bevorzugte Höhe", "一覧の高さ"), ref _cfg.GuideHeight, 180, 1000, "%.0f");
         changed |= ImGui.SliderFloat(GuideText("Text size", "Taille du texte", "Textgröße", "文字倍率"), ref _cfg.GuideScale, .7f, 2, "%.2f");
         changed |= ImGui.SliderFloat(GuideText("Row spacing", "Espacement des lignes", "Zeilenabstand", "行間"), ref _cfg.GuideRowSpacing, 0, 18, "%.0f");
         changed |= ImGui.SliderFloat(GuideText("Background opacity", "Opacité du fond", "Hintergrunddeckkraft", "背景の不透明度"), ref _cfg.GuidePanelOpacity, 0, 1, "%.2f");

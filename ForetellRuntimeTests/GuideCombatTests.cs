@@ -216,8 +216,8 @@ internal static class GuideCombatTests
         var fixture = SignalFixture();
         var phase = fixture.Boss.Phases[0];
         var first = new GuideSignal(fixture.Boss, phase, phase.Mechanics[0], GuideSignalKind.Cast, 10, 20, 30, 40, 0, fixture.Now.AddSeconds(3), GuidanceKind.Avoid, "fixture");
-        var second = first with { SourceID = 12, ID = 41, Until = first.Until.AddSeconds(1) };
-        var third = first with { SourceID = 13, ID = 42, Until = first.Until.AddSeconds(2) };
+        var second = first with { SourceID = 12, ID = 41, Until = first.Until.AddSeconds(2) };
+        var third = first with { SourceID = 13, ID = 42, Until = first.Until.AddSeconds(4) };
         var displayed = GuideCentralPresentation.Select([third, second, first], fixture.Player.InstanceID);
         Check(displayed.SequenceEqual([first, second]), "Central alert selection lost its two-signal limit or time ordering");
         var prediction = new ActivePrediction(first.SourceID, first.ID, GeometryKind.Circle, MechanicKind.GroundAOE,

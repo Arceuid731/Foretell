@@ -221,8 +221,10 @@ internal static class GuideCacheTests
         public Task<string> Analyze(string system, string source, object schema, int outputTokens, CancellationToken cancellation)
         {
             cancellation.ThrowIfCancellationRequested();
-            return Task.FromResult(system.StartsWith("Read the ENTIRE", StringComparison.Ordinal)
-                ? JsonSerializer.Serialize(new { bosses = new[] { new { name = "Sentinel", passages = new[] { Passage } } } }) : Response("2"));
+            if (system.StartsWith("Read the ENTIRE", StringComparison.Ordinal))
+                return Task.FromResult(JsonSerializer.Serialize(new { bosses = new[] { new { name = "Sentinel", passages = new[] { Passage } } } }));
+            var paragraph = source.Split('\n').First(line => line.StartsWith('[') && line.Contains("Hammer: Heavy damage to the tank.", StringComparison.Ordinal));
+            return Task.FromResult(Response(paragraph[1..paragraph.IndexOf(']')]));
         }
         public void Dispose() { }
     }

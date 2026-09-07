@@ -176,11 +176,36 @@ internal sealed class GuideActionQueue
 internal static class GuideCentralPresentation
 {
     public static GuideSignal[] Select(IEnumerable<GuideSignal> signals, ulong playerID)
-        => playerID == 0 ? [] : signals.OrderByDescending(signal => signal.TargetID == playerID).ThenBy(signal => signal.Until).Take(2).ToArray();
+    {
+        if (playerID == 0) return [];
+        List<GuideSignal> selected = [];
+        foreach (var signal in signals.OrderByDescending(signal => signal.TargetID == playerID).ThenBy(signal => signal.Until))
+        {
+            if (selected.Any(previous => SameOccurrence(previous, signal))) continue;
+            selected.Add(signal);
+            if (selected.Count == 2) break;
+        }
+        return selected.ToArray();
+    }
+
+    internal static bool SameOccurrence(GuideSignal first, GuideSignal second)
+        => ReferenceEquals(first.Boss, second.Boss) && ReferenceEquals(first.Mechanic, second.Mechanic)
+            && first.Kind == second.Kind && (first.Kind == GuideSignalKind.Cast || first.ID == second.ID)
+            && Math.Abs((first.Until - second.Until).TotalSeconds) <= 1
+            && (first.Kind != GuideSignalKind.Status || first.TargetID == second.TargetID);
 
     public static bool Owns(ActivePrediction prediction, IEnumerable<GuideSignal> displayed)
         => displayed.Any(signal => signal.Kind == GuideSignalKind.Cast && signal.SourceID == prediction.CasterID && signal.ID == prediction.ActionID
             && Math.Abs((signal.Until - prediction.Activation).TotalSeconds) < .4
+            && (signal.Mechanic.Advice != null || prediction.Guidance is GuidanceKind.None or GuidanceKind.Marker || signal.Guidance == prediction.Guidance));
+
+    internal static bool OwnsRelated(ActivePrediction prediction, IEnumerable<GuideSignal> displayed, string actionName, uint casterNameID, ulong ownerID)
+        => actionName.Length > 0 && displayed.Any(signal => signal.Kind == GuideSignalKind.Cast
+            && (signal.SourceID == prediction.CasterID || (ownerID != 0
+                ? ownerID == signal.SourceID || signal.OwnerID != 0 && ownerID == signal.OwnerID
+                : casterNameID != 0 && casterNameID == signal.SourceNameID))
+            && Math.Abs((signal.Until - prediction.Activation).TotalSeconds) <= 1
+            && GuideSynchronization.MatchesCast(signal.Mechanic, actionName)
             && (signal.Mechanic.Advice != null || prediction.Guidance is GuidanceKind.None or GuidanceKind.Marker || signal.Guidance == prediction.Guidance));
 }
 

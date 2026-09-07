@@ -1,9 +1,9 @@
-# Foretell 0.13.4 — analysis logs and reliable phase fallback
+# Foretell 0.13.5 — focused mechanics and grouped alerts
 
-- Open **Local AI → Analysis log** to inspect prompts, responses, request durations, tokens, retries, validation errors and engine messages. Recording is enabled by default and can be disabled.
-- Keep recent logs across restarts, including manual preparation outside an instance. Export a standalone diagnostic ZIP directly from the log window.
-- Show the current analysis step and a useful error message when preparation fails. The log window is resizable.
-- Keep validated mechanics when the model supplies invalid optional phase references, instead of repeatedly rebuilding and rejecting the whole boss guide. Uncertain phase filtering is disabled; mechanic evidence and instructions still require validation.
-- Preserve partial failed responses and HTTP errors in diagnostics; enforce request timeouts through the complete response read.
+- Show a short, readable combat list instead of shrinking the entire boss guide onto the screen. Active mechanics take priority; the complete guide remains in Sources and guides.
+- Group simultaneous zones from the same attack into one central notification. Guide and generic notifications share a two-alert limit, with immediate personal warnings first. World and radar zones remain visible.
+- Use the matching guide tip for named current-boss helper casts, instead of reverting to generic text as the main cast ends.
+- Keep cinematic wait/keep-attacking notes out of central alerts, while preserving genuine conditional instructions.
+- Preserve original phase headings during analysis. Analyze the full source and repair uncertain phase references separately, without rewriting the mechanics. Request another full model response only when validation fails.
 
-Existing prepared guides remain usable. Retry a previously failed analysis after updating.
+Existing prepared guides remain available. Re-analyze an older guide once to rebuild its phase information with this version.

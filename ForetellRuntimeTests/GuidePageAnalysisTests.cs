@@ -16,6 +16,7 @@ internal static class GuidePageAnalysisTests
         Check(source.Bosses.Length == 0 && source.Page!.Text.Contains("END OF GUIDE") && source.Page.Html == Html, "Downloader performed semantic cutting or lost the complete page");
         Check(GuideModelCatalog.Profiles.Select(profile => profile.ID).Distinct().Count() == 3 && GuideModelCatalog.Profiles.All(profile => profile.Asset.Hash.Length == 64 && profile.MaximumContext >= 32768), "Model catalog lacks three pinned profiles");
         var profile = GuideModelCatalog.Get(GuideModelCatalog.DefaultID);
+        await GuideAnalysisReviewTests.Run();
         VerifyEvidenceAndConditions(source, profile);
         await VerifyDuskVigilSources(profile);
         using var model = new PageModel();
@@ -35,7 +36,7 @@ internal static class GuidePageAnalysisTests
         var splitSource = source with { Page = source.Page! with { Text = source.Page.Text + "\n" + new string('x', 4000) + "\n" + source.Page.Text } };
         var splitPrepared = await GuidePageAnalysis.Compile(splitSource, GuideLanguage.French, profile, 32768, splitModel, (_, _) => { }, CancellationToken.None);
         Check(splitPrepared.Bosses.Length == 1 && splitPrepared.MechanicCount == 2 && splitPrepared.Coverage.Length > 1
-            && splitModel.DetailCalls == 2, "Physical source partitions repeated boss analysis instead of merging selected passages first");
+            && splitModel.DetailCalls == 1, "Physical source partitions repeated boss analysis instead of validating the complete draft directly");
         Check(prepared.Bosses.Single().Name == "Sentinel" && prepared.MechanicCount == 2, "Model-selected boss/mechanic grouping lost an entry");
         var mechanics = prepared.Bosses.Single().Phases.Single().Mechanics;
         Check(mechanics[0].Advice!.Cue == "Tank : prépare ta mitigation" && mechanics[1].Advice!.Cue == "Soigne le groupe", "AI instructions not preserved for list/central display");
@@ -128,7 +129,7 @@ internal static class GuidePageAnalysisTests
         using var model = new DuskVigilModel();
         var partials = new List<GuideDocument>();
         var prepared = await GuidePageAnalysis.Compile(source, GuideLanguage.English, profile, 32768, model, (_, _) => { }, CancellationToken.None, partials.Add);
-        Check(model.OutlineCalls == 1 && model.DetailCalls == 6, "Multiple source excerpts created separate bosses or repeated detail analysis");
+        Check(model.OutlineCalls == 1 && model.DetailCalls == 3, "Multiple source excerpts created separate bosses or repeated valid draft analysis");
         Check(prepared.Bosses.Select(boss => boss.Name).SequenceEqual(DuskVigilModel.Names), "Ordinal source mapping changed the named encounter roster/order");
         Check(partials.Count == 3 && partials.All(document => document.Bosses.Select(boss => boss.Name).SequenceEqual(DuskVigilModel.Names)),
             "Partial analysis lost/reordered unprepared boss placeholders");
@@ -139,7 +140,7 @@ internal static class GuidePageAnalysisTests
         var mechanics = opinicus.Phases.SelectMany(phase => phase.Mechanics).ToArray();
         Check(mechanics.Select(mechanic => mechanic.Name).SequenceEqual(DuskVigilModel.Abilities[2]), "Third boss lost a named ability or merged two rubble mechanics");
         var whirl = mechanics.Single(mechanic => mechanic.Name == "Whirling Gaol");
-        Check(whirl.Advice!.Cue == "Hide behind a pile of rubble" && whirl.Advice.Evidence.Contains(DuskVigilModel.WorkbookWhirlwind),
+        Check(whirl.Advice!.Cue == "Hide behind a pile of rubble" && whirl.Advice.Evidence.Any(evidence => evidence.Contains(DuskVigilModel.WorkbookWhirlwind, StringComparison.Ordinal)),
             "Anonymous Third Boss strategy did not survive in the named boss instruction");
         Check(GuideSourceAssembly.EvidenceSources(prepared, whirl.Advice).Select(page => page.Provider).ToHashSet()
             .SetEquals(["Console Games Wiki", "Community Workbook"]), "Combined third-boss instruction lost its separate source provenance");
@@ -189,13 +190,18 @@ internal static class GuidePageAnalysisTests
             ++DetailCalls;
             var bossIndex = Array.FindIndex(Names, name => source.StartsWith("Boss: " + name + "\n", StringComparison.Ordinal));
             Check(bossIndex >= 0, "Detail analysis received an anonymous/unknown boss");
-            Check(source.Contains(WorkbookWhirlwind) == (bossIndex == 2), "Ordinal Third Boss passage was omitted or passed to another boss");
+            Check(source.Contains(WorkbookWhirlwind) && Names.All(source.Contains), "Full-page boss analysis lost worksheet context or the named roster");
+            string Citation(string text)
+            {
+                var line = source.Split('\n').First(line => line.StartsWith('[') && line.Contains(text, StringComparison.Ordinal));
+                return line[1..line.IndexOf(']')];
+            }
             var name = Names[bossIndex];
             var cues = bossIndex == 2 ? new[] { "Tank: mitigate", "Dodge the line", "Move out of the marked area", "Hide behind a pile of rubble", "Hide behind rubble from the boss" } : ["Tank: mitigate"];
             var mechanics = Abilities[bossIndex].Select((ability, index) => new
             {
                 name = ability, displayName = ability, cue = cues[index], description = cues[index], triggerKind = "cast", triggerName = ability,
-                evidence = bossIndex == 2 && ability == "Whirling Gaol" ? new[] { "4", "6" } : [(index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)],
+                evidence = bossIndex == 2 && ability == "Whirling Gaol" ? new[] { Citation(Passages[bossIndex][index]), Citation(WorkbookWhirlwind) } : [Citation(Passages[bossIndex][index])],
                 responses = Array.Empty<GuideResponse>()
             });
             return Task.FromResult(JsonSerializer.Serialize(new { summary = "Prepare for the next boss.", bosses = new[] { new { name, displayName = name, summary = "Prepare for the next boss.", mechanics } } }));

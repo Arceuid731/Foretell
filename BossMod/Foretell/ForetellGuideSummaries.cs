@@ -129,7 +129,8 @@ internal sealed class ForetellGuideSummaries : IDisposable
     private void CancelLatest()
     {
         if (_latest is not { } latest) return;
-        latest.Cancellation.Cancel();
+        _latest = null;
+        if (!latest.Finished) latest.Cancellation.Cancel();
         if (latest.Finished) latest.Cancellation.Dispose();
     }
 
@@ -290,7 +291,7 @@ internal sealed class ForetellGuideSummaries : IDisposable
         lock (_gate)
         {
             if (_disposed) return;
-            _disposed = true; _lifetime.Cancel(); CancelLatest(); _activity.Cancel();
+            _disposed = true; CancelLatest(); _activity.Cancel(); _lifetime.Cancel();
             _queue.Writer.TryComplete();
             if (_queue.Reader.TryRead(out var dropped)) dropped.Cancellation.Dispose();
         }

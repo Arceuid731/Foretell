@@ -105,12 +105,44 @@ internal static class GuideJournalTests
             var prepared = GuidePageAnalysis.Compile(source, GuideLanguage.English, GuideModelCatalog.Get(GuideModelCatalog.DefaultID), 65536,
                 model, (done, total) => Console.WriteLine($"Boss progress: {done}/{total}"), cancellation.Token, null,
                 step => { session.Step(step); Console.WriteLine($"{step.Stage}: {step.Boss} #{step.Attempt} {step.Detail}"); }).GetAwaiter().GetResult();
+            Check(GuidePageAnalysis.ValidPrepared(prepared, source, GuideLanguage.English, GuideModelCatalog.Get(GuideModelCatalog.DefaultID)),
+                "Real model output failed prepared-cache validation.");
             session.Finish("Ready");
             File.WriteAllText(Path.Combine(output, "prepared.json"), JsonSerializer.Serialize(prepared, GuideAnalysisJournal.Json));
             Console.WriteLine($"Prepared: {prepared.Bosses.Length} bosses, {prepared.MechanicCount} mechanics");
+            foreach (var boss in prepared.Bosses)
+            {
+                Console.WriteLine($"Boss {boss.Name}: {boss.PhaseDefinitions.Length} phases; {boss.Phases.Sum(phase => phase.Mechanics.Count(GuideCombatRelevance.IsActionable))} actionable mechanics");
+                foreach (var phase in boss.PhaseDefinitions)
+                    Console.WriteLine($"Phase {phase.Name}: {boss.Phases.Sum(section => section.Mechanics.Count(mechanic => GuidePhases.Includes(boss, mechanic, phase)))} mechanics");
+            }
         }
         catch (Exception error) { session.Finish("Failed", error); throw; }
         finally { Console.WriteLine("Diagnostic: " + session.Report.FilePath); }
+    }
+
+    public static void ReproducePhases(string input, string runtime, string output)
+    {
+        var document = JsonSerializer.Deserialize<GuideDocument>(File.ReadAllText(input), GuideAnalysisJournal.Json)!;
+        output = Path.GetFullPath(output);
+        var journal = new GuideAnalysisJournal(output);
+        var session = journal.Begin(document, GuideModelCatalog.DefaultID, true, 65536, 12, true);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        using var model = new ForetellGuideLocalModel(Path.GetFullPath(runtime), true, 65536, 12);
+        model.ExchangeTrace = session.Exchange;
+        model.RuntimeTrace = session.Runtime;
+        try
+        {
+            model.Start(progress => Console.WriteLine(progress.Stage), cancellation.Token).GetAwaiter().GetResult();
+            var prepared = GuidePageAnalysis.RepairPhasePlan(document, document.Page!.Text, model, cancellation.Token,
+                step => { session.Step(step); Console.WriteLine($"{step.Stage}: {step.Detail}"); }).GetAwaiter().GetResult();
+            Check(GuidePageAnalysis.ValidPrepared(prepared, document, GuideLanguage.English, GuideModelCatalog.Get(GuideModelCatalog.DefaultID)), "Repaired phases failed cache validation.");
+            session.Finish("Ready");
+            File.WriteAllText(Path.Combine(output, "prepared.json"), JsonSerializer.Serialize(prepared, GuideAnalysisJournal.Json));
+            foreach (var boss in prepared.Bosses)
+                Console.WriteLine($"Boss {boss.Name}: {boss.PhaseDefinitions.Length} phases: {string.Join(", ", boss.PhaseDefinitions.Select(phase => phase.Name))}");
+        }
+        catch (Exception error) { session.Finish("Failed", error); throw; }
     }
 
     public static void Replay(string log, string output)

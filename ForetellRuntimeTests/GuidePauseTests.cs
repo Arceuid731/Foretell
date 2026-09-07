@@ -90,7 +90,7 @@ internal static class GuidePauseTests
                 config.GuidePauseInCombat = false;
                 Update(true);
                 pending = await model.Next();
-                Check(model.Outlines == 1 && model.SentinelCalls == 2, "Resuming repeated completed analysis requests.");
+                Check(model.Outlines == 1 && model.SentinelCalls == 1, "Resuming repeated completed analysis requests.");
                 Check(model.Starts == repetition + 2 && service.Snapshot is { Completed: 1, Total: 2, Prepared.MechanicCount: 1 },
                     "Model restart lost completed boss progress.");
                 Check(service.Snapshot?.RemainingSeconds == null, "Replayed responses produced a misleading remaining-time estimate.");
@@ -98,16 +98,14 @@ internal static class GuidePauseTests
                     "Installing or starting reset the displayed progress.");
             }
             pending.Release.TrySetResult();
-            (await model.Next()).Release.TrySetResult();
             await WaitFor(() => service.Snapshot?.Stage == "Ready");
-            Check(service.Snapshot?.Prepared?.MechanicCount == 2 && model.Outlines == 1 && model.SentinelCalls == 2,
+            Check(service.Snapshot?.Prepared?.MechanicCount == 2 && model.Outlines == 1 && model.SentinelCalls == 1,
                 "The resumed guide did not finish without recomputing completed bosses.");
             service.Retry(true);
             Update(true);
             (await model.Next()).Release.TrySetResult();
-            (await model.Next()).Release.TrySetResult();
             await WaitFor(() => service.Snapshot?.Stage == "Ready");
-            Check(model.Outlines == 2 && model.SentinelCalls == 4, "Explicit retry during unpaused combat did not refresh analysis.");
+            Check(model.Outlines == 2 && model.SentinelCalls == 2, "Explicit retry during unpaused combat did not refresh analysis.");
         }
         finally
         {
@@ -179,12 +177,13 @@ internal static class GuidePauseTests
             var boss = sentinel ? "Sentinel" : "Keeper";
             var ability = sentinel ? "Hammer" : "Pulse";
             var instruction = sentinel ? "Tank: mitigate" : "Heal the group";
+            var paragraph = source.Split('\n').First(line => line.StartsWith('[') && line.Contains(ability + ":", StringComparison.Ordinal));
             return JsonSerializer.Serialize(new { summary = instruction, bosses = new[] { new
             {
                 name = boss, displayName = boss, summary = instruction, mechanics = new[] { new
                 {
                     name = ability, displayName = ability, cue = instruction, description = instruction,
-                    triggerKind = "cast", triggerName = ability, evidence = new[] { "2" }, responses = Array.Empty<GuideResponse>()
+                    triggerKind = "cast", triggerName = ability, evidence = new[] { paragraph[1..paragraph.IndexOf(']')] }, responses = Array.Empty<GuideResponse>()
                 } }
             } } });
         }

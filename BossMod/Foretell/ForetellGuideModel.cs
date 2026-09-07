@@ -39,6 +39,7 @@ internal sealed record GuideAdvice(GuideLanguage Language, string DisplayName, s
     public GuideResponse[] Responses { get; init; } = [];
     public string[] Roles { get; init; } = [];
     public string Conflict { get; init; } = "";
+    public bool ContextOnly { get; init; }
 }
 internal sealed record GuideBoss(string Name, string Anchor, GuidePhase[] Phases)
 {
