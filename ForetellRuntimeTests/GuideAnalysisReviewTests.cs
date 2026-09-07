@@ -98,7 +98,7 @@ internal static class GuideAnalysisReviewTests
             catch (GuideContextException) { }
             Check(model.ContextRejections == 2 && model.Drafts == 2 && model.Reviews == 0, "Context failure repeated requests indefinitely.");
         }
-        VerifyTwoPhaseHierarchy(Source() with { Page = Source().Page! with { Text = """
+        var phaseSource = """
             The Ultima Weapon
             Phase 1
             Part 1: Titan
@@ -109,7 +109,9 @@ internal static class GuideAnalysisReviewTests
             Hellfire: Heal through this ultimate attack.
             Phase 2
             Homing Lasers: This is a high-damage attack on the tank.
-            """ } });
+            """;
+        foreach (var newline in new[] { "\n", "\r\n" })
+            VerifyTwoPhaseHierarchy(Source() with { Page = Source().Page! with { Text = phaseSource.ReplaceLineEndings(newline) } });
         var recording = Environment.GetEnvironmentVariable("FORETELL_ANALYSIS_REPLAY");
         if (!string.IsNullOrWhiteSpace(recording)) Replay(recording);
         Console.WriteLine("Validation-first analysis: two calls for valid drafts, bounded full review on failure, phase-only repair and strict source evidence passed.");
@@ -292,7 +294,7 @@ internal static class GuideAnalysisReviewTests
     private static void VerifyTwoPhaseHierarchy(GuideDocument source)
     {
         var paragraphs = GuidePageAnalysis.Paragraphs(source.Page!.Text);
-        string Heading(string name) => (Array.FindIndex(paragraphs, paragraph => paragraph == name) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string Heading(string name) => (Array.FindIndex(paragraphs, paragraph => paragraph.TrimEnd('\r') == name) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
         string Ability(string name) => (Array.FindIndex(paragraphs, paragraph => paragraph.StartsWith(name + ":", StringComparison.Ordinal)) + 1)
             .ToString(System.Globalization.CultureInfo.InvariantCulture);
         JsonObject Attack(string name, string cue, string phaseID, string phaseLabel)

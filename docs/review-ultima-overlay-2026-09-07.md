@@ -26,4 +26,6 @@ Intermediate experiments are not release results: preserving headings only in th
 
 Detached runtime and native ImGui tests cover grouping, preserved spatial footprints, named helper identity, role selection, routine/conditional instructions, readable list layout, validation-first preparation, strict evidence, cache compatibility and documented phase transitions. Tests use the noninteractive host and do not open visible process windows.
 
+A clean Windows checkout exposed a test-fixture heading lookup that assumed LF-only lines. The lookup now ignores the trailing carriage return while retaining the original evidence, and the phase regression explicitly runs with both LF and CRLF source text.
+
 Existing prepared guides are retained. Re-analyze an existing guide after updating to rebuild its phase metadata and newly classified context entries.
