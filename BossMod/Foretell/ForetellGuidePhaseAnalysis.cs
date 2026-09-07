@@ -27,9 +27,9 @@ internal static partial class GuidePageAnalysis
                 {
                     type = "object", additionalProperties = false, required = new[] { "name", "evidence", "mechanics" }, properties = new
                     {
-                        name = Text(120), evidence = new { type = "string", @enum = Enumerable.Range(1, paragraphs.Length).Select(index => index.ToString()).ToArray() },
+                        name = Text(120), evidence = CitationSchema(paragraphs.Length),
                         mechanics = new { type = "array", maxItems = mechanics.Length, uniqueItems = true,
-                            items = new { type = "string", @enum = Enumerable.Range(1, mechanics.Length).Select(index => index.ToString()).ToArray() } }
+                            items = CitationSchema(mechanics.Length) }
                     }
                 } }
             }

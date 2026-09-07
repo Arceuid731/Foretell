@@ -53,6 +53,7 @@ internal static class GuideAnalysisReviewTests
     {
         VerifyOutlineReferences();
         VerifyGrounding();
+        VerifyBossTitleIsNotPhase();
         foreach (var defect in new[] { "none", "missing-heading", "duplicate", "boss", "rename", "evidence", "phase" })
         {
             using var model = new ValidationModel(defect);
@@ -145,6 +146,29 @@ internal static class GuideAnalysisReviewTests
         Reject(() => Parse(WithMechanics(conflict)));
     }
 
+    private static void VerifyBossTitleIsNotPhase()
+    {
+        foreach (var newline in new[] { "\n", "\r\n" })
+        {
+            var source = Source();
+            source = source with { Page = source.Page! with { Text = source.Page.Text.ReplaceLineEndings(newline) } };
+            var paragraphs = GuidePageAnalysis.Paragraphs(source.Page.Text);
+            var document = GuidePageAnalysis.Parse(source, source.Page.Text, GuidePageAnalysis.ResolveEvidence(Draft().ToJsonString(), paragraphs),
+                GuideLanguage.English, Profile);
+            var plan = JsonSerializer.Serialize(new { phases = new[] { new { name = "Sentinel", evidence = "1", mechanics = new[] { "1", "2" } } } });
+            Reject(() => GuidePageAnalysis.ApplyPhasePlan(document, source.Page.Text, plan));
+            var invalid = Draft();
+            invalid["bosses"]![0]!["phaseDefinitions"] = JsonSerializer.SerializeToNode(new[] { new GuidePhaseDefinition("boss", "Sentinel", ["1"]) }, Json);
+            Reject(() => GuidePageAnalysis.Parse(source, source.Page.Text, GuidePageAnalysis.ResolveEvidence(invalid.ToJsonString(), paragraphs),
+                GuideLanguage.English, Profile));
+            var warnings = new List<string>();
+            var cleaned = GuidePageAnalysis.PreparePhaseMetadata(invalid.ToJsonString(), paragraphs, warnings.Add);
+            var recovered = GuidePageAnalysis.Parse(source, source.Page.Text, GuidePageAnalysis.ResolveEvidence(cleaned, paragraphs), GuideLanguage.English, Profile);
+            Check(warnings.Count == 1 && recovered.Bosses.Single().PhaseDefinitions.Length == 0 && recovered.MechanicCount == document.MechanicCount,
+                "Rejecting a boss-title phase discarded grounded mechanics or retained the invented phase.");
+        }
+    }
+
     private sealed class ValidationModel(string defect) : IGuideSummaryModel
     {
         public int Outlines;
@@ -170,6 +194,11 @@ internal static class GuideAnalysisReviewTests
             if (system.StartsWith("Identify ONLY", StringComparison.Ordinal))
             {
                 ++PhaseCalls;
+                var phaseSchema = JsonSerializer.SerializeToNode(schema)!;
+                var phase = phaseSchema["properties"]!["phases"]!["items"]!["properties"]!;
+                GuideBatchAnalysisTests.VerifyCompactCitation(phase["evidence"]!);
+                GuideBatchAnalysisTests.VerifyCompactCitation(phase["mechanics"]!["items"]!);
+                Check(phaseSchema.ToJsonString().Length < 1500, "Phase-only schema repeated its citation catalogue.");
                 Check(source.Contains("[2] Opening phase", StringComparison.Ordinal) && source.Contains("<mechanic-catalogue>", StringComparison.Ordinal)
                     && Reviews == 0, "Phase repair did not retain whole-source evidence independently of full review.");
                 return Task.FromResult("{\"phases\":[{\"name\":\"Opening phase\",\"evidence\":\"2\",\"mechanics\":[\"1\"]}]}");

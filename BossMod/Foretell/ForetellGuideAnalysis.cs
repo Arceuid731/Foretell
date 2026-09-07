@@ -213,8 +213,10 @@ internal static partial class GuidePageAnalysis
             .Select(group => new BossSection(group.First().Name, group.SelectMany(section => section.Passages).Distinct().ToArray())).ToArray();
         var local = new List<GuideDocument>();
         progress(0, groupedSections.Length);
+        var drafts = await DraftBosses(source, groupedSections.Select(section => section.Name).ToArray(), language, contextTokens, model, cancellation, trace).ConfigureAwait(false);
         foreach (var section in groupedSections)
         {
+            cancellation.ThrowIfCancellationRequested();
             var name = section.Name;
             var selected = page.Text;
             var paragraphs = Paragraphs(selected);
@@ -233,7 +235,7 @@ internal static partial class GuidePageAnalysis
             var focused = FocusedSource(paragraphs);
             GuideDocument? parsed = null;
             var correction = "";
-            string? draft = null;
+            string? draft = drafts.GetValueOrDefault(GuideNames.Boss(name));
             var completeReview = false;
             var wholeSource = true;
             var schema = CitedSchema(paragraphs.Length);
@@ -308,6 +310,7 @@ internal static partial class GuidePageAnalysis
             }
             progress(local.Count, groupedSections.Length);
         }
+        cancellation.ThrowIfCancellationRequested();
         results.AddRange(local);
 
         var bosses = results.SelectMany(result => result.Bosses).ToArray();
@@ -338,12 +341,15 @@ internal static partial class GuidePageAnalysis
     private static object CitedOutlineSchema(int paragraphs)
     {
         var schema = JsonSerializer.SerializeToNode(OutlineSchema)!;
-        schema["properties"]!["bosses"]!["items"]!["properties"]!["passages"]!["items"] = JsonSerializer.SerializeToNode(new
-        {
-            type = "string", @enum = Enumerable.Range(1, paragraphs).Select(index => index.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray()
-        });
+        schema["properties"]!["bosses"]!["items"]!["properties"]!["passages"]!["items"] = JsonSerializer.SerializeToNode(CitationSchema(paragraphs));
         return schema;
     }
+
+    private static object CitationSchema(int paragraphs) => new
+    {
+        type = "string", pattern = "^[1-9][0-9]*$",
+        maxLength = Math.Max(1, paragraphs.ToString(System.Globalization.CultureInfo.InvariantCulture).Length)
+    };
 
     internal static string[] ResolveOutlinePassages(string source, string[] references)
     {
@@ -399,7 +405,7 @@ internal static partial class GuidePageAnalysis
         var schema = JsonSerializer.SerializeToNode(Schema)!;
         var bossProperties = schema["properties"]!["bosses"]!["items"]!["properties"]!;
         var mechanicProperties = bossProperties["mechanics"]!["items"]!["properties"]!;
-        var citation = new { type = "string", @enum = Enumerable.Range(1, paragraphs).Select(index => index.ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray() };
+        var citation = CitationSchema(paragraphs);
         mechanicProperties["evidence"]!["items"] = JsonSerializer.SerializeToNode(citation);
         bossProperties["phaseDefinitions"]!["items"]!["properties"]!["evidence"]!["items"] = JsonSerializer.SerializeToNode(citation);
         mechanicProperties["phaseMemberships"]!["items"]!["properties"]!["evidence"]!["items"] = JsonSerializer.SerializeToNode(citation);
@@ -640,6 +646,7 @@ internal static partial class GuidePageAnalysis
     {
         if (boss.PhaseDefinitions == null || boss.PhaseDefinitions.Length > 16 || boss.PhaseDefinitions.Any(phase => phase == null
             || !ValidText(phase.ID, 64, true) || !ValidText(phase.Name, 120, true) || !GroundedEvidence(phase.Evidence, passage)
+            || GuideNames.Boss(phase.Name) == GuideNames.Boss(boss.Name)
             || !phase.Evidence.Any(quote => MentionsPhase(quote, phase.Name))))
             throw new InvalidDataException("Phase definitions require original source labels and verbatim evidence. Use [] when phases are undocumented.");
         if (boss.PhaseDefinitions.Select(phase => GuideNames.Normalize(phase.ID)).Distinct().Count() != boss.PhaseDefinitions.Length

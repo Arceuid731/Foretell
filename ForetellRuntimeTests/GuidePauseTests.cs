@@ -166,6 +166,7 @@ internal static class GuidePauseTests
                     new { name = "Keeper", passages = new[] { "Keeper\nPulse: Everyone takes damage." } }
                 } });
             }
+            if (source.Contains("Requested bosses:", StringComparison.Ordinal)) throw new GuideOutputException();
             var sentinel = source.StartsWith("Boss: Sentinel", StringComparison.Ordinal);
             if (sentinel) ++SentinelCalls;
             else

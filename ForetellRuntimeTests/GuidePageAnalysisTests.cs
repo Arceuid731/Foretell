@@ -17,6 +17,7 @@ internal static class GuidePageAnalysisTests
         Check(GuideModelCatalog.Profiles.Select(profile => profile.ID).Distinct().Count() == 3 && GuideModelCatalog.Profiles.All(profile => profile.Asset.Hash.Length == 64 && profile.MaximumContext >= 32768), "Model catalog lacks three pinned profiles");
         var profile = GuideModelCatalog.Get(GuideModelCatalog.DefaultID);
         await GuideAnalysisReviewTests.Run();
+        await GuideBatchAnalysisTests.Run();
         VerifyEvidenceAndConditions(source, profile);
         await VerifyDuskVigilSources(profile);
         using var model = new PageModel();
@@ -129,7 +130,7 @@ internal static class GuidePageAnalysisTests
         using var model = new DuskVigilModel();
         var partials = new List<GuideDocument>();
         var prepared = await GuidePageAnalysis.Compile(source, GuideLanguage.English, profile, 32768, model, (_, _) => { }, CancellationToken.None, partials.Add);
-        Check(model.OutlineCalls == 1 && model.DetailCalls == 3, "Multiple source excerpts created separate bosses or repeated valid draft analysis");
+        Check(model.OutlineCalls == 1 && model.DetailCalls == 1, "Mixed-source roster was not prepared in one global draft after the outline");
         Check(prepared.Bosses.Select(boss => boss.Name).SequenceEqual(DuskVigilModel.Names), "Ordinal source mapping changed the named encounter roster/order");
         Check(partials.Count == 3 && partials.All(document => document.Bosses.Select(boss => boss.Name).SequenceEqual(DuskVigilModel.Names)),
             "Partial analysis lost/reordered unprepared boss placeholders");
@@ -188,23 +189,25 @@ internal static class GuidePageAnalysisTests
                 return Task.FromResult(JsonSerializer.Serialize(new { bosses }));
             }
             ++DetailCalls;
-            var bossIndex = Array.FindIndex(Names, name => source.StartsWith("Boss: " + name + "\n", StringComparison.Ordinal));
-            Check(bossIndex >= 0, "Detail analysis received an anonymous/unknown boss");
+            Check(source.Contains("Requested bosses: " + string.Join(", ", Names), StringComparison.Ordinal), "Global draft lost the named encounter roster");
             Check(source.Contains(WorkbookWhirlwind) && Names.All(source.Contains), "Full-page boss analysis lost worksheet context or the named roster");
             string Citation(string text)
             {
                 var line = source.Split('\n').First(line => line.StartsWith('[') && line.Contains(text, StringComparison.Ordinal));
                 return line[1..line.IndexOf(']')];
             }
-            var name = Names[bossIndex];
-            var cues = bossIndex == 2 ? new[] { "Tank: mitigate", "Dodge the line", "Move out of the marked area", "Hide behind a pile of rubble", "Hide behind rubble from the boss" } : ["Tank: mitigate"];
-            var mechanics = Abilities[bossIndex].Select((ability, index) => new
+            var draftedBosses = Names.Select((name, bossIndex) =>
             {
-                name = ability, displayName = ability, cue = cues[index], description = cues[index], triggerKind = "cast", triggerName = ability,
-                evidence = bossIndex == 2 && ability == "Whirling Gaol" ? new[] { Citation(Passages[bossIndex][index]), Citation(WorkbookWhirlwind) } : [Citation(Passages[bossIndex][index])],
-                responses = Array.Empty<GuideResponse>()
+                var cues = bossIndex == 2 ? new[] { "Tank: mitigate", "Dodge the line", "Move out of the marked area", "Hide behind a pile of rubble", "Hide behind rubble from the boss" } : ["Tank: mitigate"];
+                var mechanics = Abilities[bossIndex].Select((ability, index) => new
+                {
+                    name = ability, displayName = ability, cue = cues[index], description = cues[index], triggerKind = "cast", triggerName = ability,
+                    evidence = bossIndex == 2 && ability == "Whirling Gaol" ? new[] { Citation(Passages[bossIndex][index]), Citation(WorkbookWhirlwind) } : [Citation(Passages[bossIndex][index])],
+                    responses = Array.Empty<GuideResponse>()
+                });
+                return new { name, displayName = name, summary = "Prepare for the next boss.", mechanics };
             });
-            return Task.FromResult(JsonSerializer.Serialize(new { summary = "Prepare for the next boss.", bosses = new[] { new { name, displayName = name, summary = "Prepare for the next boss.", mechanics } } }));
+            return Task.FromResult(JsonSerializer.Serialize(new { summary = "Prepare for the next boss.", bosses = draftedBosses }));
         }
         public void Dispose() { }
     }
@@ -239,7 +242,7 @@ internal static class GuidePageAnalysisTests
         var legacy = cached with { Bosses = [cached.Bosses[0] with { Phases = [new("", "", [legacyMechanic])] }] };
         Check(GuidePageAnalysis.ValidPrepared(legacy, conditionalSource, GuideLanguage.French, profile) && legacyMechanic.Advice!.Cue == advice.Cue,
             "Adding ShortCue invalidated an old conditional cache or changed its merged cue");
-        foreach (var invalid in new[] { "0", "2", "source text" })
+        foreach (var invalid in new[] { "0", "2", "999999", "2147483648", "-1", "+1", "1.5", " 1", "1 ", "١", "source text" })
         {
             try { GuidePageAnalysis.ResolveEvidence(Response([invalid]), [quote]); throw new Exception("Invalid citation accepted"); }
             catch (InvalidDataException) { }
