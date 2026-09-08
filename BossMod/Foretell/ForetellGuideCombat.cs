@@ -64,7 +64,7 @@ internal static class GuideRules
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
 }
 
-internal enum GuideSignalKind { Cast, Status, Marker, Tether, Action }
+internal enum GuideSignalKind { Cast, Status, Marker, Tether, Action, Pulse }
 internal sealed record GuideSignal(GuideBoss Boss, GuidePhase Phase, GuideMechanic Mechanic, GuideSignalKind Kind,
     ulong SourceID, uint SourceOID, uint SourceNameID, uint ID, ulong TargetID, DateTime Until, GuidanceKind Guidance, string Evidence)
 {
@@ -72,6 +72,8 @@ internal sealed record GuideSignal(GuideBoss Boss, GuidePhase Phase, GuideMechan
     public string Instruction { get; init; } = "";
     public GuideTrigger? Trigger { get; init; }
     public string? BindingKey { get; init; }
+    public ulong RelatedBossID { get; init; }
+    public uint RelatedCastID { get; init; }
 }
 internal sealed record GuideCombatFrame(GuideBoss? Boss, bool Upcoming, bool Ambiguous, GuidePhase? Phase, GuideSignal[] Active, int CompletedBosses)
 {
@@ -177,7 +179,7 @@ internal sealed class GuideActionQueue
             if (match.Mechanic == null || match.Phase == null) continue;
             resolved.Add(new(boss, match.Phase, match.Mechanic, GuideSignalKind.Action, source.InstanceID, source.OID, source.NameID,
                 pending.ActionID, pending.TargetID, pending.Until, GuidanceKind.None, ids == null ? "Observed ActionEffect + current boss ownership + exact ability name" : "Observed ActionEffect + current boss ownership + official game ID")
-                { OwnerID = pending.OwnerID, Instruction = match.Trigger?.Cue ?? "", Trigger = match.Trigger });
+                { OwnerID = pending.OwnerID, Instruction = match.Trigger == null ? "" : GuideShortCue.Instruction(match.Mechanic, match.Mechanic.Advice?.Cue ?? "", match.Trigger), Trigger = match.Trigger });
         }
         return resolved.ToArray();
     }
@@ -207,8 +209,8 @@ internal static class GuideCentralPresentation
                 || first.Trigger is { Target: "any" } && second.Trigger is { Target: "any" });
 
     public static bool Owns(ActivePrediction prediction, IEnumerable<GuideSignal> displayed)
-        => displayed.Any(signal => signal.Kind == GuideSignalKind.Cast && signal.SourceID == prediction.CasterID && signal.ID == prediction.ActionID
-            && Math.Abs((signal.Until - prediction.Activation).TotalSeconds) < .4
+        => displayed.Any(signal => signal.Kind is GuideSignalKind.Cast or GuideSignalKind.Pulse && signal.SourceID == prediction.CasterID && signal.ID == prediction.ActionID
+            && Math.Abs((signal.Until - prediction.Activation).TotalSeconds) < (signal.Kind == GuideSignalKind.Pulse ? 3 : .4)
             && (signal.Mechanic.Advice != null || prediction.Guidance is GuidanceKind.None or GuidanceKind.Marker || signal.Guidance == prediction.Guidance));
 
     internal static bool OwnsRelated(ActivePrediction prediction, IEnumerable<GuideSignal> displayed, string actionName, uint casterNameID, ulong ownerID)
@@ -407,8 +409,8 @@ internal static class GuideDecisionBridge
     public static DecisionHazard Associate(DecisionHazard hazard, GuideSignal signal, string label, string sourceUrl)
     {
         var prediction = hazard.Prediction;
-        if (signal.Kind != GuideSignalKind.Cast || prediction.CasterID != signal.SourceID || prediction.ActionID != signal.ID
-            || Math.Abs((prediction.Activation - signal.Until).TotalSeconds) > .4) return hazard;
+        if (signal.Kind is not (GuideSignalKind.Cast or GuideSignalKind.Pulse) || prediction.CasterID != signal.SourceID || prediction.ActionID != signal.ID
+            || Math.Abs((prediction.Activation - signal.Until).TotalSeconds) > (signal.Kind == GuideSignalKind.Pulse ? 3 : .4)) return hazard;
         var guidance = signal.Guidance;
         var compatible = prediction.Guidance is GuidanceKind.None or GuidanceKind.Avoid || prediction.Guidance == guidance;
         if (guidance is GuidanceKind.Stack or GuidanceKind.Spread or GuidanceKind.Soak)

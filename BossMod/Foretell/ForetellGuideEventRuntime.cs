@@ -64,7 +64,7 @@ public sealed partial class ForetellEngine
         var result = belongs ? plan?.Resolve(boss, frame.KnownPhase, kind, identifier, targetID, playerID, partyTarget, stacks)
                 ?? GuideEventMatching.Resolve(boss, frame.KnownPhase, kind, name, targetID, playerID, partyTarget, stacks)
             : new GuideEventResolution(null, null, null, "UnrelatedCaster", []);
-        var instruction = result.Trigger?.Cue ?? (result.Mechanic?.Advice is { } advice ? GuideListFlow.Instruction(result.Mechanic, advice.Cue) : "");
+        var instruction = result.Mechanic == null ? "" : GuideShortCue.Instruction(result.Mechanic, result.Mechanic.Advice?.Cue ?? "", result.Trigger);
         var key = result.Mechanic == null ? null : GuideNames.Hash(_guideBindingScope + "|" + result.Mechanic.Name + "|" + kind + "|" + identifier + "|" + name + "|" + source.OID + "|" + source.NameID);
         var occurrence = $"{source.InstanceID}:{source.OID}:{source.NameID}:{source.OwnerID}:{kind}:{identifier}:{targetID}";
         var outcome = result.Reason + "|" + result.Mechanic?.Name + "|" + instruction + "|" + frame.KnownPhase?.ID + "|" + mapping + "|" + stacks;

@@ -8,6 +8,7 @@ internal static class GuideListFlowTests
 
     public static void Run()
     {
+        GuideShortCueTests.Run();
         Selection();
         RolePriorities();
         Actionability();

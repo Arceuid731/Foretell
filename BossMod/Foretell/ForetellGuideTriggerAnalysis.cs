@@ -10,10 +10,11 @@ internal static partial class GuidePageAnalysis
     {
         type = "array", maxItems = 16, items = new
         {
-            type = "object", additionalProperties = false, required = new[] { "kind", "name", "cue", "evidence", "target", "minimumStacks" },
+            type = "object", additionalProperties = false, required = new[] { "kind", "name", "cue", "shortCue", "cueScope", "evidence", "target", "minimumStacks" },
             properties = new
             {
                 kind = new { type = "string", @enum = new[] { "cast", "status" } }, name = Text(120), cue = Text(600),
+                shortCue = Text(100), cueScope = new { type = "string", @enum = new[] { "complete", "shared" } },
                 evidence = new { type = "array", minItems = 1, maxItems = 8, items = Text(2400) },
                 target = new { type = "string", @enum = new[] { "any", "self", "other" } },
                 minimumStacks = new { type = "integer", minimum = 0, maximum = 255 }
@@ -37,6 +38,7 @@ internal static partial class GuidePageAnalysis
         foreach (var trigger in mechanic.Triggers)
         {
             if (trigger == null || trigger.Kind is not ("cast" or "status") || !ValidText(trigger.Name, 120, true)
+                || trigger.ShortCue == null || trigger.CueScope == null
                 || trigger.Name != trigger.Name.Trim() || !ValidText(trigger.Cue, 600, true)
                 || trigger.Target is not ("any" or "self" or "other") || trigger.MinimumStacks is < 0 or > 255
                 || trigger.Kind == "cast" && trigger.MinimumStacks != 0 || trigger.Kind == "status" && trigger.Target == "other"
@@ -49,6 +51,10 @@ internal static partial class GuidePageAnalysis
             if (namedEvidence.Length == 0)
                 throw new InvalidDataException("Trigger name must be the exact original name in its own cited source, not another event or a paraphrase.");
             var evidence = string.Join('\n', trigger.Evidence);
+            if (trigger.CueScope != "" && (!GuideShortCue.ValidScope(trigger.CueScope) || !GuideShortCue.Valid(trigger.ShortCue)
+                || !GuideSummaryValidation.Accept(trigger.ShortCue, evidence) || GenericTriggerCue(trigger.ShortCue)
+                || language == GuideLanguage.French && !FrenchCue(trigger.ShortCue)))
+                throw new InvalidDataException("Trigger shortCue must be grounded, at most 100 characters/16 words, with complete/shared cueScope and no lost safety conditions.");
             if (!GuideSummaryValidation.Accept(trigger.Cue, evidence) || GenericTriggerCue(trigger.Cue)
                 || GuideNames.Normalize(trigger.Cue).TrimEnd('.', '!') == GuideNames.Normalize(trigger.Name)
                 || language == GuideLanguage.French && !FrenchCue(trigger.Cue))
@@ -62,7 +68,13 @@ internal static partial class GuidePageAnalysis
         }
         if (mechanic.Conflict.Length > 0 || mechanic.ContextOnly) return [];
         ValidateTriggerAmbiguity(mechanic.Triggers);
-        var triggers = mechanic.Triggers.Select(trigger => trigger with { Cue = GroundArenaReference(trigger.Cue, string.Join('\n', trigger.Evidence)) }).ToArray();
+        var triggers = mechanic.Triggers.Select(trigger => trigger with
+        {
+            Cue = GroundArenaReference(trigger.Cue, string.Join('\n', trigger.Evidence)),
+            ShortCue = GroundArenaReference(trigger.ShortCue, string.Join('\n', trigger.Evidence))
+        }).ToArray();
+        if (triggers.Any(trigger => trigger.CueScope != "" && !GuideShortCue.Valid(trigger.ShortCue)))
+            throw new InvalidDataException("Keep the grounded trigger shortCue within 100 characters and 16 words.");
         if (triggers.Any(trigger => !ValidText(trigger.Cue, 600, true)))
             throw new InvalidDataException("Shorten the grounded trigger cue to 600 characters without losing its conditions.");
         return triggers;
@@ -107,6 +119,7 @@ internal static partial class GuidePageAnalysis
 
     private static bool SameTriggers(GuideTrigger[] saved, GuideTrigger[] validated) => saved.Length == validated.Length
         && saved.Zip(validated).All(pair => pair.First.Kind == pair.Second.Kind && pair.First.Name == pair.Second.Name
-            && pair.First.Cue == pair.Second.Cue && pair.First.Target == pair.Second.Target && pair.First.MinimumStacks == pair.Second.MinimumStacks
+            && pair.First.Cue == pair.Second.Cue && pair.First.ShortCue == pair.Second.ShortCue && pair.First.CueScope == pair.Second.CueScope
+            && pair.First.Target == pair.Second.Target && pair.First.MinimumStacks == pair.Second.MinimumStacks
             && pair.First.Evidence.SequenceEqual(pair.Second.Evidence));
 }

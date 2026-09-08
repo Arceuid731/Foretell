@@ -22,6 +22,8 @@ internal sealed record GuideCapturedSignal(string Boss, string Phase, string Mec
 {
     public GuideTrigger? Trigger { get; init; }
     public string? BindingKey { get; init; }
+    public ulong RelatedBossID { get; init; }
+    public uint RelatedCastID { get; init; }
 }
 internal sealed record GuideCaptureOptions(ForetellMode Mode, bool Enabled, bool Checklist, bool EntryPopup, bool PopupDismissed,
     bool CentralAlerts, bool TextHints, bool LocalSummaries, bool Gpu, float ChecklistScale, float AlertScale)
@@ -55,11 +57,13 @@ internal sealed record GuideCaptureInput(DateTime At, string SessionID, uint Ter
     public int BindingAuditsPending { get; init; }
     public string BindingMemoryState { get; init; } = "";
     public GuideIdResolutionInfo? IdResolution { get; init; }
+    public MovingHazardState[] MovingHazards { get; init; } = [];
+    public int MovingHazardsOmitted { get; init; }
     public long EstimatedBytes => 4096 + (Document?.Bosses.Sum(boss => boss.Phases.Sum(phase => phase.Context.Length + phase.Mechanics.Sum(mechanic => mechanic.Text.Length + mechanic.Name.Length))) ?? 0) * 8L
         + ((Document?.Page?.Text.Length ?? 0) + (Document?.Page?.Html.Length ?? 0)) * 6L
         + (Document?.Sources.Sum(source => (long)source.Text.Length + source.Original.Length) ?? 0) * 6L
         + Adapted.Sum(boss => boss.Phases.Sum(phase => (phase.Summary?.Length ?? 0) + phase.Mechanics.Sum(mechanic => (mechanic.Summary?.Length ?? 0) + mechanic.DisplayName.Length))) * 4L
-        + Signals.Sum(signal => 256L + (signal.Boss.Length + signal.Phase.Length + signal.Mechanic.Length + signal.Instruction.Length + signal.Evidence.Length) * 2L)
+        + MovingHazards.Length * 768L + Signals.Sum(signal => 256L + (signal.Boss.Length + signal.Phase.Length + signal.Mechanic.Length + signal.Instruction.Length + signal.Evidence.Length) * 2L)
         + BindingAudits.Sum(audit => 1024L + audit.CandidateIDs.Length * 12L + (audit.Instruction.Length + audit.Name.Length + audit.Candidates.Sum(name => name.Length)) * 2L)
         + (IdResolution?.Triggers.Sum(trigger => 512L + trigger.IDs.Length * 12L + (trigger.Boss.Length + trigger.Mechanic.Length + trigger.Name.Length) * 4L) ?? 0);
 }
@@ -182,7 +186,7 @@ internal sealed partial class ForetellCapture
                 sourceFile, sourceHash = item.SourceHash, guideHash, modelRevision = item.ModelRevision, gap = item.Gap,
                 sourceCoverage = input.Document?.Coverage, input.State, input.Options, input.Adapted, input.Signals, input.Presentation,
                 input.BindingAudits, input.BindingAuditsDropped, input.BindingAuditsPending, input.BindingMemoryState,
-                input.IdResolution,
+                input.IdResolution, input.MovingHazards, input.MovingHazardsOmitted,
                 availableSummaries = input.Adapted.Sum(boss => boss.Phases.Sum(phase => (phase.Summary == null ? 0 : 1) + phase.Mechanics.Count(mechanic => mechanic.Summary != null)))
             }, input))
             { _guideAdaptationHash = guideHash; _guideAdaptationFile = filename; }
@@ -201,6 +205,7 @@ internal sealed partial class ForetellCapture
                 sourceAvailable, adaptationAvailable, input.State, input.Options, input.Signals, input.Presentation,
                 input.BindingAudits, input.BindingAuditsDropped, input.BindingAuditsPending, input.BindingMemoryState,
                 idResolutionState = input.IdResolution?.State, idPlanHash = input.IdResolution?.PlanHash, catalogHash = input.IdResolution?.CatalogHash,
+                input.MovingHazards, input.MovingHazardsOmitted,
                 gap = item.Gap, rejected = Interlocked.Read(ref item.Session.GuideRejected), timelineOmitted = _guideTimelineOmitted
             }, GuideFrameLimit);
         }
@@ -214,14 +219,15 @@ internal sealed partial class ForetellCapture
                 listState = input.Presentation?.ListState[..Math.Min(256, input.Presentation.ListState.Length)],
                 centralState = input.Presentation?.CentralState[..Math.Min(256, input.Presentation.CentralState.Length)],
                 bindingAuditsOmitted = input.BindingAudits.Length, input.BindingAuditsDropped, input.BindingAuditsPending,
-                gap = "Sample exceeds frame size limit; signals, binding audits, options and presentation rows omitted", rejected = item.Session.GuideRejected }, GuideJson);
+                movingHazardsOmitted = input.MovingHazards.Length + input.MovingHazardsOmitted,
+                gap = "Sample exceeds frame size limit; signals, moving hazards, binding audits, options and presentation rows omitted", rejected = item.Session.GuideRejected }, GuideJson);
         }
         using (var document = JsonDocument.Parse(frame)) _guideLatest = document.RootElement.Clone();
         if (_guideTimelineBytes + frame.Length + 1 > GuideBatchLimit || _guideTimeline.Count >= 256
             || _guideTimeline.Count > 0 && input.At - _guideBatchStarted >= TimeSpan.FromMinutes(1)) FlushGuideTimeline();
         if (_guideTimeline.Count == 0) _guideBatchStarted = input.At;
         _guideTimeline.Add(frame); _guideTimelineBytes += frame.Length + 1;
-        _guideLastInput = input with { Document = null, Adapted = [], Signals = [], Presentation = null, BindingAudits = [],
+        _guideLastInput = input with { Document = null, Adapted = [], Signals = [], Presentation = null, BindingAudits = [], MovingHazards = [],
             IdResolution = input.IdResolution is { } ids ? ids with { Triggers = [] } : null };
     }
 

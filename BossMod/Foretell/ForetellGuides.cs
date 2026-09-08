@@ -97,6 +97,7 @@ public sealed partial class ForetellEngine
         if (_liveGuide == null) return;
         _guideSignals.Clear();
         UpdateGuideEventBindings(now);
+        UpdateGuidePulseSignals(now);
         _guideInstantSignals.RemoveAll(signal => signal.Until <= now || !ReferenceEquals(signal.Boss, _guideEncounter.Frame.Boss)
             || _guideEncounter.Frame.Upcoming || _guideEncounter.Frame.Ambiguous);
         _guideSignals.AddRange(_guideInstantSignals);
@@ -151,6 +152,7 @@ public sealed partial class ForetellEngine
 
     private void ResetGuideContext()
     {
+        _guidePulseLinks.Clear();
         _guideBindingSeen.Clear(); _guideBindingDocument = null; _guideBindingBoss = null;
         _guideBindingScope = "";
         _guideIdentity = default; _guideDuty = null; _liveGuide = null; _guideSampleAt = default;
@@ -213,6 +215,7 @@ public sealed partial class ForetellEngine
             && (signal.Kind == GuideSignalKind.Cast
                 ? source.CastInfo is { EventHappened: false } cast && cast.IsSpell() && cast.Action.ID == signal.ID
                     && float.IsFinite(cast.NPCRemainingTime) && cast.NPCRemainingTime > 0 && Math.Abs((_ws.CurrentTime.AddSeconds(cast.NPCRemainingTime) - signal.Until).TotalSeconds) < .3
+                : signal.Kind == GuideSignalKind.Pulse ? GuidePulseIsCurrent(signal)
                 : signal.Kind == GuideSignalKind.Action || signal.Kind == GuideSignalKind.Status && _ws.Actors.Find(signal.TargetID) is { IsDeadOrDestroyed: false } target
                     && target.Statuses.Any(status => status.ID == signal.ID && status.SourceID == signal.SourceID && status.ExpireAt > _ws.CurrentTime
                         && (status.Extra & 0xFF) >= (signal.Trigger?.MinimumStacks ?? 0))));
@@ -279,14 +282,14 @@ public sealed partial class ForetellEngine
                 ForetellCentralPresentation.Personal(hazard.Prediction, V(player.Position), player.InstanceID)
                 && GuideOwnsCentralPrediction(hazard.Prediction, [signal]));
             yield return new(GuideRolePresentation.Prefix(signal.Mechanic.Advice?.Roles ?? []) + GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal),
-                GuideMechanicName(signal.Boss, signal.Mechanic), signal.Kind == GuideSignalKind.Action ? -1 : remaining, total,
+                GuideMechanicName(signal.Boss, signal.Mechanic), signal.Kind is GuideSignalKind.Action or GuideSignalKind.Pulse ? -1 : remaining, total,
                 signal.Until, personal, true);
         }
     }
 
     private string GuideChecklistInstruction(GuideBoss boss, GuidePhase phase, GuideMechanic mechanic, GuideSignal? live = null)
     {
-        if (live?.Instruction.Length > 0) return live.Instruction;
+        if (live != null) return GuideShortCue.Instruction(mechanic, live.Instruction, live.Trigger);
         if (mechanic.Advice is { } advice && advice.Language == GuideContentLanguage) return GuideListFlow.Instruction(mechanic, advice.Cue);
         if (live == null) return GuideChecklistPresentation.Instruction(GuideRules.LiveGuidance(mechanic, phase, boss), GuideClientLanguage);
         var confirmed = _ws.Party[PartyState.PlayerSlot] is { IsDeadOrDestroyed: false } player && GuideAlertGuidance(live, player) != GuidanceKind.None;

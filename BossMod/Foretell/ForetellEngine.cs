@@ -420,6 +420,7 @@ public sealed partial class ForetellEngine : IDisposable
         ResetDataFabric();
         ResetTopology();
         _predictions.Clear();
+        _movingHazards.Reset();
         ClearDynamicTerrainWarnings();
         _timelineForecasts.Clear();
         _nextForecastID = -1;

@@ -67,14 +67,5 @@ internal static class GuideListFlow
     }
 
     internal static string Instruction(GuideMechanic mechanic, string fallback)
-    {
-        if (mechanic.Advice is not { } advice) return fallback;
-        if (advice.Responses is [{ } response] && CastCondition(response.When)) return response.Instruction;
-        if (advice.Responses.Length == 0 && advice.Cue.IndexOf(':') is > 0 and var separator && CastCondition(advice.Cue[..separator]))
-            return advice.Cue[(separator + 1)..].Trim();
-        return advice.Cue.Length > 0 ? advice.Cue : advice.ShortCue.Length > 0 ? advice.ShortCue : fallback;
-    }
-
-    private static bool CastCondition(string condition) => GuideNames.Normalize(condition).TrimEnd(':', '.') is
-        "cast" or "on cast" or "when cast" or "ability cast" or "telegraphed" or "telegraph" or "damage occurs";
+        => GuideShortCue.Instruction(mechanic, fallback);
 }

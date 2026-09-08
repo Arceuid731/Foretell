@@ -147,9 +147,14 @@ internal static class GuideCaptureTests
         var input = Input(session);
         var info = new GuideIdResolutionInfo(GuideNames.Hash("catalog"), GuideNames.Hash("plan"), "Ready",
             [new("Boss", "Storm", "cast", "Tempête", [51, 52], "MultipleCandidateIDs"), new("Boss", "Unknown", "cast", "Unknown", [], "NameNotFound")]);
-        Check(capture.EnqueueGuide(session, input with { IdResolution = info }), "ID plan rejected by guide capture");
+        var moving = new MovingHazardState(-100, 10, 20, 30, 51, 3, input.At, new(4, 5), new(2, 0), 3, .6, true);
+        Check(capture.EnqueueGuide(session, input with { IdResolution = info, MovingHazards = [moving], MovingHazardsOmitted = 2 }), "ID plan rejected by guide capture");
         using var snapshot = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
         var frame = Frames(snapshot).Single();
+        var motion = frame.GetProperty("MovingHazards").EnumerateArray().Single();
+        Check(motion.GetProperty("X").GetSingle() == 4 && motion.GetProperty("Z").GetSingle() == 5
+            && motion.GetProperty("VelocityX").GetSingle() == 2 && motion.GetProperty("EventCount").GetInt32() == 3
+            && frame.GetProperty("MovingHazardsOmitted").GetInt32() == 2, "Moving hazard coordinates, evidence count or omissions were lost.");
         Check(frame.GetProperty("catalogHash").GetString() == info.CatalogHash && frame.GetProperty("idPlanHash").GetString() == info.PlanHash
             && !frame.TryGetProperty("IdResolution", out _), "Timeline duplicated the plan or lost its reference");
         var artifact = snapshot.Guides.Single(file => file.Kind == "adapted");

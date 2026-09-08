@@ -48,7 +48,7 @@ public static class ForetellDecisionCore
                 groups.Add((p.SignalKey, p.ActionID, p.Activation));
             }
             if (result.Count == 64) break;
-            result.Add(p);
+            result.Add(p.MotionUntil == default ? p : p with { Origin = OriginAt(p, frame.At), CreatedAt = frame.At });
         }
         return result.ToArray();
     }

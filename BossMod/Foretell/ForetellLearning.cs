@@ -52,6 +52,7 @@ public sealed partial class ForetellEngine
         if (observation.Numeric.TryGetValue("decision.outcomeGap", out var gap))
             _outcomeGapGeneration = Math.Max(_outcomeGapGeneration, (long)Math.Clamp(gap, 0, long.MaxValue));
         if (_outcomeGapGeneration != previousGap) _lastOutcomeGapAt = observation.At;
+        var movingPositionValid = float.IsFinite(observation.X) && float.IsFinite(observation.Z);
         observation.X = FiniteOrZero(observation.X);
         observation.Z = FiniteOrZero(observation.Z);
         observation.TargetX = FiniteOrZero(observation.TargetX);
@@ -65,6 +66,13 @@ public sealed partial class ForetellEngine
         if (replaying) RegisterRecordedFeatures(observation); else if (!enriched) EnrichObservation(observation);
         if (!replaying && observation.Kind is ObservationKind.CastStart or ObservationKind.ActionResolved)
             observation.Prior = ReadActionGeometryPrior(observation);
+
+        var movingSource = observation.Kind == ObservationKind.ActionResolved
+            && _store.Encounters.GetValueOrDefault(observation.TerritoryID) is { } movingEncounter && IsSignalExcluded(movingEncounter, observation)
+            ? SourceKind.Unknown : observation.SourceKind;
+        if (movingPositionValid) _movingHazards.Observe(observation, movingSource);
+        else _movingHazards.Reset();
+        _presentationFrame = null;
 
         FinalizeDue(observation.At, exhaustive: replaying);
         _session.Observe(observation);

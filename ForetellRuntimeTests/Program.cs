@@ -40,6 +40,7 @@ internal static class Program
         else if (args is ["--guide-binding-report", var bindingZip, var bindingOutput]) GuideBindingReport.Run(bindingZip, bindingOutput);
         else if (args is ["--guide-id-catalog", var gameSheets]) GuideIdCatalogTests.SheetSmoke(gameSheets);
         else if (args is ["--guide-id-review", var idZip, var idGame, var idOutput]) GuideIdReplayReview.Run(idZip, idGame, idOutput);
+        else if (args is ["--moving-hazard-review", var movingZip, var movingOutput]) MovingHazardReview.Run(movingZip, movingOutput);
         else EvaluateFiles(args);
     }
 
@@ -54,6 +55,8 @@ internal static class Program
         GuideBindingMemoryTests.Run();
         GuideIdCatalogTests.Run();
         GuideIdPlanTests.Run();
+        GuidePulseLinkTests.Run();
+        MovingHazardTests.Run();
         GuideBindingReportTests.Run();
         GuidePauseTests.Run();
         GuideJournalTests.Run();

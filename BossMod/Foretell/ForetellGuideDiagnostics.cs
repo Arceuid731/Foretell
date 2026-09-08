@@ -38,6 +38,7 @@ public sealed partial class ForetellEngine
         if (summary?.SourceHash != document?.SourceHash || summary?.Language != GuideContentLanguage) summary = null;
         var state = snapshot?.Duty == _guideDuty ? snapshot : null;
         var ids = GuideIDInfo(document);
+        var moving = _movingHazards.States(ObservationNow());
         var signals = LiveGuideSignals().ToArray();
         var options = new GuideCaptureOptions(_cfg.Mode, _cfg.EnableGuides, _cfg.GuideSidebar, _cfg.GuideEntryPopup, _guideEntryDismissed,
             _cfg.GuideCentralAlerts, _cfg.TextHints, _cfg.GuideLocalSummaries, _cfg.GuideSummaryGpu, _cfg.GuideScale, _cfg.GuideAlertScale)
@@ -54,7 +55,8 @@ public sealed partial class ForetellEngine
             _guideBossNames.Count, _guideActionNames.Count, _guideBindingSequence, _guideBindingPending.Count, _guideBindingDropped, _guideBindings?.Error, _guideBindings?.Ready, ids.PlanHash, ids.State,
             _guideBossNames.Values.Count(id => _guideNames.ContainsKey(("BNpcName", id, true))),
             _guideActionNames.Values.Count(id => _guideNames.ContainsKey(("Action", id, true))), options,
-            string.Join(';', signals.Select(signal => $"{signal.SourceID}:{signal.ID}:{signal.Kind}:{signal.TargetID}:{signal.Until.Ticks / TimeSpan.TicksPerSecond}")));
+            string.Join(';', signals.Select(signal => $"{signal.SourceID}:{signal.ID}:{signal.Kind}:{signal.TargetID}:{signal.Until.Ticks / TimeSpan.TicksPerSecond}")),
+            string.Join(';', moving.Select(state => $"{state.ID}:{state.EventCount}:{state.Ready}")));
         var presentation = _guidePresentation is { } drawn && drawn.SessionID == _captureSession.ID
             && drawn.TerritoryID == _ws.CurrentZone && drawn.ContentID == (uint)_ws.CurrentCFCID ? drawn : null;
         if (presentation != null && now - presentation.At > TimeSpan.FromSeconds(2))
@@ -68,7 +70,8 @@ public sealed partial class ForetellEngine
                     mechanic.Rules, mechanic.StatusRule) { Advice = mechanic.Advice }).ToArray())).ToArray())).ToArray() ?? [];
         var live = signals.Select(signal => new GuideCapturedSignal(signal.Boss.Name, signal.Phase.Name, signal.Mechanic.Name, signal.Kind,
             signal.SourceID, signal.SourceOID, signal.SourceNameID, signal.ID, signal.OwnerID, signal.TargetID, signal.Until, signal.Guidance,
-            GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal), signal.Evidence) { Trigger = signal.Trigger, BindingKey = signal.BindingKey }).ToArray();
+            GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal), signal.Evidence)
+            { Trigger = signal.Trigger, BindingKey = signal.BindingKey, RelatedBossID = signal.RelatedBossID, RelatedCastID = signal.RelatedCastID }).ToArray();
         var input = new GuideCaptureInput(now, _captureSession.ID, _captureSession.Territory, _guideDuty, GuideContentLanguage, document,
             new(state?.State.ToString() ?? (_cfg.EnableGuides ? "Unavailable" : "Disabled"), state?.Error ?? "", state?.FromCache ?? false, state?.ElapsedSeconds ?? 0,
                 summary?.Stage ?? "Unavailable", summary?.Completed ?? 0, summary?.Total ?? 0, _guideFrame.Boss?.Name, _guideFrame.Upcoming, _guideFrame.Ambiguous, _guideCombat)
@@ -78,6 +81,7 @@ public sealed partial class ForetellEngine
             Presentation = presentation, BindingAudits = _guideBindingPending.Take(8).ToArray(), BindingAuditsDropped = _guideBindingDropped,
             BindingAuditsPending = Math.Max(0, _guideBindingPending.Count - 8),
             IdResolution = ids,
+            MovingHazards = moving,
             BindingMemoryState = _guideBindings == null ? "Unavailable" : _guideBindings.Error.Length > 0 ? _guideBindings.Error : _guideBindings.Ready ? "Ready" : "Loading"
         };
         if (_capture.EnqueueGuide(_captureSession, input))

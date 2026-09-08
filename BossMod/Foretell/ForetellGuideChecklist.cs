@@ -126,7 +126,7 @@ public sealed partial class ForetellEngine
                     var row = rows[index];
                     var rowPosition = origin + new Vector2(layout.Column[index] * (layout.ColumnWidth + GuideListFlow.Gap), layout.Top[index]);
                     DrawGuideListRow(_cfg, rowPosition, layout.ColumnWidth, layout.Heights[index], layout.Scale, layout.Compact,
-                        row.Name, row.Instruction, row.Roles, row.Live != null, row.Live == null ? null : Math.Max(0, (row.Live.Until - _ws.CurrentTime).TotalSeconds));
+                        row.Name, row.Instruction, row.Roles, row.Live != null, row.Live == null || row.Live.Kind == GuideSignalKind.Pulse ? null : Math.Max(0, (row.Live.Until - _ws.CurrentTime).TotalSeconds));
                     var draw = ImGui.GetWindowDrawList();
                     var bounds = GuideDrawBounds.From(rowPosition, rowPosition + new Vector2(layout.ColumnWidth, layout.Heights[index]));
                     var clip = GuideDrawBounds.From(Vector2.Max(draw.GetClipRectMin(), viewport.Pos), Vector2.Min(draw.GetClipRectMax(), viewport.Pos + size));
