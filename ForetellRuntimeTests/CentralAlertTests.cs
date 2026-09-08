@@ -62,6 +62,14 @@ internal static class CentralAlertTests
         Check(ForetellEngine.MatchNamedGuideHelper(document, document.Duty, helper, combat, now, Name) == null,
             "Explicit unrelated helper ownership was ignored");
         var warning = new ForetellCentralAlert("Avoid circles", "Plume", 4, 4, now.AddSeconds(4), true, false);
+        var grounded = signal with { Instruction = "Hide behind cover", Trigger = new("cast", "Radiant Plume", "Hide behind cover", []) };
+        Check(GuideCentralPresentation.Select([grounded, grounded with { SourceID = 2 }], 10).Length == 1,
+            "Event-specific instruction duplicated across helper actors");
+        Check(GuideCentralPresentation.Select([grounded, grounded with { Instruction = "Move away from the target" }], 10).Length == 2,
+            "Distinct event responses were collapsed into an unrelated instruction");
+        var laterGuide = warning with { At = now.AddSeconds(8), FromGuide = true };
+        Check(ForetellCentralPresentation.Select([warning, laterGuide], 2)[0] == laterGuide,
+            "A generic category outranked a guide response with equal personal priority");
         var replacement = warning with { At = now.AddSeconds(1), FromGuide = true,
             Personal = GuideCentralPresentation.OwnsRelated(prediction, [signal], "Radiant Plume", 2137, 0)
                 && ForetellCentralPresentation.Personal(prediction, Vector2.Zero, 10) };

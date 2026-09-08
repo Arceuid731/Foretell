@@ -33,9 +33,15 @@ internal sealed record GuidePhase(string Name, string Context, GuideMechanic[] M
     public bool Conditional { get; } = GuideRules.HasConditions(Context);
 }
 internal sealed record GuideResponse(string When, string Instruction);
+internal sealed record GuideTrigger(string Kind, string Name, string Cue, string[] Evidence)
+{
+    public string Target { get; init; } = "any";
+    public int MinimumStacks { get; init; }
+}
 internal sealed record GuideAdvice(GuideLanguage Language, string DisplayName, string Cue, string Description, string TriggerKind, string TriggerName, string[] Evidence)
 {
     public string ShortCue { get; init; } = "";
+    public GuideTrigger[] Triggers { get; init; } = [];
     public GuideResponse[] Responses { get; init; } = [];
     public string[] Roles { get; init; } = [];
     public string Conflict { get; init; } = "";

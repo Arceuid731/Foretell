@@ -183,6 +183,7 @@ public sealed partial class ForetellEngine : IDisposable
         {
             _guides = new(Path.Combine(configDirectory, "foretell-guides"));
             _guideSummaries = new(Path.Combine(configDirectory, "foretell-guide-summaries"));
+            _guideBindings = new(Path.Combine(configDirectory, "foretell-guide-bindings.json"));
             _capture = new(Path.Combine(configDirectory, "foretell-captures"));
             NormalizeStore();
             _preImpact = new(_store.PreImpact);
@@ -218,6 +219,7 @@ public sealed partial class ForetellEngine : IDisposable
             _capture?.Dispose();
             _guides?.Dispose();
             _guideSummaries?.Dispose();
+            _guideBindings?.Dispose();
             _replay?.Dispose();
             _replay = null;
             _raw.Dispose();
@@ -265,6 +267,7 @@ public sealed partial class ForetellEngine : IDisposable
         _semanticReplayCancellation.Cancel();
         _guides?.Dispose();
         _guideSummaries?.Dispose();
+        _guideBindings?.Dispose();
         try { FinalizeDue(DateTime.MaxValue, exhaustive: true); CompleteSession(); SaveStore(); }
         catch (Exception e) { Service.Log($"[Foretell] Final save during dispose failed safely: {e.Message}"); }
         _ws.Network.CaptureRawTransport = false;
@@ -447,6 +450,7 @@ public sealed partial class ForetellEngine : IDisposable
         _session = NewSession(territory);
         StartEncounterSession(territory);
         _captureSession = _capture?.NewSession(territory, _session.ID, CurrentPluginVersion);
+        _guideBindingPending.Clear(); _guideBindingDropped = 0;
         ReopenReplayWriter();
         OpenRawJournal();
         _lastEvidence = $"Entered territory {territory}";

@@ -26,6 +26,6 @@ internal static class ForetellCentralPresentation
             && Math.Abs((first.Activation - second.Activation).TotalSeconds) <= .75;
 
     internal static ForetellCentralAlert[] Select(IEnumerable<ForetellCentralAlert> candidates, int maximum)
-        => candidates.OrderByDescending(alert => alert.Personal).ThenBy(alert => alert.At).ThenByDescending(alert => alert.FromGuide)
+        => candidates.OrderByDescending(alert => alert.Personal).ThenByDescending(alert => alert.FromGuide).ThenBy(alert => alert.At)
             .Take(Math.Clamp(maximum, 1, 2)).ToArray();
 }

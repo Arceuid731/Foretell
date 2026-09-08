@@ -211,12 +211,20 @@ internal static class GuideCaptureTests
             }
             using var raw = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
             Check(session.Capped != 0 && session.Rejected > 0 && session.Written > 0, "Fixture did not exhaust the raw stream quota");
-            var input = Input(session);
+            var input = Input(session) with
+            {
+                BindingAudits = [new(1, DateTime.UtcNow, GuideNames.Hash("fixture"), "Final boss", null, "status", 1, 2, 3, 4,
+                    "Charged", 5, 4, "MatchedGroundedTrigger", ["Bomb pattern"], "Bomb pattern", "Move away", "ObservedName", GuideNames.Hash("binding"))],
+                BindingMemoryState = "Ready"
+            };
             Check(capture.EnqueueGuide(session, input with { State = input.State with { Boss = "Final boss" } }), "Raw cap rejected later guide input");
             using var snapshot = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
             Check(session.GuideRejected == 0 && Frames(snapshot).Single().GetProperty("State").GetProperty("Boss").GetString() == "Final boss",
                 "Capped raw stream starved the later boss guide");
             Check(snapshot.Guides.Any(file => file.Kind == "source") && snapshot.Guides.Any(file => file.Kind == "adapted"), "Later boss full artifacts missing");
+            var audit = Frames(snapshot).Single().GetProperty("BindingAudits").EnumerateArray().Single();
+            Check(audit.GetProperty("Instruction").GetString() == "Move away" && audit.GetProperty("Stacks").GetInt32() == 4,
+                "Raw cap lost the selected event cue or status evidence");
             var zip = Export(root, "reserved-guides-" + expandedLimit + ".zip", snapshot, session.ID);
             using var archive = ZipFile.OpenRead(zip);
             using var index = Read(archive, "guides/index.json");
@@ -224,6 +232,11 @@ internal static class GuideCaptureTests
             Check(Directory.EnumerateFiles(session.Directory).Sum(path => new FileInfo(path).Length) <= sessionLimit, "Combined capture exceeded session quota");
             Check(Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Sum(path => new FileInfo(path).Length) <= cacheLimit, "Combined capture exceeded cache quota");
             Check(session.ExpandedBytes + snapshot.Guides.Sum(file => file.ExpandedBytes) <= expandedLimit, "Combined capture exceeded expanded quota");
+            Check(capture.EnqueueGuide(session, input with { BindingAudits = [], BindingAuditsDropped = 3 }), "Dropped-audit counter rejected");
+            using var dropped = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+            using var droppedArchive = ZipFile.OpenRead(Export(root, "dropped-bindings-" + expandedLimit + ".zip", dropped, session.ID));
+            using var droppedIndex = Read(droppedArchive, "guides/index.json");
+            Check(!droppedIndex.RootElement.GetProperty("complete").GetBoolean(), "Dropped binding evidence was silently marked complete");
         }
     }
 

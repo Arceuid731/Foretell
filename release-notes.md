@@ -1,7 +1,9 @@
-# Foretell 0.13.8 — prevent empty mechanic lists
+# Foretell 0.13.9 — match guide tips to combat events
 
-- Fix prepared guides showing zero mechanics when their role tags omit your job.
-- Prioritize active mechanics, then advice for your role and the whole party. Other reminders fill the remaining space instead of disappearing.
-- Keep the compact list limit, role icons and current-phase filtering.
+- Match several named casts and party debuffs to one mechanic, each with its own instruction.
+- Use documented targets and debuff stack thresholds to select the relevant tip and highlight.
+- Prefer guide instructions over generic alerts at the same personal priority.
+- Remember observed event IDs for the matching guide and boss.
+- Include accepted and rejected matches, selected tips and display outcomes in Analysis ZIP exports.
 
-The fix applies to existing prepared guides. No reanalysis or model download is required.
+Existing guides remain available. Use Reanalyze once on a saved guide to extract its additional triggers. New guides use the updated analysis automatically.

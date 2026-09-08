@@ -51,7 +51,7 @@ public sealed partial class ForetellEngine
     {
         if (kind is ObservationKind.DutyWiped or ObservationKind.DutyRecommenced && _guideDuty?.ContentID == args.ContentFinderCondition.RowId
             && _guideDuty.TerritoryID == args.TerritoryType.RowId)
-        { _guideEncounter.Wipe(); _guideFrame = _guideEncounter.Frame; _guideMatches.Clear(); _guideSignals.Clear(); }
+        { _guideEncounter.Wipe(); _guideFrame = _guideEncounter.Frame; _guideSignals.Clear(); }
         var obs = Observation(kind, primary: args.EventHandlerId, secondary: args.ContentFinderCondition.RowId,
             detail: args.TerritoryType.RowId.ToString());
         StoreNative(obs, "dalamud.duty.eventHandlerId", args.EventHandlerId);

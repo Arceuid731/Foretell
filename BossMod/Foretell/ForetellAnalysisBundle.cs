@@ -303,6 +303,11 @@ public sealed partial class ForetellEngine
                     guideCapture = timeline.Clone();
                     if (timeline.TryGetProperty("timelineOmitted", out var omitted) && omitted.GetInt64() > 0)
                         guideWarnings.Add($"{omitted.GetInt64()} guide timeline sample(s) omitted; see guideCapture.latest for the final sampled state.");
+                    if (timeline.TryGetProperty("latest", out var latestFrame) && latestFrame.ValueKind == JsonValueKind.Object
+                        && latestFrame.TryGetProperty("BindingAuditsDropped", out var dropped) && dropped.GetInt64() > 0)
+                        guideWarnings.Add($"{dropped.GetInt64()} guide binding audit(s) dropped before capture; remaining decisions include sequence numbers.");
+                    if (latestFrame.ValueKind == JsonValueKind.Object && latestFrame.TryGetProperty("BindingAuditsPending", out var pending) && pending.GetInt32() > 0)
+                        guideWarnings.Add($"{pending.GetInt32()} guide binding audit(s) were still pending at the final sample.");
                 }
                 foreach (var guide in capture.Guides)
                 {

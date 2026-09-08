@@ -18,6 +18,7 @@ internal static partial class GuidePageAnalysis
     }
     private sealed record Mechanic(string Name, string DisplayName, string Cue, string Description, string TriggerKind, string TriggerName, string[] Evidence)
     {
+        public GuideTrigger[] Triggers { get; init; } = [];
         public GuideResponse[] Responses { get; init; } = [];
         public string[] Roles { get; init; } = [];
         public string Conflict { get; init; } = "";
@@ -93,12 +94,13 @@ internal static partial class GuidePageAnalysis
                             type = "array", maxItems = 64, items = new
                             {
                                 type = "object", additionalProperties = false,
-                                required = new[] { "name", "displayName", "cue", "description", "triggerKind", "triggerName", "evidence", "responses", "roles", "conflict", "phaseMemberships", "contextOnly" },
+                                required = new[] { "name", "displayName", "cue", "description", "triggerKind", "triggerName", "evidence", "triggers", "responses", "roles", "conflict", "phaseMemberships", "contextOnly" },
                                 properties = new
                                 {
                                     name = Text(120), displayName = Text(120), cue = Text(100), description = Text(1200),
                                     triggerKind = new { type = "string", @enum = new[] { "cast", "status", "manual" } }, triggerName = Text(120),
                                     evidence = new { type = "array", minItems = 1, maxItems = 8, items = Text(2400) }, responses = ResponseSchema,
+                                    triggers = TriggerSchema,
                                     roles = new { type = "array", maxItems = 4, uniqueItems = true, items = new { type = "string", @enum = new[] { "tank", "healer", "melee", "ranged" } } },
                                     conflict = Text(300),
                                     contextOnly = new { type = "boolean" },
@@ -149,7 +151,7 @@ internal static partial class GuidePageAnalysis
         triggerKind is cast only for an explicitly named enemy ability; triggerName is its exact original source ability name, not a translation. status is for an explicitly named debuff on the player, triggerName is the original debuff name. Otherwise use manual and an empty triggerName. For an unnamed mechanic, name can be a brief label but triggerKind must be manual. Never invent an automatic trigger for a general strategy note.
         evidence is 1–8 paragraph IDs (strings) from the numbered source, supporting this mechanic and ALL its conditions. Include the paragraph naming the ability/debuff. Never quote or paraphrase source text in evidence: reference its IDs. Boss summary is a useful one-sentence preparation tip, not 'Abilities'. Document summary is a very short overview. If there are no boss mechanics in this passage, return an empty bosses array.
         Merge complementary sources only for the SAME boss and SAME ability. Preserve phase, target, role and strategy conditions; clockwise positioning may depend on an alliance assignment. Never combine two different named attacks merely because both are cones or tankbusters. roles lists only explicitly relevant tank/healer/melee/ranged roles; use [] for everyone. conflict is empty unless sources genuinely contradict each other under the SAME conditions with no supported resolution. For unresolved contradictions, explain the disagreement briefly in conflict, use manual with an empty triggerName, and do not issue a directional instruction. More text does not mean a source is newer; distinguish outdated encounter versions from current encounters using the supplied evidence.
-        """) + PhasePrompt + ActionPrompt;
+        """) + PhasePrompt + ActionPrompt + TriggerPrompt;
 
     public static async Task<GuideDocument> Compile(GuideDocument source, GuideLanguage language, GuideModelProfile profile, int contextTokens,
         IGuideSummaryModel model, Action<int, int> progress, CancellationToken cancellation, Action<GuideDocument>? bossReady = null, Action<GuideAnalysisStep>? trace = null)
@@ -259,7 +261,7 @@ internal static partial class GuidePageAnalysis
                         Verify EVERY cue is an action for the PLAYER, not an enemy action or an outcome ('survive the enrage' is not a solution; killing adds before it is). Verify directions, conditions, negation and what pronouns refer to: leaving a damaging field at the arena edge does NOT mean leaving the arena. Do not turn moving ground attacks into instructions to spread unless the source says players must separate. Do not advise avoiding unavoidable damage.
                         Keep the ORIGINAL exact ability name for every named attack, never rename it to its effect such as 'Unavoidable raidwide damage'. Named enemy attacks use cast and the identical original triggerName, including casts summoning adds or clones. Named player debuffs use status. General/unnamed notes use manual. Do not assign another boss's abilities to this boss. Merge duplicates of the SAME ability, never different named abilities. Preserve all alternatives for a repeated ability.
                         Prefer a direct imperative from the source when available. Every evidence ID must support the corresponding instruction and every condition. Resolve conflicting sources only when their encounter version or different conditions explain the difference; otherwise keep conflict and manual. Keep useful role tags.
-                        """ + $"\nAll player instructions must remain in {language}. Return only compact JSON." + PhasePrompt + ActionPrompt,
+                        """ + $"\nAll player instructions must remain in {language}. Return only compact JSON." + PhasePrompt + ActionPrompt + TriggerPrompt,
                             focused + "\n<Draft>\n" + draft + "\n</Draft>" + correction, schema, Math.Clamp(contextTokens / 3, 2048, 8192), cancellation).ConfigureAwait(false);
                     }
                     trace?.Invoke(new("Validation", name, attempt + 1));
@@ -407,6 +409,7 @@ internal static partial class GuidePageAnalysis
         var mechanicProperties = bossProperties["mechanics"]!["items"]!["properties"]!;
         var citation = CitationSchema(paragraphs);
         mechanicProperties["evidence"]!["items"] = JsonSerializer.SerializeToNode(citation);
+        mechanicProperties["triggers"]!["items"]!["properties"]!["evidence"]!["items"] = JsonSerializer.SerializeToNode(citation);
         bossProperties["phaseDefinitions"]!["items"]!["properties"]!["evidence"]!["items"] = JsonSerializer.SerializeToNode(citation);
         mechanicProperties["phaseMemberships"]!["items"]!["properties"]!["evidence"]!["items"] = JsonSerializer.SerializeToNode(citation);
         return schema;
@@ -436,7 +439,8 @@ internal static partial class GuidePageAnalysis
         catch (JsonException error) { throw new InvalidDataException("Invalid analysis JSON.", error); }
         if (response.Bosses == null || response.Bosses.Any(boss => boss?.Mechanics == null || boss.PhaseDefinitions == null
             || boss.PhaseDefinitions.Any(phase => phase?.Evidence == null)
-            || boss.Mechanics.Any(mechanic => mechanic?.Evidence == null || mechanic.PhaseMemberships == null || mechanic.PhaseMemberships.Any(membership => membership?.Evidence == null))))
+            || boss.Mechanics.Any(mechanic => mechanic?.Evidence == null || mechanic.Triggers == null || mechanic.Triggers.Any(trigger => trigger?.Evidence == null)
+                || mechanic.PhaseMemberships == null || mechanic.PhaseMemberships.Any(membership => membership?.Evidence == null))))
             throw new InvalidDataException("Missing evidence fields.");
         foreach (var boss in response.Bosses)
         {
@@ -444,6 +448,7 @@ internal static partial class GuidePageAnalysis
             foreach (var mechanic in boss.Mechanics)
             {
                 ResolveCitations(mechanic.Evidence);
+                foreach (var trigger in mechanic.Triggers) ResolveCitations(trigger.Evidence);
                 foreach (var membership in mechanic.PhaseMemberships) ResolveCitations(membership.Evidence);
             }
         }
@@ -549,7 +554,7 @@ internal static partial class GuidePageAnalysis
                     mechanic.Advice.ShortCue.Length > 0 ? mechanic.Advice.ShortCue : mechanic.Advice.Cue,
                     mechanic.Advice.Description, mechanic.Advice.TriggerKind, mechanic.Advice.TriggerName, mechanic.Advice.Evidence)
                     { Responses = mechanic.Advice.Responses, Roles = mechanic.Advice.Roles, Conflict = mechanic.Advice.Conflict, PhaseMemberships = mechanic.PhaseMemberships,
-                        ContextOnly = mechanic.Advice.ContextOnly }).ToArray())
+                        ContextOnly = mechanic.Advice.ContextOnly, Triggers = mechanic.Advice.Triggers }).ToArray())
                 { PhaseDefinitions = boss.PhaseDefinitions }).ToArray());
             var checkedDocument = Parse(source, source.Page.Text, JsonSerializer.Serialize(response), language, profile);
             var savedAdvice = prepared.Bosses.SelectMany(boss => boss.Phases).SelectMany(phase => phase.Mechanics).Select(mechanic => mechanic.Advice!).ToArray();
@@ -557,6 +562,7 @@ internal static partial class GuidePageAnalysis
             if (savedAdvice.Length != checkedAdvice.Length || savedAdvice.Zip(checkedAdvice).Any(pair => pair.First.Cue != pair.Second.Cue
                 || pair.First.Description != pair.Second.Description || !pair.First.Responses.SequenceEqual(pair.Second.Responses)
                 || pair.First.ContextOnly != pair.Second.ContextOnly
+                || !SameTriggers(pair.First.Triggers, pair.Second.Triggers)
                 || pair.First.ShortCue.Length > 0 && pair.First.ShortCue != pair.Second.ShortCue)) return false;
             return prepared.Bosses.SelectMany(boss => boss.Phases).SelectMany(phase => phase.Mechanics).All(mechanic => mechanic.Advice?.Language == language
                 && (mechanic.Advice.Conflict.Length == 0 || mechanic.Advice.TriggerKind == "manual")
@@ -593,8 +599,9 @@ internal static partial class GuidePageAnalysis
                     || !GuideSourceAssembly.NormalizeEvidence(passage).Contains(GuideSourceAssembly.NormalizeEvidence(quote), StringComparison.Ordinal)))
                     throw new InvalidDataException("Evidence must be copied verbatim from the source, without ellipses or paraphrase.");
                 ValidateMemberships(boss, mechanic, passage);
+                var triggers = ValidateTriggers(mechanic, passage, language);
                 var evidence = string.Join("\n", mechanic.Evidence);
-                var automatic = mechanic.Conflict.Length == 0 && mechanic.TriggerKind != "manual" && mechanic.TriggerName.Length >= 3 && GuideRules.Mentions(evidence, mechanic.TriggerName)
+                var automatic = mechanic.Conflict.Length == 0 && !mechanic.ContextOnly && mechanic.TriggerKind != "manual" && mechanic.TriggerName.Length >= 3 && GuideRules.Mentions(evidence, mechanic.TriggerName)
                     && GuideNames.Normalize(mechanic.Name) == GuideNames.Normalize(mechanic.TriggerName);
                 if (!GuideSummaryValidation.Accept(mechanic.Cue, evidence) || !GuideSummaryValidation.Accept(mechanic.Description, evidence))
                     throw new InvalidDataException($"For {mechanic.Name}: cue/description introduced numbers or external instructions absent from its cited evidence. Remove invented phase numbers, counts and advice; preserve only documented conditions.");
@@ -619,7 +626,7 @@ internal static partial class GuidePageAnalysis
                     Advice = new(language, mechanic.DisplayName, cue, GroundArenaReference(mechanic.Description, evidence), automatic ? mechanic.TriggerKind : "manual",
                         automatic ? mechanic.TriggerName : "", mechanic.Evidence)
                     { Responses = responses, Roles = mechanic.Roles.Distinct().ToArray(), Conflict = mechanic.Conflict, ShortCue = GroundArenaReference(mechanic.Cue, evidence),
-                        ContextOnly = mechanic.ContextOnly }
+                        ContextOnly = mechanic.ContextOnly, Triggers = triggers }
                 });
             }
             if (mechanics.Count > 0) bosses.Add(new(boss.Name, "", [new("", "", mechanics.ToArray())])

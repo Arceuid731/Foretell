@@ -69,6 +69,9 @@ internal sealed record GuideSignal(GuideBoss Boss, GuidePhase Phase, GuideMechan
     ulong SourceID, uint SourceOID, uint SourceNameID, uint ID, ulong TargetID, DateTime Until, GuidanceKind Guidance, string Evidence)
 {
     public ulong OwnerID { get; init; }
+    public string Instruction { get; init; } = "";
+    public GuideTrigger? Trigger { get; init; }
+    public string? BindingKey { get; init; }
 }
 internal sealed record GuideCombatFrame(GuideBoss? Boss, bool Upcoming, bool Ambiguous, GuidePhase? Phase, GuideSignal[] Active, int CompletedBosses)
 {
@@ -162,12 +165,16 @@ internal sealed class GuideActionQueue
             var actionName = name("Action", pending.ActionID);
             if (actionName.Length == 0) continue;
             _pending.Remove(pending);
-            var match = GuideSynchronization.Match(document, new(duty, source.InstanceID, source.OID, source.NameID, bossName,
-                pending.ActionID, actionName, pending.Until), now);
-            if (match == null || !ReferenceEquals(match.Boss, boss)) continue;
+            var bosses = document.Bosses.Where(candidate => GuideNames.Boss(candidate.Name) == GuideNames.Boss(bossName)).ToArray();
+            if (bosses.Length != 1 || !ReferenceEquals(bosses[0], boss)) continue;
+            var triggers = boss.Phases.SelectMany(phase => phase.Mechanics).SelectMany(mechanic => mechanic.Advice?.Triggers ?? [])
+                .Where(trigger => GuideNames.Normalize(trigger.Name) == GuideNames.Normalize(actionName)).ToArray();
+            if (triggers.Any(trigger => trigger.Kind != "cast" || trigger.Target != "any" || trigger.MinimumStacks != 0 || string.IsNullOrWhiteSpace(trigger.Cue))) continue;
+            var match = GuideEventMatching.Resolve(boss, frame.KnownPhase, "cast", actionName, pending.TargetID, 0, false, 0);
+            if (match.Mechanic == null || match.Phase == null) continue;
             resolved.Add(new(boss, match.Phase, match.Mechanic, GuideSignalKind.Action, source.InstanceID, source.OID, source.NameID,
                 pending.ActionID, pending.TargetID, pending.Until, GuidanceKind.None, "Observed ActionEffect + current boss ownership + exact ability name")
-                { OwnerID = pending.OwnerID });
+                { OwnerID = pending.OwnerID, Instruction = match.Trigger?.Cue ?? "", Trigger = match.Trigger });
         }
         return resolved.ToArray();
     }
@@ -190,9 +197,11 @@ internal static class GuideCentralPresentation
 
     internal static bool SameOccurrence(GuideSignal first, GuideSignal second)
         => ReferenceEquals(first.Boss, second.Boss) && ReferenceEquals(first.Mechanic, second.Mechanic)
+            && first.Instruction == second.Instruction && first.Trigger?.Name == second.Trigger?.Name
             && first.Kind == second.Kind && (first.Kind == GuideSignalKind.Cast || first.ID == second.ID)
             && Math.Abs((first.Until - second.Until).TotalSeconds) <= 1
-            && (first.Kind != GuideSignalKind.Status || first.TargetID == second.TargetID);
+            && (first.Kind != GuideSignalKind.Status || first.TargetID == second.TargetID
+                || first.Trigger is { Target: "any" } && second.Trigger is { Target: "any" });
 
     public static bool Owns(ActivePrediction prediction, IEnumerable<GuideSignal> displayed)
         => displayed.Any(signal => signal.Kind == GuideSignalKind.Cast && signal.SourceID == prediction.CasterID && signal.ID == prediction.ActionID
@@ -205,7 +214,8 @@ internal static class GuideCentralPresentation
                 ? ownerID == signal.SourceID || signal.OwnerID != 0 && ownerID == signal.OwnerID
                 : casterNameID != 0 && casterNameID == signal.SourceNameID))
             && Math.Abs((signal.Until - prediction.Activation).TotalSeconds) <= 1
-            && GuideSynchronization.MatchesCast(signal.Mechanic, actionName)
+            && (signal.Trigger is { Kind: "cast" } trigger ? GuideNames.Normalize(trigger.Name) == GuideNames.Normalize(actionName)
+                : GuideSynchronization.MatchesCast(signal.Mechanic, actionName))
             && (signal.Mechanic.Advice != null || prediction.Guidance is GuidanceKind.None or GuidanceKind.Marker || signal.Guidance == prediction.Guidance));
 }
 
@@ -360,7 +370,7 @@ internal sealed class GuideEncounterTracker
         if (_boss == null || _boss.PhaseDefinitions.Length == 0 || Frame.Upcoming || Frame.Ambiguous) return;
         var fresh = active.Where(signal => signal.Kind is GuideSignalKind.Cast or GuideSignalKind.Status or GuideSignalKind.Action
             && signal.Mechanic.Advice is { Conflict.Length: 0 } advice
-            && (signal.Kind == GuideSignalKind.Status ? advice.TriggerKind == "status" : advice.TriggerKind == "cast")
+            && (signal.Trigger != null || (signal.Kind == GuideSignalKind.Status ? advice.TriggerKind == "status" : advice.TriggerKind == "cast"))
             && signal.Mechanic.PhaseMemberships.Length > 0
             && _boss.Phases.Any(phase => phase.Mechanics.Contains(signal.Mechanic))
             && _participants.TryGetValue(signal.OwnerID == 0 ? signal.SourceID : signal.OwnerID, out var owner) && !owner.Dead

@@ -20,7 +20,7 @@ public sealed partial class ForetellEngine
         var active = (_demoFrame?.Guide.Active ?? LiveGuideSignals()).ToArray();
         var rows = GuideCombatListPresentation.Select(frame, active, _ws.Party[PartyState.PlayerSlot]?.Class ?? Class.None, _cfg.GuideCurrentPhaseOnly)
             .Select(entry => new GuideListRow(entry.Phase, entry.Mechanic, entry.Live, GuideMechanicName(boss!, entry.Mechanic),
-                GuideListFlow.Instruction(entry.Mechanic, GuideChecklistInstruction(boss!, entry.Phase, entry.Mechanic)),
+                entry.Live is { Instruction.Length: > 0 } signal ? signal.Instruction : GuideListFlow.Instruction(entry.Mechanic, GuideChecklistInstruction(boss!, entry.Phase, entry.Mechanic)),
                 _cfg.GuideRoleIcons ? GuideRolePresentation.Icons(entry.Mechanic.Advice?.Roles ?? []) : [])).ToArray();
         var activeCount = rows.Count(row => row.Live != null);
         var viewport = ImGui.GetMainViewport();

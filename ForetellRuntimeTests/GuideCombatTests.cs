@@ -15,6 +15,7 @@ internal static class GuideCombatTests
         CentralSignalSelection();
         OwnedStatusSignals();
         DeferredActionSignals();
+        TypedActionSignals();
         StatusAnnotationTargets();
         GuidePhaseTests.Run();
         var now = DateTime.UtcNow;
@@ -234,6 +235,23 @@ internal static class GuideCombatTests
             "A personal status displaced a cast while still suppressing its fallback alert");
         Check(GuideCentralPresentation.Select([first], 0).Length == 0 && !GuideCentralPresentation.Owns(prediction, []),
             "Missing player or disabled guide display still owns predictions");
+        var partyTrigger = new GuideTrigger("status", "Doom", "Keep clear of affected players", ["Doom: Keep clear of affected players."]);
+        var partyStatus = status with { Trigger = partyTrigger, Instruction = partyTrigger.Cue };
+        var otherRecipient = partyStatus with { TargetID = 99 };
+        Check(GuideCentralPresentation.Select([otherRecipient, partyStatus], fixture.Player.InstanceID).SequenceEqual([partyStatus]),
+            "Identical any-target status cues occupied both central slots for different recipients.");
+        foreach (var target in new[] { "self", "other" })
+        {
+            var restricted = otherRecipient with { Trigger = partyTrigger with { Target = target } };
+            Check(!GuideCentralPresentation.SameOccurrence(partyStatus, restricted)
+                && !GuideCentralPresentation.SameOccurrence(restricted, partyStatus)
+                && !GuideCentralPresentation.SameOccurrence(partyStatus with { Trigger = restricted.Trigger }, restricted),
+                "Recipient deduplication merged a restricted status trigger.");
+        }
+        Check(!GuideCentralPresentation.SameOccurrence(status, status with { TargetID = 99 })
+            && !GuideCentralPresentation.SameOccurrence(partyStatus, otherRecipient with { Instruction = "Spread out" })
+            && !GuideCentralPresentation.SameOccurrence(partyStatus, otherRecipient with { Until = partyStatus.Until.AddSeconds(2) }),
+            "Party status deduplication crossed legacy recipients, instructions or occurrences.");
     }
 
     private static void OwnedStatusSignals()
@@ -328,6 +346,63 @@ internal static class GuideCombatTests
         Check(queue.Count == 32, "Deferred action queue is unbounded");
         queue.Clear();
         Check(queue.Count == 0, "Context reset retained pending actions");
+    }
+
+    private static void TypedActionSignals()
+    {
+        var fixture = SignalFixture();
+        var trigger = new GuideTrigger("cast", "Blast", "If the weapon glows, move behind; otherwise move away.", ["Blast: Move behind if the weapon glows; otherwise move away."]);
+        var advice = new GuideAdvice(GuideLanguage.English, "Blast", "Legacy mechanic-wide cue", "Blast response.", "cast", "Blast", trigger.Evidence);
+        GuideMechanic Mechanic(GuideAdvice prepared, string name = "Blast") => new(name, string.Join('\n', prepared.Evidence), "") { Advice = prepared };
+        GuideSignal[] Resolve(GuideMechanic[] mechanics, ulong target = 1, bool duplicateBoss = false)
+        {
+            var boss = fixture.Boss with { Phases = [new("", "", mechanics)] };
+            var document = fixture.Document with { Bosses = duplicateBoss ? [boss, boss with { Anchor = "duplicate" }] : [boss] };
+            var frame = new GuideCombatFrame(boss, false, false, null, [], 0);
+            var queue = new GuideActionQueue();
+            queue.Enqueue(document.Duty, boss, fixture.Helper, fixture.Owner, 40, target, fixture.Now);
+            Actor? ActorByID(ulong id) => id == fixture.Owner.InstanceID ? fixture.Owner : id == fixture.Helper.InstanceID ? fixture.Helper
+                : id == fixture.Player.InstanceID ? fixture.Player : null;
+            var signals = queue.Resolve(document, document.Duty, frame, fixture.Now, ActorByID, SignalName);
+            Check(queue.Count == 0 && queue.Resolve(document, document.Duty, frame, fixture.Now, ActorByID, SignalName).Length == 0,
+                "Typed instant action was retried or emitted twice after name resolution.");
+            return signals;
+        }
+        var typed = advice with { Triggers = [trigger, new("status", "Doom", "If affected, spread out.", ["Doom: Spread out."]) { Target = "self", MinimumStacks = 3 }] };
+        foreach (var target in new ulong[] { 0, fixture.Player.InstanceID, fixture.Owner.InstanceID, 999 })
+        {
+            var signals = Resolve([Mechanic(typed)], target);
+            Check(signals is [{ Kind: GuideSignalKind.Action } signal] && ReferenceEquals(signal.Trigger, trigger)
+                && signal.Instruction == trigger.Cue && signal.TargetID == target && signal.SourceID == fixture.Helper.InstanceID
+                && signal.OwnerID == fixture.Owner.InstanceID && signal.Until == fixture.Now.AddSeconds(4),
+                "Instant action lost its event cue, unobservable conditions or occurrence identity.");
+        }
+        var namedEvent = Resolve([Mechanic(typed with { TriggerKind = "manual", TriggerName = "" }, "Combined mechanic")]);
+        Check(namedEvent is [{ Instruction: var cue }] && cue == trigger.Cue, "An explicit event name required the legacy mechanic name to match.");
+        foreach (var incompatible in new[]
+        {
+            trigger with { Target = "self" }, trigger with { Target = "other" }, trigger with { Target = "unknown" },
+            trigger with { Kind = "status" }, trigger with { Kind = "manual" }, trigger with { MinimumStacks = 1 },
+            trigger with { MinimumStacks = -1 }, trigger with { Cue = "" }
+        })
+        {
+            foreach (var target in new ulong[] { 0, fixture.Player.InstanceID, fixture.Owner.InstanceID, 999 })
+                Check(Resolve([Mechanic(advice with { Triggers = [incompatible] })], target).Length == 0,
+                    "Legacy instant matching bypassed an incompatible typed event condition.");
+            Check(Resolve([Mechanic(advice with { Triggers = [trigger, incompatible] })]).Length == 0,
+                "An any-target trigger bypassed an unresolved event-specific restriction.");
+            Check(Resolve([Mechanic(advice with { Triggers = [incompatible] }, "Combined mechanic"), Mechanic(advice)]).Length == 0,
+                "Another legacy mechanic bypassed a typed restriction for the same event name.");
+        }
+        Check(Resolve([Mechanic(advice with { Triggers = [trigger, trigger with { Cue = "Move away immediately." }] })]).Length == 0,
+            "Conflicting event-specific instant cues selected an arbitrary branch.");
+        foreach (var blocked in new[] { typed with { ContextOnly = true }, typed with { Conflict = "Unresolved source disagreement." } })
+            Check(Resolve([Mechanic(blocked)]).Length == 0, "Context-only or conflicting advice emitted a typed instant action.");
+        Check(Resolve([Mechanic(typed)], duplicateBoss: true).Length == 0, "Typed instant actions accepted duplicate boss identities.");
+        var legacy = Resolve([Mechanic(advice)]);
+        Check(legacy is [{ Trigger: null, Instruction: "" }], "Legacy cache instruction fallback changed without a matching typed trigger.");
+        Check(Resolve([Mechanic(advice with { Triggers = [trigger with { Name = "Blast II", Target = "self" }] })]) is [{ Trigger: null }],
+            "A differently named typed event disabled a valid legacy instant action.");
     }
 
     private static void StatusAnnotationTargets()

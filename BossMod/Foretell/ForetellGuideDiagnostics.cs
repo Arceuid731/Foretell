@@ -8,7 +8,15 @@ public sealed partial class ForetellEngine
 
     private void CaptureGuideDiagnostics(bool force = false)
     {
-        try { CaptureGuideDiagnosticsCore(force); }
+        try
+        {
+            for (var batch = 0; batch < (force ? 8 : 1); ++batch)
+            {
+                var pending = _guideBindingPending.Count;
+                CaptureGuideDiagnosticsCore(force);
+                if (_guideBindingPending.Count == 0 || _guideBindingPending.Count >= pending) break;
+            }
+        }
         catch (Exception error)
         {
             if (_captureSession == null) return;
@@ -42,7 +50,7 @@ public sealed partial class ForetellEngine
         var signature = string.Join('|', _captureSession.ID, _guideDuty?.Key, document?.SourceHash, GuideContentLanguage, state?.State, state?.Error,
             summary?.Stage, summary?.Completed, summary?.Summaries.Count, summary?.LastIssue, runtime?.Stage, runtime?.ProcessID,
             _guideFrame.Boss?.Name, _guideFrame.KnownPhase?.ID, _guideFrame.Upcoming, _guideFrame.Ambiguous, _guideCombat,
-            _guideBossNames.Count, _guideActionNames.Count,
+            _guideBossNames.Count, _guideActionNames.Count, _guideBindingSequence, _guideBindingPending.Count, _guideBindingDropped, _guideBindings?.Error, _guideBindings?.Ready,
             _guideBossNames.Values.Count(id => _guideNames.ContainsKey(("BNpcName", id, true))),
             _guideActionNames.Values.Count(id => _guideNames.ContainsKey(("Action", id, true))), options,
             string.Join(';', signals.Select(signal => $"{signal.SourceID}:{signal.ID}:{signal.Kind}:{signal.TargetID}:{signal.Until.Ticks / TimeSpan.TicksPerSecond}")));
@@ -59,12 +67,21 @@ public sealed partial class ForetellEngine
                     mechanic.Rules, mechanic.StatusRule) { Advice = mechanic.Advice }).ToArray())).ToArray())).ToArray() ?? [];
         var live = signals.Select(signal => new GuideCapturedSignal(signal.Boss.Name, signal.Phase.Name, signal.Mechanic.Name, signal.Kind,
             signal.SourceID, signal.SourceOID, signal.SourceNameID, signal.ID, signal.OwnerID, signal.TargetID, signal.Until, signal.Guidance,
-            GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal), signal.Evidence)).ToArray();
+            GuideChecklistInstruction(signal.Boss, signal.Phase, signal.Mechanic, signal), signal.Evidence) { Trigger = signal.Trigger, BindingKey = signal.BindingKey }).ToArray();
         var input = new GuideCaptureInput(now, _captureSession.ID, _captureSession.Territory, _guideDuty, GuideContentLanguage, document,
             new(state?.State.ToString() ?? (_cfg.EnableGuides ? "Unavailable" : "Disabled"), state?.Error ?? "", state?.FromCache ?? false, state?.ElapsedSeconds ?? 0,
                 summary?.Stage ?? "Unavailable", summary?.Completed ?? 0, summary?.Total ?? 0, _guideFrame.Boss?.Name, _guideFrame.Upcoming, _guideFrame.Ambiguous, _guideCombat)
             { ModelRuntime = runtime, SummaryIssue = summary?.LastIssue, CurrentPhase = _guideFrame.KnownPhase },
-            options, adapted, live) { Presentation = presentation };
-        if (_capture.EnqueueGuide(_captureSession, input)) { _guideDiagnosticSignature = signature; _guideDiagnosticPresentation = presentation; }
+            options, adapted, live)
+        {
+            Presentation = presentation, BindingAudits = _guideBindingPending.Take(8).ToArray(), BindingAuditsDropped = _guideBindingDropped,
+            BindingAuditsPending = Math.Max(0, _guideBindingPending.Count - 8),
+            BindingMemoryState = _guideBindings == null ? "Unavailable" : _guideBindings.Error.Length > 0 ? _guideBindings.Error : _guideBindings.Ready ? "Ready" : "Loading"
+        };
+        if (_capture.EnqueueGuide(_captureSession, input))
+        {
+            for (var index = 0; index < input.BindingAudits.Length; ++index) _guideBindingPending.Dequeue();
+            _guideDiagnosticSignature = signature; _guideDiagnosticPresentation = presentation;
+        }
     }
 }

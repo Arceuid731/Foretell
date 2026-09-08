@@ -31,6 +31,7 @@ internal static class Program
         else if (args is ["--guide-journal-replay", var journalFile, var journalOutput]) GuideJournalTests.Replay(journalFile, journalOutput);
         else if (args is ["--guide-cache-check", var cacheRoot, var preparedPath]) GuideCacheTests.VerifyInstalled(cacheRoot, preparedPath);
         else if (args is ["--guide-review", var recording, var guideCache, var gameDirectory, var reportDirectory]) GuideRecordingReview.Run(recording, guideCache, gameDirectory, reportDirectory);
+        else if (args is ["--guide-binding-report", var bindingZip, var bindingOutput]) GuideBindingReport.Run(bindingZip, bindingOutput);
         else EvaluateFiles(args);
     }
 
@@ -41,6 +42,9 @@ internal static class Program
         CentralAlertTests.Run();
         GuideListFlowTests.Run();
         GuidePresentationCaptureTests.Run();
+        GuideEventMatchingTests.Run();
+        GuideBindingMemoryTests.Run();
+        GuideBindingReportTests.Run();
         GuidePauseTests.Run();
         GuideJournalTests.Run();
         GuideModelTransportTests.Run();

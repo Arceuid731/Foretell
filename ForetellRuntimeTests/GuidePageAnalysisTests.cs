@@ -18,6 +18,7 @@ internal static class GuidePageAnalysisTests
         var profile = GuideModelCatalog.Get(GuideModelCatalog.DefaultID);
         await GuideAnalysisReviewTests.Run();
         await GuideBatchAnalysisTests.Run();
+        await GuideTriggerAnalysisTests.Run();
         VerifyEvidenceAndConditions(source, profile);
         await VerifyDuskVigilSources(profile);
         using var model = new PageModel();

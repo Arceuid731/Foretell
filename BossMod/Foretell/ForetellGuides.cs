@@ -11,7 +11,6 @@ public sealed partial class ForetellEngine
     private (uint Content, uint Territory) _guideIdentity;
     private DateTime _guideSampleAt;
     private DateTime _guideNameBudgetAt;
-    private readonly List<GuideMatch> _guideMatches = [];
     private readonly Dictionary<string, uint> _guideBossNames = [];
     private readonly Dictionary<(string Boss, string Mechanic), uint> _guideActionNames = [];
     private readonly Dictionary<(string Sheet, uint ID, bool Localized), string> _guideNames = [];
@@ -69,7 +68,7 @@ public sealed partial class ForetellEngine
         }
         var pageSource = _guides.Snapshot.Document;
         if ((now - _guideSampleAt).TotalMilliseconds < 200 && now >= _guideSampleAt) return;
-        _guideSampleAt = now; _guideMatches.Clear();
+        _guideSampleAt = now;
         _guideSummaries?.Update(pageSource?.Duty == _guideDuty || _guideDuty == null ? pageSource : null, GuideContentLanguage,
             _cfg.GuideLocalSummaries, inCombat && _cfg.GuidePauseInCombat, _cfg.GuideSummaryGpu, _guideFrame.Boss?.Name ?? "", _cfg.GuideContextTokens, _cfg.GuideMemoryGiB, _cfg.GuideModelID);
         _liveGuide = _guideSummaries?.Snapshot is { Prepared: { } prepared } analysis && prepared.Duty == _guideDuty
@@ -91,45 +90,11 @@ public sealed partial class ForetellEngine
             var bosses = _liveGuide.Bosses.Where(boss => GuideNames.Boss(boss.Name) == GuideNames.Boss(bossName)).ToArray();
             if (bosses.Length != 1) continue;
             _guideBossNames[bosses[0].Name] = actor.NameID;
-            if (MatchGuideActor(_liveGuide, _guideDuty, actor, now, (sheet, id) => GuideSheetName(sheet, id, false)) is not { } match) continue;
-            _guideMatches.Add(match);
-            _guideActionNames[(match.Boss.Name, match.Mechanic.Name)] = match.Cast.ActionID;
         }
         _guideEncounter.Update(_liveGuide, actors, false);
         if (_liveGuide == null) return;
-        if (_guideEncounter.Frame is { Boss: { } ownerBoss, Upcoming: false, Ambiguous: false })
-        {
-            var owners = actors.Where(actor => !actor.Dead && GuideNames.Boss(actor.EnglishName) == GuideNames.Boss(ownerBoss.Name)).Select(actor => actor.ID).ToHashSet();
-            foreach (var helper in _ws.Actors.Where(actor => !actor.IsAlly && actor.Type is ActorType.Enemy or ActorType.Helper && owners.Contains(actor.OwnerID)))
-            {
-                if (MatchOwnedGuideActor(_liveGuide, _guideDuty, helper, _ws.Actors.Find(helper.OwnerID), now,
-                    (sheet, id) => GuideSheetName(sheet, id, false)) is not { } match) continue;
-                _guideMatches.Add(match); _guideActionNames[(match.Boss.Name, match.Mechanic.Name)] = match.Cast.ActionID;
-            }
-            foreach (var helper in _ws.Actors.Where(actor => actor.Type == ActorType.Helper && actor.OwnerID == 0))
-            {
-                if (MatchNamedGuideHelper(_liveGuide, _guideDuty, helper, _guideEncounter.Frame, now,
-                    (sheet, id) => GuideSheetName(sheet, id, false)) is not { } match) continue;
-                _guideMatches.Add(match); _guideActionNames[(match.Boss.Name, match.Mechanic.Name)] = match.Cast.ActionID;
-            }
-        }
         _guideSignals.Clear();
-        foreach (var match in _guideMatches)
-        {
-            var actor = _ws.Actors.Find(match.Cast.ActorID);
-            _guideSignals.Add(new(match.Boss, match.Phase, match.Mechanic, GuideSignalKind.Cast, match.Cast.ActorID, match.Cast.ObjectID,
-                match.Cast.NameID, match.Cast.ActionID, actor?.CastInfo?.TargetID ?? 0, match.Cast.FinishAt,
-                GuideRules.LiveGuidance(match.Mechanic, match.Phase, match.Boss), "Action/BNpcName IDs + exact English names + current duty") { OwnerID = actor?.OwnerID ?? 0 });
-        }
-        if (_guideEncounter.Frame is { Boss: { } current, Upcoming: false, Ambiguous: false } && player != null)
-        {
-            foreach (var status in player.Statuses.Where(status => status.ID != 0 && status.ExpireAt > now))
-            {
-                var source = _ws.Actors.Find(status.SourceID);
-                if (GuideSignalMatching.Status(current, player, status, source, source is { OwnerID: > 0 } ? _ws.Actors.Find(source.OwnerID) : null,
-                    now, (sheet, id) => GuideSheetName(sheet, id, false)) is { } signal) _guideSignals.Add(signal);
-            }
-        }
+        UpdateGuideEventBindings(now);
         _guideInstantSignals.RemoveAll(signal => signal.Until <= now || !ReferenceEquals(signal.Boss, _guideEncounter.Frame.Boss)
             || _guideEncounter.Frame.Upcoming || _guideEncounter.Frame.Ambiguous);
         _guideSignals.AddRange(_guideInstantSignals);
@@ -184,8 +149,10 @@ public sealed partial class ForetellEngine
 
     private void ResetGuideContext()
     {
+        _guideBindingSeen.Clear(); _guideBindingDocument = null; _guideBindingBoss = null;
+        _guideBindingScope = "";
         _guideIdentity = default; _guideDuty = null; _liveGuide = null; _guideSampleAt = default;
-        _guideMatches.Clear(); _guideBossNames.Clear(); _guideActionNames.Clear();
+        _guideBossNames.Clear(); _guideActionNames.Clear();
         _guideSignals.Clear(); _guideInstantSignals.Clear(); _guidePendingActions.Clear(); _guideEncounter.Reset(); _guideFrame = GuideCombatFrame.Empty;
         _guideEntryDismissed = false; _guideListLayout = null;
     }
@@ -233,20 +200,20 @@ public sealed partial class ForetellEngine
         return name.Length == 0 ? mechanic.Advice?.DisplayName ?? mechanic.Name : name;
     }
 
-    private IEnumerable<GuideMatch> LiveGuideMatches()
-        => _guideMatches.Where(match => ReferenceEquals(match.Boss, _guideFrame.Boss) && !_guideFrame.Upcoming && !_guideFrame.Ambiguous
-            && _cfg.EnableGuides && GuideCastIsCurrent(match, _guideDuty, _ws.Actors.Find(match.Cast.ActorID), _ws.CurrentTime));
-
     private IEnumerable<GuideSignal> LiveGuideSignals()
         => _guideFrame.Active.Where(signal => _cfg.EnableGuides && signal.Until > _ws.CurrentTime
             && _guideDuty?.ContentID == _ws.CurrentCFCID && _guideDuty.TerritoryID == _ws.CurrentZone
             && _ws.Actors.Find(signal.SourceID) is { IsDeadOrDestroyed: false } source && source.OID == signal.SourceOID && source.NameID == signal.SourceNameID
             && source.OwnerID == signal.OwnerID && (signal.OwnerID == 0 || _ws.Actors.Find(signal.OwnerID) is { IsDeadOrDestroyed: false })
+            && (signal.Trigger == null || GuideEventMatching.TargetApplies(signal.Trigger.Target,
+                signal.Kind == GuideSignalKind.Cast ? source.CastInfo?.TargetID ?? 0 : signal.TargetID,
+                _ws.Party.Player()?.InstanceID ?? 0, _ws.Party.FindSlot(signal.Kind == GuideSignalKind.Cast ? source.CastInfo?.TargetID ?? 0 : signal.TargetID) is >= 0 and < PartyState.MaxPartySize))
             && (signal.Kind == GuideSignalKind.Cast
                 ? source.CastInfo is { EventHappened: false } cast && cast.IsSpell() && cast.Action.ID == signal.ID
                     && float.IsFinite(cast.NPCRemainingTime) && cast.NPCRemainingTime > 0 && Math.Abs((_ws.CurrentTime.AddSeconds(cast.NPCRemainingTime) - signal.Until).TotalSeconds) < .3
                 : signal.Kind == GuideSignalKind.Action || signal.Kind == GuideSignalKind.Status && _ws.Actors.Find(signal.TargetID) is { IsDeadOrDestroyed: false } target
-                    && target.Statuses.Any(status => status.ID == signal.ID && status.SourceID == signal.SourceID && status.ExpireAt > _ws.CurrentTime)));
+                    && target.Statuses.Any(status => status.ID == signal.ID && status.SourceID == signal.SourceID && status.ExpireAt > _ws.CurrentTime
+                        && (status.Extra & 0xFF) >= (signal.Trigger?.MinimumStacks ?? 0))));
 
     private void ResolveGuideAction(Actor actor, ActorCastEvent actionEvent)
     {
@@ -317,6 +284,7 @@ public sealed partial class ForetellEngine
 
     private string GuideChecklistInstruction(GuideBoss boss, GuidePhase phase, GuideMechanic mechanic, GuideSignal? live = null)
     {
+        if (live?.Instruction.Length > 0) return live.Instruction;
         if (mechanic.Advice is { } advice && advice.Language == GuideContentLanguage) return GuideListFlow.Instruction(mechanic, advice.Cue);
         if (live == null) return GuideChecklistPresentation.Instruction(GuideRules.LiveGuidance(mechanic, phase, boss), GuideClientLanguage);
         var confirmed = _ws.Party[PartyState.PlayerSlot] is { IsDeadOrDestroyed: false } player && GuideAlertGuidance(live, player) != GuidanceKind.None;
