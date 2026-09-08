@@ -24,12 +24,12 @@ internal static class GuideShortCueTests
     {
         var legacy = Mechanic();
         var before = JsonSerializer.Serialize(legacy.Advice);
-        Check(GuideListFlow.Instruction(legacy, "") == "Avoid tornadoes", "Real cached conditional cue remains a paragraph.");
-        Check(GuideShortCue.Instruction(legacy, "") == "Avoid tornadoes", "Central and list cue selection disagree.");
+        Check(GuideListFlow.Instruction(legacy, "") == legacy.Name, "Legacy paragraph was replaced with a code-generated instruction.");
+        Check(GuideShortCue.Instruction(legacy, "") == legacy.Name, "Central and list cue selection disagree.");
         Check(JsonSerializer.Serialize(legacy.Advice) == before, "Short presentation mutated cached branches or evidence.");
         var unrelated = Mechanic(shortCue: "Avoid rolling boulders", evidence:
             "Avalanche requires players to change lanes to avoid rolling boulders that cross the platform.");
-        Check(GuideShortCue.Instruction(unrelated, "") == "Avoid rolling boulders", "Legacy shortening depends on a particular ability or hazard name.");
+        Check(GuideShortCue.Instruction(unrelated, "") == unrelated.Name, "Legacy source prose was rewritten into an instruction.");
         foreach (var unsafeSource in new[]
         {
             "If marked, it requires players to reposition into safe zones to avoid tornadoes.",
@@ -41,26 +41,37 @@ internal static class GuideShortCueTests
             "It requires players to reposition into safe zones to avoid tornadoes, but not during the charge.",
             "It requires players to reposition into safe zones to avoid tornadoeslashes."
         })
-            Check(GuideShortCue.Instruction(Mechanic(evidence: unsafeSource), "") == "Watch Typhoon", "Legacy simplification discarded a source condition or matched a partial hazard name.");
-        Check(GuideShortCue.Instruction(Mechanic(shortCue: "Move to the empty lane"), "") == "Watch Typhoon", "Legacy short cue selected just the first branch.");
-        Check(GuideShortCue.Instruction(Mechanic(shortCue: "Avoid them", evidence: "It requires players to move to avoid them."), "") == "Watch Typhoon",
+            Check(GuideShortCue.Instruction(Mechanic(evidence: unsafeSource), "") == legacy.Name, "Legacy simplification discarded a source condition or matched a partial hazard name.");
+        Check(GuideShortCue.Instruction(Mechanic(shortCue: "Move to the empty lane"), "") == legacy.Name, "Legacy short cue selected just the first branch.");
+        Check(GuideShortCue.Instruction(Mechanic(shortCue: "Avoid them", evidence: "It requires players to move to avoid them."), "") == legacy.Name,
             "Legacy cue retains an ambiguous pronoun.");
-        Check(GuideShortCue.Instruction(Mechanic(evidence: Source + " If marked, stand inside the tornadoes."), "") == "Watch Typhoon",
+        Check(GuideShortCue.Instruction(Mechanic(evidence: Source + " If marked, stand inside the tornadoes."), "") == legacy.Name,
             "An exception elsewhere in the source became an unconditional avoidance instruction.");
         var conditional = "If marked: spread; otherwise stack";
         Check(GuideShortCue.Instruction(Mechanic(conditional, "Spread", branches: []), "") == conditional,
             "A complete short conditional cue lost its exception.");
         Check(GuideShortCue.Instruction(Mechanic(scope: "shared", shortCue: "Avoid tornadoes"), "") == "Avoid tornadoes", "New shared cue is not selected.");
         Check(GuideShortCue.Instruction(Mechanic(scope: "complete", shortCue: conditional), "") == conditional, "New complete cue lost a branch.");
+        foreach (var modelCue in new[] { "Move to safe zones to avoid tornadoes", "Hide behind rubble", "Face away from the eye", "Do not move until the debuff expires", "Red: out; blue: in", "Tank: mitigate; others: avoid the tank" })
+        {
+            var mechanic = Mechanic(scope: "complete", shortCue: modelCue);
+            Check(GuideShortCue.Instruction(mechanic, "Generic fallback") == modelCue
+                && GuideListFlow.Instruction(mechanic, "Generic fallback") == modelCue, "Display rewrote a model-generated instruction.");
+        }
+        var legacyCast = Mechanic(cue: "On cast: move behind the boss", branches: [new("On cast", "Move behind the boss")]);
+        Check(GuideShortCue.Instruction(legacyCast, "") == legacyCast.Advice!.Cue, "Display stripped part of a legacy model instruction.");
+        Check(GuideShortCue.Instruction(new("Unknown attack", "", ""), Detailed) == "Unknown attack", "Unprepared source prose leaked into a central alert.");
         var trigger = new GuideTrigger("status", "Scorch", "If affected: move away; otherwise stay clear", ["Scorch affects a player."])
             { Target = "any", ShortCue = "If affected: move away; otherwise stay clear", CueScope = "complete" };
         Check(GuideShortCue.Instruction(legacy, "", trigger) == trigger.ShortCue, "Mechanic-wide cue overwrites a precise event cue.");
         Check(GuideShortCue.Instruction(legacy, "", trigger with { CueScope = "", ShortCue = "Move away" }) == trigger.Cue,
             "Untrusted old trigger short cue removed the recipient condition.");
+        Check(GuideShortCue.Instruction(Mechanic(scope: "shared", shortCue: "Avoid tornadoes"), "", trigger with { CueScope = "", Cue = Detailed }) == trigger.Name,
+            "Long legacy event cue became a different event's instruction or a paragraph.");
         foreach (var text in new[] { "", new string('a', 101), "Avoid…", "Avoid...", "Move\naway", string.Join(' ', Enumerable.Repeat("go", 17)) })
             Check(!GuideShortCue.Valid(text), "Invalid short cue contract accepted.");
         AnalysisContract();
-        Console.WriteLine("Short guide cues: shared/complete contract, retained details, safe legacy fallback and event-specific instructions passed.");
+        Console.WriteLine("Short guide cues: unchanged model text, shared/complete contract, retained details, legacy fallback and event-specific instructions passed.");
     }
 
     private static void AnalysisContract()

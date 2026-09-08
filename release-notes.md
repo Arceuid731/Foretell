@@ -1,8 +1,7 @@
-# Foretell 0.13.11 — shorter tips and moving mechanics
+# Foretell 0.13.12 — clear combat instructions
 
-- Show a short instruction in the mechanic list and central alert; keep detailed alternatives in the tooltip.
-- Track repeated circular impacts from untargetable emitters, including movement, on the radar and 3D overlay.
-- Continue highlighting a matching mechanic after its cast while a linked emitter remains active.
-- Include emitter motion and the originating boss cast in Analysis ZIP exports.
+- Ask the local model for a direct, immediately readable instruction for each mechanic and detected event.
+- Display that instruction in the mechanic list and central alert, with detailed conditions kept in the tooltip.
+- Remove the automatic text-rewriting fallback for older guides.
 
-Saved guides remain usable. Moving-impact forecasts need three consistent observations and cover only the next short interval.
+Reanalyze an older saved guide in Local AI to generate its new short instructions. Until then, an overly long instruction is replaced by the mechanic name; its full details remain available on hover.

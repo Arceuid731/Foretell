@@ -46,7 +46,7 @@ internal static class GuideListFlowTests
         Check(GuideRolePresentation.Icons(["tank", "TANK", "healer"]).SequenceEqual(new[] { "tank", "healer" }), "Role icon normalization disagrees with role tags");
         Check(GuideRolePresentation.Icons(["all"]).Length == 0, "Universal mechanics display redundant role icons");
         var ability = new GuideMechanic("Example", "", "") { Advice = new(GuideLanguage.English, "Example", "Ability cast: Mitigate", "", "cast", "Example", [])
-            { Responses = [new("Ability cast", "Mitigate")] } };
+            { Responses = [new("Ability cast", "Mitigate")], ShortCue = "Mitigate", CueScope = "complete" } };
         Check(GuideListFlow.Instruction(ability, "") == "Mitigate", "Redundant cast wording bloats the quick instruction");
         var conditional = new GuideMechanic("Conditional", "", "") { Advice = new(GuideLanguage.English, "Conditional", "Red: move out; Blue: move in", "", "manual", "", [])
             { ShortCue = "Move out", Responses = [new("Red", "move out"), new("Blue", "move in")] } };
@@ -56,8 +56,8 @@ internal static class GuideListFlowTests
         Check(GuideListFlow.Instruction(marked, "") == "If marked: move away", "Compact instruction lost a player-dependent condition");
         var legacy = new GuideMechanic("Legacy", "", "") { Advice = conditional.Advice! with { Responses = [] } };
         Check(GuideListFlow.Instruction(legacy, "") == conditional.Advice!.Cue, "Legacy short cue discarded a conditional alternative");
-        var legacyCast = new GuideMechanic("Legacy cast", "", "") { Advice = ability.Advice! with { Responses = [] } };
-        Check(GuideListFlow.Instruction(legacyCast, "") == "Mitigate", "Legacy cast label bloats the quick instruction");
+        var legacyCast = new GuideMechanic("Legacy cast", "", "") { Advice = ability.Advice! with { Responses = [], CueScope = "" } };
+        Check(GuideListFlow.Instruction(legacyCast, "") == ability.Advice!.Cue, "Display rewrites legacy model text");
         Console.WriteLine("Focused guide list: bounded reminders, all active mechanics, fixed text size, role relevance and conditional instructions passed.");
     }
 
