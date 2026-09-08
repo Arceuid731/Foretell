@@ -1,9 +1,8 @@
-# Foretell 0.13.9 — match guide tips to combat events
+# Foretell 0.13.10 — match guides with game IDs
 
-- Match several named casts and party debuffs to one mechanic, each with its own instruction.
-- Use documented targets and debuff stack thresholds to select the relevant tip and highlight.
-- Prefer guide instructions over generic alerts at the same personal priority.
-- Remember observed event IDs for the matching guide and boss.
-- Include accepted and rejected matches, selected tips and display outcomes in Analysis ZIP exports.
+- Resolve guide ability, debuff and boss names using the game's English, French, German and Japanese data.
+- Match observed action and status IDs within the current boss and phase, preserving target and stack conditions.
+- Feed matched tips into mechanic highlights, central alerts and existing radar/3D associations.
+- Inspect unresolved triggers in Advanced diagnostics. Analysis ZIPs include candidate IDs and accepted or rejected matches.
 
-Existing guides remain available. Use Reanalyze once on a saved guide to extract its additional triggers. New guides use the updated analysis automatically.
+Saved guides work without another AI analysis. Descriptions without an identifiable trigger still need further matching improvements.

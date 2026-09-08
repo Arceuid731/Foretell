@@ -3,6 +3,7 @@ using System.Text.Json;
 namespace BossMod.Foretell;
 
 internal sealed record GuideEventResolution(GuidePhase? Phase, GuideMechanic? Mechanic, GuideTrigger? Trigger, string Reason, string[] Candidates);
+internal sealed record GuideEventCandidate(GuidePhase Phase, GuideMechanic Mechanic, GuideTrigger? Trigger);
 
 internal static class GuideEventMatching
 {
@@ -17,9 +18,7 @@ internal static class GuideEventMatching
     {
         if (string.IsNullOrWhiteSpace(name)) return new(null, null, null, "NameUnavailable", []);
         if (kind is not ("cast" or "status")) return new(null, null, null, "UnsupportedEvent", []);
-        List<(GuidePhase Phase, GuideMechanic Mechanic, GuideTrigger? Trigger)> candidates = [];
-        var rejected = "NoDocumentedTrigger";
-        List<string> named = [];
+        List<GuideEventCandidate> found = [];
         foreach (var phase in boss.Phases)
         foreach (var mechanic in phase.Mechanics)
         {
@@ -30,25 +29,38 @@ internal static class GuideEventMatching
                 : advice != null ? advice.TriggerKind == "status" && GuideNames.Normalize(advice.TriggerName) == GuideNames.Normalize(name)
                     || GuideNames.Normalize(mechanic.Name) == GuideNames.Normalize(name) && advice.Evidence.Any(quote => GuideRules.Mentions(quote, name))
                     : GuideRules.Mentions(mechanic.Text, name));
-            if (triggers.Length == 0 && !legacy) continue;
-            named.Add(mechanic.Name);
-            if (advice is { Conflict.Length: > 0 } or { ContextOnly: true }) { rejected = "ConflictingOrContextOnly"; continue; }
-            if (!GuidePhases.Includes(boss, mechanic, knownPhase)) { rejected = "OtherPhase"; continue; }
-            if (triggers.Length == 0) { candidates.Add((phase, mechanic, null)); continue; }
-            var applicable = triggers.Where(trigger => TargetApplies(trigger.Target, targetID, playerID, partyTarget)
-                && (kind != "status" || stacks >= trigger.MinimumStacks)).ToArray();
-            if (applicable.Length == 0) { rejected = "TargetOrStacksNotSatisfied"; continue; }
-            var targeted = applicable.Where(trigger => trigger.Target != "any").ToArray();
-            if (targeted.Length != 0) applicable = targeted;
-            var threshold = applicable.Max(trigger => trigger.MinimumStacks);
-            foreach (var trigger in applicable.Where(trigger => trigger.MinimumStacks == threshold).Distinct()) candidates.Add((phase, mechanic, trigger));
+            foreach (var trigger in triggers) found.Add(new(phase, mechanic, trigger));
+            if (legacy) found.Add(new(phase, mechanic, null));
         }
-        var names = named.Distinct().Take(8).ToArray();
+        return Choose(boss, knownPhase, kind, found, targetID, playerID, partyTarget, stacks);
+    }
+
+    internal static GuideEventResolution Choose(GuideBoss boss, GuidePhaseDefinition? knownPhase, string kind,
+        IReadOnlyList<GuideEventCandidate> found, ulong targetID, ulong playerID, bool partyTarget, int stacks)
+    {
+        List<GuideEventCandidate> candidates = [];
+        var rejected = "NoDocumentedTrigger";
+        var otherPhase = false;
+        foreach (var group in found.GroupBy(candidate => candidate.Mechanic))
+        {
+            var mechanic = group.Key;
+            var advice = mechanic.Advice;
+            if (advice is { Conflict.Length: > 0 } or { ContextOnly: true }) { rejected = "ConflictingOrContextOnly"; continue; }
+            if (!GuidePhases.Includes(boss, mechanic, knownPhase)) { rejected = "OtherPhase"; otherPhase = true; continue; }
+            var applicable = group.Where(candidate => candidate.Trigger == null || TargetApplies(candidate.Trigger.Target, targetID, playerID, partyTarget)
+                && (kind != "status" || stacks >= candidate.Trigger.MinimumStacks)).ToArray();
+            if (applicable.Length == 0) { rejected = "TargetOrStacksNotSatisfied"; continue; }
+            var targeted = applicable.Where(candidate => candidate.Trigger is { Target: not "any" }).ToArray();
+            if (targeted.Length != 0) applicable = targeted;
+            var threshold = applicable.Max(candidate => candidate.Trigger?.MinimumStacks ?? 0);
+            candidates.AddRange(applicable.Where(candidate => (candidate.Trigger?.MinimumStacks ?? 0) == threshold).Distinct());
+        }
+        var names = found.Select(candidate => candidate.Mechanic.Name).Distinct().Take(8).ToArray();
         if (candidates.Count == 0)
         {
-            if (rejected == "OtherPhase" && knownPhase != null)
+            if (otherPhase && knownPhase != null)
             {
-                var transition = Resolve(boss, null, kind, name, targetID, playerID, partyTarget, stacks);
+                var transition = Choose(boss, null, kind, found, targetID, playerID, partyTarget, stacks);
                 if (transition.Mechanic is { PhaseMemberships.Length: 1 } next
                     && boss.PhaseDefinitions.Any(phase => phase.ID == next.PhaseMemberships[0].PhaseID))
                     return transition with { Reason = "MatchedPhaseTransition" };
@@ -65,4 +77,11 @@ internal static class GuideEventMatching
 
 internal sealed record GuideBindingAudit(long Sequence, DateTime At, string Scope, string Boss, string? Phase, string Kind,
     ulong SourceID, uint SourceOID, uint SourceNameID, uint ID, string Name, ulong TargetID, int Stacks,
-    string Result, string[] Candidates, string? Mechanic, string Instruction, string Mapping, string? BindingKey);
+    string Result, string[] Candidates, string? Mechanic, string Instruction, string Mapping, string? BindingKey)
+{
+    public string CatalogHash { get; init; } = "";
+    public uint[] CandidateIDs { get; init; } = [];
+    public int CandidateIDsOmitted { get; init; }
+    public int CastType { get; init; }
+    public float EffectRange { get; init; }
+}

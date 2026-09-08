@@ -6,9 +6,9 @@ using BossMod.Foretell;
 
 internal static class Program
 {
-    public static int Main(string[] args) => ConsoleTestHost.Run(args, RunCommand);
+    public static int Main(string[] args) => ConsoleTestHost.Run(args, Initialize);
 
-    private static void RunCommand(string[] args)
+    private static void Initialize(string[] args)
     {
         AssemblyLoadContext.Default.Resolving += (_, name) =>
         {
@@ -16,6 +16,12 @@ internal static class Program
             var file = Path.Combine(directory, name.Name + ".dll");
             return File.Exists(file) ? AssemblyLoadContext.Default.LoadFromAssemblyPath(file) : null;
         };
+        RunCommand(args);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void RunCommand(string[] args)
+    {
         if (args.Length == 0) Run();
         else if (args[0] == "--wiki-smoke") GuideTests.Smoke(args);
         else if (args is ["--guide-analysis-smoke", var runtimeDirectory, var outputDirectory, var profile, .. var titles])
@@ -32,6 +38,8 @@ internal static class Program
         else if (args is ["--guide-cache-check", var cacheRoot, var preparedPath]) GuideCacheTests.VerifyInstalled(cacheRoot, preparedPath);
         else if (args is ["--guide-review", var recording, var guideCache, var gameDirectory, var reportDirectory]) GuideRecordingReview.Run(recording, guideCache, gameDirectory, reportDirectory);
         else if (args is ["--guide-binding-report", var bindingZip, var bindingOutput]) GuideBindingReport.Run(bindingZip, bindingOutput);
+        else if (args is ["--guide-id-catalog", var gameSheets]) GuideIdCatalogTests.SheetSmoke(gameSheets);
+        else if (args is ["--guide-id-review", var idZip, var idGame, var idOutput]) GuideIdReplayReview.Run(idZip, idGame, idOutput);
         else EvaluateFiles(args);
     }
 
@@ -44,6 +52,8 @@ internal static class Program
         GuidePresentationCaptureTests.Run();
         GuideEventMatchingTests.Run();
         GuideBindingMemoryTests.Run();
+        GuideIdCatalogTests.Run();
+        GuideIdPlanTests.Run();
         GuideBindingReportTests.Run();
         GuidePauseTests.Run();
         GuideJournalTests.Run();

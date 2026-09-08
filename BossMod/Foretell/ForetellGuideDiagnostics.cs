@@ -37,6 +37,7 @@ public sealed partial class ForetellEngine
         var runtime = _guideSummaries?.Runtime;
         if (summary?.SourceHash != document?.SourceHash || summary?.Language != GuideContentLanguage) summary = null;
         var state = snapshot?.Duty == _guideDuty ? snapshot : null;
+        var ids = GuideIDInfo(document);
         var signals = LiveGuideSignals().ToArray();
         var options = new GuideCaptureOptions(_cfg.Mode, _cfg.EnableGuides, _cfg.GuideSidebar, _cfg.GuideEntryPopup, _guideEntryDismissed,
             _cfg.GuideCentralAlerts, _cfg.TextHints, _cfg.GuideLocalSummaries, _cfg.GuideSummaryGpu, _cfg.GuideScale, _cfg.GuideAlertScale)
@@ -50,7 +51,7 @@ public sealed partial class ForetellEngine
         var signature = string.Join('|', _captureSession.ID, _guideDuty?.Key, document?.SourceHash, GuideContentLanguage, state?.State, state?.Error,
             summary?.Stage, summary?.Completed, summary?.Summaries.Count, summary?.LastIssue, runtime?.Stage, runtime?.ProcessID,
             _guideFrame.Boss?.Name, _guideFrame.KnownPhase?.ID, _guideFrame.Upcoming, _guideFrame.Ambiguous, _guideCombat,
-            _guideBossNames.Count, _guideActionNames.Count, _guideBindingSequence, _guideBindingPending.Count, _guideBindingDropped, _guideBindings?.Error, _guideBindings?.Ready,
+            _guideBossNames.Count, _guideActionNames.Count, _guideBindingSequence, _guideBindingPending.Count, _guideBindingDropped, _guideBindings?.Error, _guideBindings?.Ready, ids.PlanHash, ids.State,
             _guideBossNames.Values.Count(id => _guideNames.ContainsKey(("BNpcName", id, true))),
             _guideActionNames.Values.Count(id => _guideNames.ContainsKey(("Action", id, true))), options,
             string.Join(';', signals.Select(signal => $"{signal.SourceID}:{signal.ID}:{signal.Kind}:{signal.TargetID}:{signal.Until.Ticks / TimeSpan.TicksPerSecond}")));
@@ -76,6 +77,7 @@ public sealed partial class ForetellEngine
         {
             Presentation = presentation, BindingAudits = _guideBindingPending.Take(8).ToArray(), BindingAuditsDropped = _guideBindingDropped,
             BindingAuditsPending = Math.Max(0, _guideBindingPending.Count - 8),
+            IdResolution = ids,
             BindingMemoryState = _guideBindings == null ? "Unavailable" : _guideBindings.Error.Length > 0 ? _guideBindings.Error : _guideBindings.Ready ? "Ready" : "Loading"
         };
         if (_capture.EnqueueGuide(_captureSession, input))

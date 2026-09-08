@@ -136,7 +136,7 @@ internal sealed class GuideActionQueue
     }
 
     public GuideSignal[] Resolve(GuideDocument document, GuideDuty duty, GuideCombatFrame frame, DateTime now,
-        Func<ulong, Actor?> actor, Func<string, uint, string> name)
+        Func<ulong, Actor?> actor, Func<string, uint, string> name, GuideIdPlan? ids = null)
     {
         if (document.Duty != duty || frame is not { Boss: { } boss, Upcoming: false, Ambiguous: false })
         {
@@ -155,25 +155,28 @@ internal sealed class GuideActionQueue
                 _pending.Remove(pending);
                 continue;
             }
-            var bossName = name("BNpcName", owner.NameID);
-            if (bossName.Length == 0) continue;
+            if (ids != null && !ReferenceEquals(ids.Document, document)) { _pending.Remove(pending); continue; }
+            var bossName = ids == null ? name("BNpcName", owner.NameID) : ids.Boss(owner.NameID)?.Name ?? "";
+            if (bossName.Length == 0) { if (ids != null) _pending.Remove(pending); continue; }
             if (GuideNames.Boss(bossName) != GuideNames.Boss(boss.Name))
             {
                 _pending.Remove(pending);
                 continue;
             }
-            var actionName = name("Action", pending.ActionID);
-            if (actionName.Length == 0) continue;
+            var actionName = ids == null ? name("Action", pending.ActionID) : ids.Catalog.Row("cast", pending.ActionID)?.EnglishName ?? "";
+            if (ids == null && actionName.Length == 0) continue;
             _pending.Remove(pending);
             var bosses = document.Bosses.Where(candidate => GuideNames.Boss(candidate.Name) == GuideNames.Boss(bossName)).ToArray();
             if (bosses.Length != 1 || !ReferenceEquals(bosses[0], boss)) continue;
             var triggers = boss.Phases.SelectMany(phase => phase.Mechanics).SelectMany(mechanic => mechanic.Advice?.Triggers ?? [])
                 .Where(trigger => GuideNames.Normalize(trigger.Name) == GuideNames.Normalize(actionName)).ToArray();
-            if (triggers.Any(trigger => trigger.Kind != "cast" || trigger.Target != "any" || trigger.MinimumStacks != 0 || string.IsNullOrWhiteSpace(trigger.Cue))) continue;
-            var match = GuideEventMatching.Resolve(boss, frame.KnownPhase, "cast", actionName, pending.TargetID, 0, false, 0);
+            if (ids != null ? !ids.AllowsInstant(boss, pending.ActionID)
+                : triggers.Any(trigger => trigger.Kind != "cast" || trigger.Target != "any" || trigger.MinimumStacks != 0 || string.IsNullOrWhiteSpace(trigger.Cue))) continue;
+            var match = ids?.Resolve(boss, frame.KnownPhase, "cast", pending.ActionID, pending.TargetID, 0, false, 0)
+                ?? GuideEventMatching.Resolve(boss, frame.KnownPhase, "cast", actionName, pending.TargetID, 0, false, 0);
             if (match.Mechanic == null || match.Phase == null) continue;
             resolved.Add(new(boss, match.Phase, match.Mechanic, GuideSignalKind.Action, source.InstanceID, source.OID, source.NameID,
-                pending.ActionID, pending.TargetID, pending.Until, GuidanceKind.None, "Observed ActionEffect + current boss ownership + exact ability name")
+                pending.ActionID, pending.TargetID, pending.Until, GuidanceKind.None, ids == null ? "Observed ActionEffect + current boss ownership + exact ability name" : "Observed ActionEffect + current boss ownership + official game ID")
                 { OwnerID = pending.OwnerID, Instruction = match.Trigger?.Cue ?? "", Trigger = match.Trigger });
         }
         return resolved.ToArray();

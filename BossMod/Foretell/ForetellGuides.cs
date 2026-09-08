@@ -71,6 +71,7 @@ public sealed partial class ForetellEngine
         _guideSampleAt = now;
         _guideSummaries?.Update(pageSource?.Duty == _guideDuty || _guideDuty == null ? pageSource : null, GuideContentLanguage,
             _cfg.GuideLocalSummaries, inCombat && _cfg.GuidePauseInCombat, _cfg.GuideSummaryGpu, _guideFrame.Boss?.Name ?? "", _cfg.GuideContextTokens, _cfg.GuideMemoryGiB, _cfg.GuideModelID);
+        UpdateGuideIdPlan(_guideSummaries?.Snapshot?.Prepared);
         _liveGuide = _guideSummaries?.Snapshot is { Prepared: { } prepared } analysis && prepared.Duty == _guideDuty
             && prepared.SourceHash == pageSource?.SourceHash && analysis.Language == GuideContentLanguage && analysis.ModelID == GuideModelCatalog.Get(_cfg.GuideModelID).ID
             ? prepared : null;
@@ -82,7 +83,8 @@ public sealed partial class ForetellEngine
         foreach (var actor in _ws.Actors)
         {
             if (actor.Type != ActorType.Enemy || actor.IsAlly || actor.NameID == 0 || actor.IsDestroyed && !actor.IsDead) continue;
-            var bossName = GuideSheetName("BNpcName", actor.NameID, false);
+            var idPlan = GuideIDs(_liveGuide);
+            var bossName = idPlan == null ? GuideSheetName("BNpcName", actor.NameID, false) : idPlan.Boss(actor.NameID)?.Name ?? "";
             if (bossName.Length == 0) continue;
             actors.Add(new(actor.InstanceID, actor.OID, actor.NameID, bossName, actor.IsDead,
                 actor.InCombat || actor.CastInfo != null, player == null ? float.MaxValue : (actor.Position - player.Position).Length()));
@@ -234,7 +236,7 @@ public sealed partial class ForetellEngine
     {
         if (_liveGuide == null || _guideDuty == null) { _guidePendingActions.Clear(); return; }
         foreach (var signal in _guidePendingActions.Resolve(_liveGuide, _guideDuty, _guideEncounter.Frame, now,
-            id => _ws.Actors.Find(id), (sheet, id) => GuideSheetName(sheet, id, false)))
+            id => _ws.Actors.Find(id), (sheet, id) => GuideSheetName(sheet, id, false), GuideIDs(_liveGuide)))
         {
             _guideInstantSignals.RemoveAll(existing => existing.Until <= now || existing.SourceID == signal.SourceID && existing.ID == signal.ID);
             if (_guideInstantSignals.Count >= 32) continue;

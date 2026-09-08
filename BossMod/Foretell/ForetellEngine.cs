@@ -220,6 +220,7 @@ public sealed partial class ForetellEngine : IDisposable
             _guides?.Dispose();
             _guideSummaries?.Dispose();
             _guideBindings?.Dispose();
+            _guideIdCancellation.Cancel();
             _replay?.Dispose();
             _replay = null;
             _raw.Dispose();
@@ -268,6 +269,7 @@ public sealed partial class ForetellEngine : IDisposable
         _guides?.Dispose();
         _guideSummaries?.Dispose();
         _guideBindings?.Dispose();
+        _guideIdCancellation.Cancel();
         try { FinalizeDue(DateTime.MaxValue, exhaustive: true); CompleteSession(); SaveStore(); }
         catch (Exception e) { Service.Log($"[Foretell] Final save during dispose failed safely: {e.Message}"); }
         _ws.Network.CaptureRawTransport = false;

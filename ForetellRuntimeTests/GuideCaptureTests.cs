@@ -118,6 +118,7 @@ internal static class GuideCaptureTests
             catch (InvalidDataException) { }
         }
         TestLongTimeline(root);
+        TestIdResolution(root);
         TestChangingAdaptations(root);
         TestReservedQuotas(root, events[0]);
         TestTimelineBounds(root);
@@ -137,6 +138,32 @@ internal static class GuideCaptureTests
             Check(document.RootElement.ValueKind == JsonValueKind.Object, "Timeline was serialized as base64 instead of JSON");
             return document.RootElement.GetProperty("frames").EnumerateArray().Select(frame => frame.Clone()).ToArray();
         }).ToArray();
+    }
+
+    private static void TestIdResolution(string root)
+    {
+        using var capture = new ForetellCapture(Path.Combine(root, "guide-id-plan"));
+        var session = capture.NewSession(1, "id-plan", "capture-version");
+        var input = Input(session);
+        var info = new GuideIdResolutionInfo(GuideNames.Hash("catalog"), GuideNames.Hash("plan"), "Ready",
+            [new("Boss", "Storm", "cast", "Tempête", [51, 52], "MultipleCandidateIDs"), new("Boss", "Unknown", "cast", "Unknown", [], "NameNotFound")]);
+        Check(capture.EnqueueGuide(session, input with { IdResolution = info }), "ID plan rejected by guide capture");
+        using var snapshot = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+        var frame = Frames(snapshot).Single();
+        Check(frame.GetProperty("catalogHash").GetString() == info.CatalogHash && frame.GetProperty("idPlanHash").GetString() == info.PlanHash
+            && !frame.TryGetProperty("IdResolution", out _), "Timeline duplicated the plan or lost its reference");
+        var artifact = snapshot.Guides.Single(file => file.Kind == "adapted");
+        using var stream = new MemoryStream(ForetellEngine.ReadGuideArtifact(snapshot.Directory, artifact));
+        using var gzip = new GZipStream(stream, CompressionMode.Decompress);
+        using var document = JsonDocument.Parse(gzip);
+        var triggers = document.RootElement.GetProperty("IdResolution").GetProperty("Triggers").EnumerateArray().ToArray();
+        Check(triggers[0].GetProperty("IDs").EnumerateArray().Select(value => value.GetUInt32()).SequenceEqual(new uint[] { 51, 52 })
+            && triggers[1].GetProperty("Reason").GetString() == "NameNotFound", "Candidate alternatives or unresolved names missing from export");
+        Check(capture.EnqueueGuide(session, input with { IdResolution = info with { CatalogHash = GuideNames.Hash("updated"), PlanHash = GuideNames.Hash("updated-plan") } }),
+            "Updated catalog plan rejected");
+        using var updated = capture.SnapshotAsync(session.Directory).GetAwaiter().GetResult()!;
+        Check(updated.Guides.Count(file => file.Kind == "adapted") == 2 && updated.Guides.Count(file => file.Kind == "source") == 1,
+            "Game data update lost new bindings or duplicated source downloads");
     }
 
     private static void TestLongTimeline(string root)
@@ -214,7 +241,8 @@ internal static class GuideCaptureTests
             var input = Input(session) with
             {
                 BindingAudits = [new(1, DateTime.UtcNow, GuideNames.Hash("fixture"), "Final boss", null, "status", 1, 2, 3, 4,
-                    "Charged", 5, 4, "MatchedGroundedTrigger", ["Bomb pattern"], "Bomb pattern", "Move away", "ObservedName", GuideNames.Hash("binding"))],
+                    "Charged", 5, 4, "MatchedGameID", ["Bomb pattern"], "Bomb pattern", "Move away", "OfficialGameID", GuideNames.Hash("binding"))
+                    { CatalogHash = "catalog-fixture", CandidateIDs = [4, 8], CandidateIDsOmitted = 3 }],
                 BindingMemoryState = "Ready"
             };
             Check(capture.EnqueueGuide(session, input with { State = input.State with { Boss = "Final boss" } }), "Raw cap rejected later guide input");
@@ -225,6 +253,8 @@ internal static class GuideCaptureTests
             var audit = Frames(snapshot).Single().GetProperty("BindingAudits").EnumerateArray().Single();
             Check(audit.GetProperty("Instruction").GetString() == "Move away" && audit.GetProperty("Stacks").GetInt32() == 4,
                 "Raw cap lost the selected event cue or status evidence");
+            Check(audit.GetProperty("CatalogHash").GetString() == "catalog-fixture" && audit.GetProperty("CandidateIDs").GetArrayLength() == 2
+                && audit.GetProperty("CandidateIDsOmitted").GetInt32() == 3, "Raw cap lost official ID provenance.");
             var zip = Export(root, "reserved-guides-" + expandedLimit + ".zip", snapshot, session.ID);
             using var archive = ZipFile.OpenRead(zip);
             using var index = Read(archive, "guides/index.json");

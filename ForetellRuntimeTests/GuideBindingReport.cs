@@ -105,7 +105,14 @@ internal static class GuideBindingReport
     private static string Text(JsonElement value, string name) => Property(value, name) is { ValueKind: JsonValueKind.String } text ? Short(text.GetString()!) : "";
     private static long Number(JsonElement value, string name) => Property(value, name) is { ValueKind: JsonValueKind.Number } number && number.TryGetInt64(out var result) ? Math.Max(0, result) : 0;
     private static string Short(string value) => value.Length <= 512 ? value : value[..512];
-    private sealed record Audit(string SessionID, long Sequence, string Scope, string Kind, long ID, string Name, string Boss, string Result, string[] Candidates, string Mapping, string Instruction);
+    private sealed record Audit(string SessionID, long Sequence, string Scope, string Kind, long ID, string Name, string Boss, string Result, string[] Candidates, string Mapping, string Instruction)
+    {
+        public string CatalogHash { get; init; } = "";
+        public long[] CandidateIDs { get; init; } = [];
+        public long CandidateIDsOmitted { get; init; }
+        public long CastType { get; init; }
+        public string Phase { get; init; } = "";
+    }
     private sealed class Gaps
     {
         public long BindingAuditsDropped { get; set; }
@@ -180,7 +187,13 @@ internal static class GuideBindingReport
                     if (_audits.Count >= RecordLimit) { Warn("Binding audit aggregation limit reached."); break; }
                     _audits.Add(key, new(session, auditSequence, Text(value, "Scope"), Text(value, "Kind"), Number(value, "ID"), Text(value, "Name"), Text(value, "Boss"),
                         Text(value, "Result"), Array(value, "Candidates").Where(candidate => candidate.ValueKind == JsonValueKind.String)
-                            .Take(8).Select(candidate => Short(candidate.GetString()!)).ToArray(), Text(value, "Mapping"), Text(value, "Instruction")));
+                            .Take(8).Select(candidate => Short(candidate.GetString()!)).ToArray(), Text(value, "Mapping"), Text(value, "Instruction"))
+                    {
+                        CatalogHash = Text(value, "CatalogHash"), CastType = Number(value, "CastType"), Phase = Text(value, "Phase"),
+                        CandidateIDsOmitted = Number(value, "CandidateIDsOmitted"),
+                        CandidateIDs = Array(value, "CandidateIDs").Where(candidate => candidate.ValueKind == JsonValueKind.Number && candidate.TryGetInt64(out _))
+                            .Take(4096).Select(candidate => candidate.GetInt64()).ToArray()
+                    });
                 }
             }
             else Warn("Sample has no binding audit array; audit coverage is incomplete.");
@@ -311,7 +324,8 @@ internal static class GuideBindingReportTests
             using (var old = Report())
                 Check(old.RootElement.GetProperty("bindingAudits").GetProperty("matchedCount").ValueKind == JsonValueKind.Null, "Legacy export claimed no matched events.");
             File.Delete(zip);
-            object Audit(long sequence, string result, string mapping) => new { Sequence = sequence, Scope = "fixture-scope", Kind = "cast", ID = 42, Name = "Hammer", Boss = "Sentinel", Result = result, Candidates = new[] { "Hammer" }, Mapping = mapping, Instruction = "Mitigate" };
+            object Audit(long sequence, string result, string mapping) => new { Sequence = sequence, Scope = "fixture-scope", Kind = "cast", ID = 42, Name = "Hammer", Boss = "Sentinel", Result = result, Candidates = new[] { "Hammer" }, Mapping = mapping, Instruction = "Mitigate",
+                CatalogHash = "catalog-fixture", CandidateIDs = new[] { 42, 43 }, CandidateIDsOmitted = 7, CastType = 2, Phase = "second" };
             object Frame(string session, long sequence, object[] audits, int pending = 0) => new
             {
                 SessionID = session, sequence, BindingAudits = audits, BindingAuditsDropped = 2, BindingAuditsPending = pending, timelineOmitted = 3,
@@ -335,6 +349,9 @@ internal static class GuideBindingReportTests
                 var presentation = current.RootElement.GetProperty("presentation");
                 Check(audits.GetProperty("distinctCount").GetInt32() == 3 && audits.GetProperty("matchedCount").GetInt32() == 2 && audits.GetProperty("rejectedCount").GetInt32() == 1, "Session/sequence audit deduplication failed.");
                 Check(audits.GetProperty("entries").EnumerateArray().All(audit => audit.GetProperty("Scope").GetString() == "fixture-scope"), "Audit scope was lost.");
+                Check(audits.GetProperty("entries").EnumerateArray().All(audit => audit.GetProperty("CatalogHash").GetString() == "catalog-fixture"
+                    && audit.GetProperty("CandidateIDs").GetArrayLength() == 2 && audit.GetProperty("CandidateIDsOmitted").GetInt32() == 7
+                    && audit.GetProperty("CastType").GetInt32() == 2 && audit.GetProperty("Phase").GetString() == "second"), "Official ID audit provenance was lost.");
                 Check(presentation.GetProperty("guideCentralSubmittedFrames").GetInt32() == 3 && presentation.GetProperty("genericCentralSubmittedFrames").GetInt32() == 3, "Submissions counted alert occurrences or duplicated latest.");
                 Check(presentation.GetProperty("clippedFrames").GetInt32() == 3 && presentation.GetProperty("hiddenFrames").GetInt32() == 3, "Clipping/hide samples were lost.");
                 Check(current.RootElement.GetProperty("gapsBySession").GetProperty("session").GetProperty("BindingAuditsDropped").GetInt64() == 2, "Cumulative drops were summed.");

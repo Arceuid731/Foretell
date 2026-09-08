@@ -220,7 +220,7 @@ public sealed partial class ForetellEngine
             DrawInspectorTab("Timeline", DrawInspectorTimeline);
             DrawInspectorTab(GuideText("Analysis / recordings", "Analysis / enregistrements", "Analyse / Aufnahmen", "解析・記録"), DrawInspectorReplay);
             DrawInspectorTab(GuideText("Learning / storage", "Observation / stockage", "Lernen / Speicher", "学習・保存"), DrawLearningSettings);
-            DrawInspectorTab(GuideText("Diagnostics", "Diagnostics", "Diagnose", "診断"), () => { DrawGuideModelStatus(true); DrawDiagnostics(); });
+            DrawInspectorTab(GuideText("Diagnostics", "Diagnostics", "Diagnose", "診断"), () => { DrawGuideModelStatus(true); DrawGuideIDDiagnostics(); DrawDiagnostics(); });
         }
         finally { ImGui.EndTabBar(); }
     }
