@@ -10,6 +10,32 @@ internal static partial class GuidePageAnalysis
     private sealed record PhasePlan(PhasePlanEntry[] Phases);
     private sealed record PhasePlanEntry(string Name, string Evidence, string[] Mechanics);
 
+    private static bool HasPhaseHeading(GuidePhaseDefinition phase, string source)
+    {
+        var name = GuideNames.Normalize(phase.Name);
+        bool Heading(string line) => GuideNames.Normalize(line.Trim().Trim('#').Trim()) == name;
+        return source.Split('\n').Any(Heading) && phase.Evidence.Any(quote => quote.Split('\n').Any(Heading));
+    }
+
+    internal static GuideDocument SanitizeCachedPhases(GuideDocument document)
+    {
+        var source = document.Page?.Text ?? "";
+        var changed = false;
+        var bosses = document.Bosses.Select(boss =>
+        {
+            if (boss.PhaseDefinitions.All(phase => HasPhaseHeading(phase, source))) return boss;
+            // Older guides accepted ability descriptions as phase evidence. Disable that optional plan
+            // before building live references, retaining all mechanics and their validated instructions.
+            changed = true;
+            return boss with { PhaseDefinitions = [], Phases = boss.Phases.Select(phase => phase with
+            {
+                Mechanics = phase.Mechanics.Select(mechanic => new GuideMechanic(mechanic.Name, mechanic.Text, mechanic.Anchor)
+                    { Advice = mechanic.Advice, PhaseMemberships = [] }).ToArray()
+            }).ToArray() };
+        }).ToArray();
+        return changed ? document with { Bosses = bosses } : document;
+    }
+
     internal static async Task<GuideDocument> RepairPhasePlan(GuideDocument document, string source, IGuideSummaryModel model,
         CancellationToken cancellation, Action<GuideAnalysisStep>? trace = null)
     {

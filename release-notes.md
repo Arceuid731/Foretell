@@ -1,7 +1,7 @@
-# Foretell 0.13.12 — clear combat instructions
+# Foretell 0.13.13 — keep boss mechanics visible
 
-- Ask the local model for a direct, immediately readable instruction for each mechanic and detected event.
-- Display that instruction in the mechanic list and central alert, with detailed conditions kept in the tooltip.
-- Remove the automatic text-rewriting fallback for older guides.
+- Fix the boss list collapsing to a single mechanic when an attack was incorrectly treated as a combat phase.
+- Require a cited, standalone source heading before accepting a phase. Detecting an ordinary attack highlights its row while the other boss reminders remain available.
+- Apply the correction when loading saved guides, preserving their mechanics and instructions without another AI analysis. Documented combat phases retain their filtering.
 
-Reanalyze an older saved guide in Local AI to generate its new short instructions. Until then, an overly long instruction is replaced by the mechanic name; its full details remain available on hover.
+Validated against the saved Praetorium guide, repeated-cast and cache regressions, native ImGui checks, runtime/core suites and a Release build.

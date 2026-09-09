@@ -12,8 +12,9 @@ internal static class GuideCacheTests
     public static void Run()
     {
         LegacyCache().GetAwaiter().GetResult();
+        AbilityPhaseCache().GetAwaiter().GetResult();
         ManualToEntry().GetAwaiter().GetResult();
-        Console.WriteLine("Guide cache: legacy migration, manual-to-entry reuse, provider status, unchanged refresh and explicit retry passed.");
+        Console.WriteLine("Guide cache: legacy migration, ability-phase cleanup, persistent combat reminders, manual-to-entry reuse, provider status, unchanged refresh and explicit retry passed.");
     }
 
     public static void VerifyInstalled(string root, string preparedPath)
@@ -108,6 +109,77 @@ internal static class GuideCacheTests
             Check(sourceCache.Read(Duty) == null, "Legacy migration bypassed the original source fingerprint.");
             sourceCache.Write(source! with { Sources = [workbook with { Text = Passage + "\nNew condition." }] });
             Check(sourceCache.Read(Duty) == null, "Stable cache identity accepted changed source text.");
+        }
+        finally { summaries.Dispose(); await summaries.Completion; }
+    }
+
+    private static async Task AbilityPhaseCache()
+    {
+        using var directory = new TestDirectory();
+        string[] names = ["Hammer", "Wave", "Flare"];
+        string[] evidence = ["Hammer: Heavy damage to the tank.", "Wave: Party-wide damage.", "Flare: Spread out."];
+        string[] cues = ["Mitigate the hit", "Heal the group", "Spread out"];
+        var passage = "Sentinel\n" + string.Join('\n', evidence);
+        var source = GuideSourceAssembly.Combine(Duty, new([new("Fixture", "https://example.invalid/guide", passage, passage, "html")], []), DateTime.UtcNow);
+        var profile = GuideModelCatalog.Get(GuideModelCatalog.DefaultID);
+        var response = JsonSerializer.Serialize(new
+        {
+            summary = "Watch the boss.", bosses = new[] { new
+            {
+                name = "Sentinel", displayName = "Sentinel", summary = "Watch the boss.",
+                mechanics = names.Select((name, index) => new
+                {
+                    name, displayName = name, cue = cues[index], description = evidence[index],
+                    triggerKind = "cast", triggerName = name, evidence = new[] { evidence[index] }
+                }).ToArray()
+            } }
+        });
+        var prepared = GuidePageAnalysis.Parse(source, source.Page!.Text, response, GuideLanguage.English, profile)
+            with { Coverage = [new(0, source.Page.Text.Length)] };
+        var boss = prepared.Bosses[0];
+        // Reproduce old model output: every ability description was accepted as its own combat phase.
+        var old = prepared with { Bosses = [boss with
+        {
+            PhaseDefinitions = names.Select((name, index) => new GuidePhaseDefinition(name, name, [evidence[index]])).ToArray(),
+            Phases = boss.Phases.Select(phase => phase with { Mechanics = phase.Mechanics.Select((mechanic, index) =>
+                new GuideMechanic(mechanic.Name, mechanic.Text, mechanic.Anchor) { Advice = mechanic.Advice,
+                    PhaseMemberships = [new(names[index], [evidence[index]])] }).ToArray() }).ToArray()
+        }] };
+        var cache = new ForetellGuideCache(Path.Combine(directory.Path, "pages", profile.ID, "English"));
+        cache.Write(old);
+        var original = JsonSerializer.Serialize(old);
+        var restored = cache.Read(Duty)!;
+        Check(restored != null && restored.Bosses[0].PhaseDefinitions.Length == 0
+            && restored.Bosses[0].Phases.SelectMany(phase => phase.Mechanics).All(mechanic => mechanic.PhaseMemberships.Length == 0),
+            "Cached ability descriptions still restrict the boss list to one mechanic");
+        Check(GuidePageAnalysis.ValidPrepared(restored!, source, GuideLanguage.English, profile), "Phase cleanup invalidated reusable player instructions");
+        Check(original == JsonSerializer.Serialize(old) && restored!.MechanicCount == 3
+            && JsonSerializer.Serialize(restored.Bosses[0].Phases[0].Mechanics.Select(mechanic => mechanic.Advice))
+                == JsonSerializer.Serialize(old.Bosses[0].Phases[0].Mechanics.Select(mechanic => mechanic.Advice)),
+            "Phase cleanup changed the supplied guide or its player instructions");
+
+        using var summaries = new ForetellGuideSummaries(directory.Path, _ => throw new InvalidOperationException("Phase cleanup started model inference."));
+        try
+        {
+            summaries.Update(source, GuideLanguage.English, true, true, false, "Sentinel");
+            await WaitFor(() => summaries.Snapshot?.Stage == "Ready");
+            var document = summaries.Snapshot!.Prepared!;
+            boss = document.Bosses[0];
+            var phase = boss.Phases[0];
+            var tracker = new GuideEncounterTracker();
+            tracker.Update(document, [new(10, 20, 30, "Sentinel", false, true, 5)], false);
+            foreach (var mechanic in phase.Mechanics)
+            {
+                var signal = new GuideSignal(boss, phase, mechanic, GuideSignalKind.Cast, 10, 20, 30, 40, 0,
+                    DateTime.UtcNow.AddSeconds(4), GuidanceKind.None, "fixture");
+                tracker.Synchronize([signal]);
+                var rows = GuideCombatListPresentation.Select(tracker.Frame, [signal], BossMod.Class.None, true);
+                Check(tracker.Frame.KnownPhase == null && rows.Length == 3 && rows.Count(row => row.Live != null) == 1
+                    && rows.Any(row => row.Mechanic == mechanic && row.Live == signal), "Detected cast hides other boss reminders");
+                tracker.Synchronize([]);
+                rows = GuideCombatListPresentation.Select(tracker.Frame, [], BossMod.Class.None, true);
+                Check(rows.Length == 3 && rows.All(row => row.Live == null), "Boss reminders disappear between casts");
+            }
         }
         finally { summaries.Dispose(); await summaries.Completion; }
     }

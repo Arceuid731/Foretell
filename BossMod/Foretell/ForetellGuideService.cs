@@ -96,7 +96,7 @@ internal sealed class ForetellGuideCache(string directory)
                     if (phase.Context.Length > 100000 || string.IsNullOrWhiteSpace(phase.Context) && phase.Mechanics.Length == 0
                         || phase.Mechanics.Any(mechanic => mechanic.Name.Length is 0 or > 120 || mechanic.Text.Length > 24000)) return null;
             }
-            return document;
+            return GuidePageAnalysis.SanitizeCachedPhases(document);
         }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException or NullReferenceException)
         {

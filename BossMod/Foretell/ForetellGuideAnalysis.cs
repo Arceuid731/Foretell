@@ -126,6 +126,7 @@ internal static partial class GuidePageAnalysis
     private const string PhasePrompt = """
 
         phaseDefinitions contains only TOP-LEVEL encounter phases explicitly documented in this boss's source, in source order: id is a unique boss-local key, name is the EXACT original source phase label, evidence is supporting paragraph IDs. Use [] when the source does not document phases. Do not invent phase numbers, infer phases from ability order, elapsed time, repeated casts, health thresholds alone, or generic Abilities/Strategy headings.
+        Cite a standalone source heading for each phase. An ability entry such as "Attack name: description" is not a phase heading; never create one phase per attack.
         Preserve the source hierarchy: when top-level phases contain nested Part, Form or other subsections, define only the top-level phases. Keep the parts' conditions in descriptions and responses under their parent phase. Do not promote each nested part, health band, cutscene or enrage into another numbered encounter phase.
         Keep ONE canonical mechanics array. phaseMemberships lists EVERY documented phase in which that mechanic occurs, each as {phaseID, evidence}; evidence must cite the phase label/context AND the mechanic's supporting paragraph. Never duplicate an ability to place it in multiple phases. Only restrict memberships when the source establishes the full phase scope; use [] for common mechanics, uncertain scope or abilities that continue without a documented restriction. An empty array keeps the mechanic available throughout the encounter. A single membership can identify the live phase from an observed cast/status: use it only if the source establishes that the mechanic is exclusive to that phase. Do not assign a transition cast to the destination phase unless the source establishes that the cast occurs there. Preserve all phase-dependent responses and conflicting or uncertain source conditions.
         """;
@@ -667,8 +668,8 @@ internal static partial class GuidePageAnalysis
         if (boss.PhaseDefinitions == null || boss.PhaseDefinitions.Length > 16 || boss.PhaseDefinitions.Any(phase => phase == null
             || !ValidText(phase.ID, 64, true) || !ValidText(phase.Name, 120, true) || !GroundedEvidence(phase.Evidence, passage)
             || GuideNames.Boss(phase.Name) == GuideNames.Boss(boss.Name)
-            || !phase.Evidence.Any(quote => MentionsPhase(quote, phase.Name))))
-            throw new InvalidDataException("Phase definitions require original source labels and verbatim evidence. Use [] when phases are undocumented.");
+            || !HasPhaseHeading(phase, passage)))
+            throw new InvalidDataException("Phase definitions require a standalone source heading and verbatim heading evidence. Use [] when phases are undocumented.");
         if (boss.PhaseDefinitions.Select(phase => GuideNames.Normalize(phase.ID)).Distinct().Count() != boss.PhaseDefinitions.Length
             || boss.PhaseDefinitions.Select(phase => GuideNames.Normalize(phase.Name)).Distinct().Count() != boss.PhaseDefinitions.Length)
             throw new InvalidDataException("Duplicate phase definitions.");

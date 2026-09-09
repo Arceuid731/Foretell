@@ -71,6 +71,7 @@ internal static class GuidePhaseTests
     {
         var prepared = Prepared();
         var boss = prepared.Bosses.Single();
+        Check(ReferenceEquals(GuidePageAnalysis.SanitizeCachedPhases(prepared), prepared), "Cache cleanup removed documented phase headings");
         var profile = GuideModelCatalog.Get(GuideModelCatalog.DefaultID);
         Check(boss.PhaseDefinitions.Select(phase => phase.ID).SequenceEqual(["opening", "adds", "final"]), "Documented phases lost their source order");
         Check(boss.Phases.Length == 1 && prepared.MechanicCount == 6 && boss.Phases[0].Mechanics.Count(mechanic => mechanic.Name == "Echo") == 1,
@@ -119,6 +120,11 @@ internal static class GuidePhaseTests
         var changes = new Action<JsonNode>[]
         {
             boss => boss["phaseDefinitions"]![0]!["name"] = "Invented phase",
+            boss =>
+            {
+                boss["phaseDefinitions"]![0]!["name"] = "Spark";
+                boss["phaseDefinitions"]![0]!["evidence"]![0] = Paragraphs[2];
+            },
             boss => boss["phaseDefinitions"]![1]!["id"] = "opening",
             boss => boss["phaseDefinitions"]![0]!["evidence"]![0] = "Opening phase never appears in the supplied guide.",
             boss => boss["phaseDefinitions"] = null,
