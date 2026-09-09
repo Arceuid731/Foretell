@@ -10,20 +10,21 @@ internal static class GuideListFlowTests
     {
         GuideShortCueTests.Run();
         Selection();
-        RolePriorities();
+        RoleVisibility();
         Actionability();
+        ScrollFocus();
         foreach (var count in new[] { 0, 1, 23, 32, 64 })
         foreach (var viewport in new[] { new Vector2(1260, 600), new Vector2(1900, 920) })
         {
             var layout = GuideListFlow.Build(count, 380, 440, viewport, 1.2f,
                 (index, width, scale, compact) => (compact ? 36 : index % 7 == 0 ? 110 : 46) * scale);
-            Check(layout.Top.Length <= 6 && layout.Column.Length == layout.Top.Length && layout.Heights.Length == layout.Top.Length, "Combat list displays the entire catalogue");
+            Check(layout.Top.Length == count && layout.Column.Length == layout.Top.Length && layout.Heights.Length == layout.Top.Length, "Combat list omitted mechanics");
             Check(layout.Columns == 1 && layout.Width == 380 && layout.Height <= 440.1f, "Reminders spread across the screen or exceed the preferred height");
             Check(layout.Scale == 1.2f && !layout.Compact, "Combat list shrank the requested text or truncated titles");
             for (var index = 0; index < layout.Top.Length; ++index)
             {
                 Check(layout.Column[index] >= 0 && layout.Column[index] < layout.Columns && layout.Top[index] >= 0, "List placement is invalid");
-                Check(layout.Top[index] + layout.Heights[index] <= layout.Height + .1f, "Mechanic outside measured list bounds");
+                Check(layout.Top[index] + layout.Heights[index] <= layout.ContentHeight + .1f, "Mechanic outside measured list bounds");
                 if (index > 0 && layout.Column[index] == layout.Column[index - 1])
                     Check(layout.Top[index] >= layout.Top[index - 1] + layout.Heights[index - 1] - .1f, "Mechanics overlap");
             }
@@ -32,16 +33,17 @@ internal static class GuideListFlowTests
         var again = GuideListFlow.Build(15, 380, 440, new(1260, 600), 1, (_, _, _, _) => 48);
         Check(repeated.Column.SequenceEqual(again.Column) && repeated.Top.SequenceEqual(again.Top), "Unchanged layout shifts between frames");
         var tall = GuideListFlow.Build(12, 300, 120, new(300, 120), 1, (_, _, _, _) => 50);
-        Check(tall.Top.Length == 2 && tall.Height == 100 && tall.Scale == 1, "Short overlay does not reduce reminders at the requested text size");
+        Check(tall.Top.Length == 12 && tall.Height == 120 && tall.ContentHeight == 600 && tall.Scale == 1, "Short overlay omitted reminders instead of scrolling");
         foreach (var activeCount in new[] { 1, 7, 9, 20 })
         {
-            var active = GuideListFlow.Build(23, 380, 120, new(1260, 600), 1.4f, (_, _, _, _) => 80, activeCount);
+            var active = GuideListFlow.Build(23, 380, 120, new(1260, 600), 1.4f, (_, _, _, _) => 80);
             Check(active.Top.Length >= activeCount && active.Scale == 1.4f && !active.Compact, "Active mechanics were capped or shrunk");
             for (var index = 0; index < activeCount; ++index)
-                Check(active.Top[index] + active.Heights[index] <= 600 && active.Column[index] * (active.ColumnWidth + GuideListFlow.Gap) + active.ColumnWidth <= 1260,
-                    "Simultaneous active mechanics require paging or scrolling");
+                Check(GuideListFlow.ScrollToRow(active, index, 0, active.Height) <= active.Top[index]
+                    && GuideListFlow.ScrollToRow(active, index, 0, active.Height) + active.Height >= active.Top[index] + active.Heights[index],
+                    "An active row cannot be brought into view");
         }
-        var oversized = GuideListFlow.Build(7, 300, 100, new(300, 120), 2, (_, _, _, _) => 200, 7);
+        var oversized = GuideListFlow.Build(7, 300, 100, new(300, 120), 2, (_, _, _, _) => 200);
         Check(oversized.Top.Length == 7 && oversized.Scale == 2, "A constrained viewport silently drops active mechanics or shrinks their text");
         Check(GuideRolePresentation.Icons(["tank", "TANK", "healer"]).SequenceEqual(new[] { "tank", "healer" }), "Role icon normalization disagrees with role tags");
         Check(GuideRolePresentation.Icons(["all"]).Length == 0, "Universal mechanics display redundant role icons");
@@ -58,7 +60,31 @@ internal static class GuideListFlowTests
         Check(GuideListFlow.Instruction(legacy, "") == conditional.Advice!.Cue, "Legacy short cue discarded a conditional alternative");
         var legacyCast = new GuideMechanic("Legacy cast", "", "") { Advice = ability.Advice! with { Responses = [], CueScope = "" } };
         Check(GuideListFlow.Instruction(legacyCast, "") == ability.Advice!.Cue, "Display rewrites legacy model text");
-        Console.WriteLine("Focused guide list: bounded reminders, all active mechanics, fixed text size, role relevance and conditional instructions passed.");
+        Console.WriteLine("Guide list: complete scrollable reminders, active focus, fixed text size, role visibility and conditional instructions passed.");
+    }
+
+
+    private static void ScrollFocus()
+    {
+        var mechanics = Enumerable.Range(0, 12).Select(index => Mechanic("Mechanic " + index, "Move away")).ToArray();
+        var phase = new GuidePhase("", "", mechanics);
+        var boss = new GuideBoss("Fixture", "", [phase]);
+        var frame = new GuideCombatFrame(boss, false, false, null, [], 0);
+        var signal = new GuideSignal(boss, phase, mechanics[^1], GuideSignalKind.Cast, 1, 1, 1, 1, 0, DateTime.UtcNow.AddSeconds(4), GuidanceKind.None, "");
+        var focus = new GuideListScrollFocus();
+        Check(focus.Update(frame, []).Reset, "A new boss did not reset scroll");
+        Check(focus.Update(frame, [signal]).Mechanic == mechanics[^1], "A newly active late row was not focused");
+        Check(focus.Update(frame, [signal]).Mechanic == null && !focus.Update(frame, [signal]).Reset, "A live alert overrides manual scrolling every frame");
+        Check(focus.Update(frame, [signal with { Until = signal.Until.AddMilliseconds(100) }]).Mechanic == null, "Cast sampling drift resets scrolling");
+        var simultaneous = signal with { Mechanic = mechanics[0], ID = 2, Until = signal.Until.AddSeconds(2) };
+        Check(focus.Update(frame, [signal, simultaneous]).Mechanic == mechanics[0], "An ongoing cast prevents a newly active mechanic from being focused");
+        Check(focus.Update(frame, [simultaneous]).Mechanic == null, "An expiring cast overrides manual scrolling");
+        Check(focus.Update(frame, [signal with { Until = signal.Until.AddSeconds(10) }]).Mechanic == mechanics[^1], "A repeated cast no longer brings its mechanic into view");
+        Check(focus.Update(frame with { KnownPhase = new("next", "Next", []) }, []).Reset, "A phase change retained stale scroll");
+        var layout = GuideListFlow.Build(12, 300, 120, new(500, 500), 1, (_, _, _, _) => 50, 14);
+        Check(layout.ColumnWidth == 286 && layout.Width == 300 && layout.ContentHeight == 600, "Scrollbar space obscures row text");
+        Check(GuideListFlow.ScrollToRow(layout, 11, 0, 120) == 480 && GuideListFlow.ScrollToRow(layout, 0, 480, 120) == 0, "First or last mechanic is unreachable");
+        Check(GuideListFlow.ScrollToRow(layout, 2, 80, 120) == 80, "A visible active row causes unnecessary scrolling");
     }
 
     private static GuideMechanic Mechanic(string name, string cue, string[]? roles = null, GuideResponse[]? responses = null, string shortCue = "", bool contextOnly = false)
@@ -78,29 +104,29 @@ internal static class GuideListFlowTests
         var document = new GuideDocument(1, new(1, 1, "Example"), "Example", 1, DateTime.UtcNow, "hash", [boss]);
         var frame = new GuideCombatFrame(boss, false, false, null, [], 0);
         var selection = GuideCombatListPresentation.Select(frame, [], Class.BLM, true);
-        Check(selection.Length == 6 && selection.All(entry => !mechanics[..3].Contains(entry.Mechanic)), "A 23-mechanic catalogue crowds combat with scripted or other-role reminders");
-        Check(selection.Select(entry => entry.Mechanic).SequenceEqual(mechanics[3..9]), "Equally relevant reminders lost their stable source order");
+        Check(selection.Length == 23, "A mechanic was hidden by count, role or actionability");
+        Check(selection.Select(entry => entry.Mechanic).SequenceEqual(mechanics), "Equally relevant reminders lost their stable source order");
         Check(GuideCombatListPresentation.Select(frame, [], Class.None, true).Any(entry => entry.Mechanic == mechanics[2]), "Unknown player role hid useful advice");
         var invalidPhase = frame with { KnownPhase = new("missing", "Missing", []) };
-        Check(GuideCombatListPresentation.Select(invalidPhase, [], Class.BLM, true).Length == 6, "An invalid phase expands combat to the whole catalogue");
+        Check(GuideCombatListPresentation.Select(invalidPhase, [], Class.BLM, true).Length == 23, "An invalid phase hides mechanics");
         var knownPhase = frame with { KnownPhase = first };
         var live = new GuideSignal(boss, phases[1], secondMechanic, GuideSignalKind.Cast, 1, 1, 1, 1, 1, DateTime.UtcNow.AddSeconds(4), GuidanceKind.None, "");
         var withActive = GuideCombatListPresentation.Select(knownPhase, [live], Class.BLM, true);
-        Check(withActive.Length == 6 && withActive[0].Live == live, "A late active mechanic disappeared behind role, phase or row limits");
+        Check(withActive.Length == 23 && withActive[^1].Live == live, "A late active mechanic disappeared behind role, phase or row limits");
         var scripted = live with { Phase = phases[0], Mechanic = mechanics[0] };
         Check(GuideCombatListPresentation.Select(frame, [scripted], Class.BLM, true)[0].Live == scripted, "Active signals were silently filtered by reminder actionability");
         var manyActive = mechanics.TakeLast(9).Select(mechanic => live with { Mechanic = mechanic }).ToArray();
         var allActive = GuideCombatListPresentation.Select(frame, manyActive, Class.BLM, true);
-        Check(allActive.Length == 9 && allActive.All(entry => entry.Live != null) && manyActive.All(signal => allActive.Any(entry => entry.Live == signal)),
+        Check(allActive.Length == 23 && allActive.Count(entry => entry.Live != null) == 9 && manyActive.All(signal => allActive.Any(entry => entry.Live == signal)),
             "More than six simultaneous active mechanics were capped");
         var duplicate = boss with { Phases = [phases[0], phases[1], phases[0]] };
-        Check(GuideCombatListPresentation.Select(frame with { Boss = duplicate }, [], Class.BLM, false).Select(entry => entry.Mechanic).Distinct().Count() == 6,
-            "Repeated references consume the reminder budget");
+        Check(GuideCombatListPresentation.Select(frame with { Boss = duplicate }, [], Class.BLM, false).Select(entry => entry.Mechanic).Distinct().Count() == 23,
+            "Repeated references duplicate reminders");
         Check(GuideCombatListPresentation.Select(frame, [live with { Boss = duplicate }], Class.BLM, true).All(entry => entry.Live == null), "Another boss's signal activates a row");
         Check(document.MechanicCount == 23 && document.Bosses[0].Phases.SelectMany(phase => phase.Mechanics).SequenceEqual(mechanics), "Combat selection changed the complete Sources catalogue");
     }
 
-    private static void RolePriorities()
+    private static void RoleVisibility()
     {
         var mechanics = new[]
         {
@@ -127,7 +153,7 @@ internal static class GuideListFlowTests
         var mixedBoss = boss with { Phases = [mixedPhase] };
         var mixedFrame = frame with { Boss = mixedBoss, Upcoming = false };
         var mixed = GuideCombatListPresentation.Select(mixedFrame, [], Class.SCH, true);
-        Check(mixed.Length == 6 && mixed[0].Mechanic == healer && mixed[1].Mechanic == everyone, "Role-specific and universal reminders lost priority or exceeded the list limit");
+        Check(mixed.Length == 8 && mixed.Select(row => row.Mechanic).SequenceEqual(mixedPhase.Mechanics), "Role tags reordered or removed reminders");
         var live = new GuideSignal(mixedBoss, mixedPhase, mechanics[0], GuideSignalKind.Cast, 1, 1, 1, 1, 2, DateTime.UtcNow.AddSeconds(3), GuidanceKind.None, "fixture");
         Check(GuideCombatListPresentation.Select(mixedFrame, [live], Class.SCH, true)[0].Live == live, "Role ranking displaced an active mechanic");
         var later = new GuideMechanic("Later mechanic", "", "") { Advice = mechanics[0].Advice, PhaseMemberships = [new("later", [])] };

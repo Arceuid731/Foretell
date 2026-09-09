@@ -112,31 +112,4 @@ public sealed partial class ForetellEngine
     internal static uint OverlayOpacity(uint color, float opacity)
         => (color & 0xFFFFFF) | (uint)MathF.Round((color >> 24) * (float.IsFinite(opacity) ? Math.Clamp(opacity, 0, 1) : 1)) << 24;
 
-    internal static GuideDrawBounds DrawCentralAlert(ForetellConfig config, string instruction, string name, double remaining, float total)
-    {
-        var start = ImGui.GetCursorScreenPos();
-        var scale = OverlayScale(config.GuideAlertScale, 1.4f);
-        var viewport = ImGui.GetMainViewport();
-        var available = Math.Max(1, viewport.Pos.X + viewport.Size.X - ImGui.GetCursorScreenPos().X - ImGui.GetStyle().WindowPadding.X);
-        var width = Math.Min(available, float.IsFinite(config.CentralAlertWidth) ? Math.Clamp(config.CentralAlertWidth, 260, 1400) : 620);
-        ImGui.SetWindowFontScale(scale);
-        ImGui.PushStyleColor(ImGuiCol.Text, GuideColor(config.CentralAlertColor));
-        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
-        ImGui.TextWrapped(instruction);
-        ImGui.PopTextWrapPos(); ImGui.PopStyleColor();
-        ImGui.SetWindowFontScale(Math.Max(.7f, scale * .72f));
-        ImGui.PushStyleColor(ImGuiCol.Text, GuideColor(config.CentralDetailColor));
-        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
-        ImGui.TextWrapped(name);
-        ImGui.PopTextWrapPos();
-        if (double.IsFinite(remaining) && remaining >= 0)
-        {
-            ImGui.PushStyleColor(ImGuiCol.PlotHistogram, GuideColor(config.CentralBarColor));
-            ImGui.ProgressBar(total > 0 && float.IsFinite(total) ? Math.Clamp((float)remaining / total, 0, 1) : 0, new(width, 0), $"{remaining:F1}s");
-            ImGui.PopStyleColor();
-        }
-        ImGui.PopStyleColor();
-        ImGui.SetWindowFontScale(1);
-        return GuideDrawBounds.From(start, new(start.X + width, ImGui.GetCursorScreenPos().Y));
-    }
 }

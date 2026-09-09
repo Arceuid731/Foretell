@@ -98,32 +98,7 @@ internal static class GuideOverlayTests
             Check(ImGui.GetItemRectMax().X <= io.DisplaySize.X, "Central bar extends beyond viewport after moving");
             ImGui.End();
             ImGui.Render();
-            foreach (var count in new[] { 23, 9 })
-            foreach (var requestedScale in new[] { 1f, 1.4f })
-            {
-                ImGui.NewFrame();
-                ImGui.SetNextWindowPos(new(10, 10));
-                ImGui.SetNextWindowSize(new(1260, 690));
-                ImGui.Begin("Controller-friendly mechanic list", flags);
-                var instruction = "If marked: move away from other players; otherwise: stay close to the boss.";
-                var activeCount = count == 9 ? count : 1;
-                var layout = GuideListFlow.Build(count, 380, 500, new(1230, 640), requestedScale,
-                    (_, width, scale, compact) => ForetellEngine.MeasureGuideListRow("A long mechanic name", instruction, 2, width, scale, compact, 6), activeCount);
-                Check(layout.Width <= 1230 && layout.Height <= 640 && layout.Top.Length >= activeCount, "Native list layout loses active mechanics");
-                Check(layout.Scale == requestedScale && !layout.Compact, "Native list silently reduced text size");
-                if (count == 23) Check(layout.Top.Length <= 6 && layout.Columns == 1, "Native combat list displays the whole catalogue");
-                var origin = ImGui.GetCursorScreenPos();
-                for (var index = 0; index < layout.Top.Length; ++index)
-                {
-                    var position = origin + new Vector2(layout.Column[index] * (layout.ColumnWidth + GuideListFlow.Gap), layout.Top[index]);
-                    ForetellEngine.DrawGuideListRow(new(), position, layout.ColumnWidth, layout.Heights[index], layout.Scale, layout.Compact,
-                        "A long mechanic name", instruction, ["tank", "healer"], index < activeCount, index < activeCount ? 3.5 : null);
-                    Check(layout.Top[index] >= 0 && layout.Top[index] + layout.Heights[index] <= 640.1f, "Active mechanic is not visible without mouse input");
-                }
-                ImGui.End();
-                ImGui.Render();
-                Check(ImGui.GetDrawData().TotalVtxCount > 0, "Mechanic list and role icons did not render");
-            }
+            ScrollableList(io);
             for (var frame = 0; frame < 4; ++frame)
             {
                 ImGui.NewFrame();
@@ -134,42 +109,62 @@ internal static class GuideOverlayTests
                 ImGui.End();
                 ImGui.Render();
             }
-            foreach (var unlocked in new[] { false, true })
-            foreach (var activeCount in new[] { 1, 7, 9 })
+
+        }
+        finally { ImGui.DestroyContext(context); }
+        Console.WriteLine("Native ImGui compact row, transparent/locked flags, editing flags, hover and tooltip smoke passed.");
+    }
+
+    private static void ScrollableList(ImGuiIOPtr io)
+    {
+        io.DisplaySize = new(800, 450);
+        foreach (var unlocked in new[] { false, true })
+        foreach (var scale in new[] { 1f, 1.4f })
+        {
+            var lastScroll = 0f;
+            for (var frame = 0; frame < 7; ++frame)
             {
-                io.DisplaySize = new(800, 450);
+                io.DeltaTime = frame == 0 ? 1 : 1f / 60;
+                io.AddMousePosEvent(frame == 0 ? 700 : 100, frame == 0 ? 400 : 160);
+                if (frame == 4) io.AddMouseWheelEvent(0, -3);
                 ImGui.NewFrame();
                 var padding = ImGui.GetStyle().WindowPadding;
                 var heading = ImGui.GetTextLineHeight() * 2 + ImGui.GetStyle().ItemSpacing.Y * 2 + 6;
                 var chrome = unlocked ? ImGui.GetFrameHeight() : 0;
-                var available = io.DisplaySize - padding * 2 - new Vector2(16, 16 + heading + chrome);
-                var layout = GuideListFlow.Build(23, 300, 180 - heading - chrome - padding.Y * 2, available, 1,
-                    (_, width, scale, compact) => ForetellEngine.MeasureGuideListRow("Long mechanic name", "If marked: move away; otherwise: stack.", 1, width, scale, compact, 6), activeCount);
-                Check(layout.Top.Length >= activeCount && layout.Height <= available.Y, "Small viewport crops active overflow");
-                var dimensions = new Vector2(layout.Width, layout.Height + heading + chrome) + padding * 2;
-                var position = Vector2.Clamp(new(740, 410), Vector2.Zero, Vector2.Max(Vector2.Zero, io.DisplaySize - dimensions));
-                ImGui.SetNextWindowSize(dimensions);
-                ImGui.SetNextWindowPos(position);
-                ImGui.Begin("Small mechanic list bounds " + unlocked + activeCount, ForetellEngine.GuideChecklistFlags(unlocked));
+                var layout = GuideListFlow.Build(23, 360, 180, new(760, 380), scale,
+                    (_, width, size, compact) => ForetellEngine.MeasureGuideListRow("Long mechanic name", "If marked: move away; otherwise: stack.", 1, width, size, compact, 6),
+                    ImGui.GetStyle().ScrollbarSize);
+                Check(layout.Top.Length == 23 && layout.Height == 180 && layout.Scale == scale, "Scrollable list omitted or shrank rows");
+                ImGui.SetNextWindowPos(new(20, 20));
+                ImGui.SetNextWindowSize(new Vector2(layout.Width, layout.Height + heading + chrome) + padding * 2);
+                ImGui.Begin("Scrollable boss list " + unlocked + scale, ForetellEngine.GuideChecklistFlags(unlocked));
                 ForetellEngine.DrawGuideOverlayLine("Example boss", 0xFFFFFFFF);
-                ForetellEngine.DrawGuideOverlayLine(activeCount + " mechanics", 0xFFFFFFFF);
-                var origin = ImGui.GetCursorScreenPos() + new Vector2(0, 6);
-                var contentEnd = ImGui.GetWindowPos() + ImGui.GetWindowSize() - padding;
-                for (var index = 0; index < activeCount; ++index)
+                var headerY = ImGui.GetItemRectMin().Y;
+                ForetellEngine.DrawGuideOverlayLine("23 mechanics", 0xFFFFFFFF);
+                ImGui.Dummy(new(1, 6));
+                ForetellEngine.BeginGuideListScroll(layout);
+                var origin = ImGui.GetCursorScreenPos();
+                var clip = GuideDrawBounds.From(ImGui.GetWindowDrawList().GetClipRectMin(), ImGui.GetWindowDrawList().GetClipRectMax());
+                for (var index = 0; index < 23; ++index)
                 {
-                    var rowPosition = origin + new Vector2(layout.Column[index] * (layout.ColumnWidth + GuideListFlow.Gap), layout.Top[index]);
-                    var rowEnd = rowPosition + new Vector2(layout.ColumnWidth, layout.Heights[index]);
-                    Check(rowEnd.X <= contentEnd.X + 1 && rowEnd.Y <= contentEnd.Y + 1 && rowEnd.X <= io.DisplaySize.X && rowEnd.Y <= io.DisplaySize.Y,
-                        "Active row is clipped after including heading, title bar or viewport edge");
-                    ForetellEngine.DrawGuideListRow(new(), rowPosition, layout.ColumnWidth, layout.Heights[index], layout.Scale, layout.Compact,
-                        "Long mechanic name", "If marked: move away; otherwise: stack.", ["tank"], true, 3.5);
+                    var start = origin + new Vector2(0, layout.Top[index]);
+                    ForetellEngine.DrawGuideListRow(new(), start, layout.ColumnWidth, layout.Heights[index], scale, false,
+                        "Long mechanic name", "If marked: move away; otherwise: stack.", ["tank"], index == 22, index == 22 ? 3.5 : null);
+                    if (frame == 2 && index == 22 || frame == 3 && index == 0)
+                        Check(GuideDrawBounds.From(start, start + new Vector2(layout.ColumnWidth, layout.Heights[index])).Visibility(clip, 0xFFFFFFFF) == "Submitted",
+                            $"First/last mechanic is clipped after scrolling: unlocked={unlocked}, scale={scale}, frame={frame}, start={start}, clip={clip}, width={layout.ColumnWidth}, height={layout.Heights[index]}, scroll={ImGui.GetScrollY()}, viewport={ImGui.GetWindowSize()}");
                 }
+                if (frame > 0) Check(ImGui.GetScrollMaxY() > 0, "Long locked list has no scroll range");
+                if (frame == 1) ImGui.SetScrollY(GuideListFlow.ScrollToRow(layout, 22, ImGui.GetScrollY(), ImGui.GetWindowSize().Y));
+                if (frame == 2) ImGui.SetScrollY(0);
+                if (frame == 3) lastScroll = ImGui.GetScrollY();
+                if (frame >= 5) Check(ImGui.GetScrollY() > lastScroll, $"Mouse wheel cannot scroll the locked or unlocked list: unlocked={unlocked}, scale={scale}, frame={frame}, scroll={ImGui.GetScrollY()}, hovered={ImGui.IsWindowHovered()}");
+                ImGui.EndChild();
+                Check(headerY < 70, "Scrolling moved the boss heading");
                 ImGui.End();
                 ImGui.Render();
-                Check(ImGui.GetDrawData().TotalVtxCount > 0, "Small mechanic list submitted no drawing");
+                if (frame > 0) Check(ImGui.GetDrawData().TotalVtxCount > 0, "Scrollable rows submitted no drawing");
             }
         }
-        finally { ImGui.DestroyContext(context); }
-        Console.WriteLine("Native ImGui compact row, transparent/locked flags, editing flags, hover and tooltip smoke passed.");
     }
 }

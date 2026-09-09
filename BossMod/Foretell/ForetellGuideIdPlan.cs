@@ -100,7 +100,12 @@ internal sealed class GuideIdPlan
         if (!Document.Bosses.Contains(boss)) return new(null, null, null, "ForeignGuideBoss", []);
         if (!_events.TryGetValue((boss, kind, id), out var candidates)) return new(null, null, null, "NoCandidateForObservedID", []);
         var result = GuideEventMatching.Choose(boss, phase, kind, candidates, targetID, playerID, partyTarget, stacks);
-        return result.Mechanic == null ? result : result with { Reason = result.Reason == "MatchedPhaseTransition" ? "MatchedGameIDPhaseTransition" : "MatchedGameID" };
+        return result.Mechanic == null ? result : result with { Reason = result.Reason switch
+        {
+            "MatchedPhaseTransition" => "MatchedGameIDPhaseTransition",
+            "MatchedPhaseUncertain" => "MatchedGameIDPhaseUncertain",
+            _ => "MatchedGameID"
+        } };
     }
 
     public bool AllowsInstant(GuideBoss boss, uint id) => _events.TryGetValue((boss, "cast", id), out var candidates)

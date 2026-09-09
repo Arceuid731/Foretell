@@ -46,6 +46,17 @@ internal static class GuideEventMatchingTests
         var next = new GuideMechanic("Next phase", "", "") { Advice = mechanic.Advice, PhaseMemberships = [new("second", [])] };
         var phased = boss with { Phases = [phase with { Mechanics = [next] }], PhaseDefinitions = [first, second] };
         Check(GuideEventMatching.Resolve(phased, first, "cast", "Detonation", 10, 10, true, 0).Reason == "MatchedPhaseTransition", "Current phase locked out its successor's exclusive trigger");
+        var final = new GuidePhaseDefinition("final", "Final", []);
+        var shared = new GuideMechanic("Shared pattern", "", "") { Advice = mechanic.Advice, PhaseMemberships = [new("second", []), new("final", [])] };
+        phased = phased with { Phases = [phase with { Mechanics = [shared] }], PhaseDefinitions = [first, second, final] };
+        Check(GuideEventMatching.Resolve(phased, first, "cast", "Detonation", 10, 10, true, 0) is { Reason: "MatchedPhaseUncertain", Mechanic: not null },
+            "A unique observed mechanic shared by later phases was suppressed by stale phase state");
+        Check(GuideEventMatching.Resolve(phased, first, "status", "Charged", 10, 10, true, 3).Mechanic == null,
+            "Uncertain phase bypasses a status stack condition");
+        var otherShared = new GuideMechanic("Other pattern", "", "") { Advice = shared.Advice, PhaseMemberships = shared.PhaseMemberships };
+        var ambiguousPhases = phased with { Phases = [phase with { Mechanics = [shared, otherShared] }] };
+        Check(GuideEventMatching.Resolve(ambiguousPhases, first, "cast", "Detonation", 10, 10, true, 0).Mechanic == null,
+            "Uncertain phase guessed between different mechanics sharing a trigger");
         var owner = new Actor(1, 2, 0, 0, "Fixture boss", 3, ActorType.Enemy, Class.None, 1, Vector4.Zero, resolveGameMetadata: false);
         var helper = new Actor(4, 5, 0, 0, "Helper", 6, ActorType.Helper, Class.None, 1, Vector4.Zero, resolveGameMetadata: false) { OwnerID = 1 };
         Check(ForetellEngine.GuideEventSource(owner, null, 3) && ForetellEngine.GuideEventSource(helper, owner, 3), "Boss/owned helper identity rejected");

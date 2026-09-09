@@ -96,9 +96,12 @@ public sealed class ForetellConfig : ConfigNode
     public uint GuideHeaderColor = 0xFF47D4FF;
     public float GuideAlertScale = 1.4f;
     public float CentralAlertWidth = 620;
-    public uint CentralAlertColor = 0xFF47D4FF;
+    public uint CentralAlertColor = 0xFF36A6FF;
     public uint CentralDetailColor = 0xFFE6E6E6;
-    public uint CentralBarColor = 0xFF47D4FF;
+    public uint CentralBarColor = 0xFF36A6FF;
+    public bool CentralAlertIcons = true;
+    public float CentralOutlineThickness = 2;
+    public float CentralBackgroundOpacity = .45f;
     public uint GuideBackgroundColor = 0xE61F1814;
     public uint GuideTextColor = 0xFFE6E6E6;
     public uint GuideActiveColor = 0xFF47D4FF;

@@ -14,16 +14,21 @@ public sealed partial class ForetellEngine
             changed |= ImGui.Checkbox(GuideText("Unlock central text", "Déverrouiller le texte central", "Zentralen Text entsperren", "中央テキストのロック解除"), ref _cfg.TextHintsUnlocked);
             changed |= ImGui.SliderFloat(GuideText("Text size##central", "Taille du texte##central", "Textgröße##central", "文字サイズ##central"), ref _cfg.GuideAlertScale, .7f, 3, "%.2f");
             changed |= ImGui.SliderFloat(GuideText("Text width##central", "Largeur du texte##central", "Textbreite##central", "文字幅##central"), ref _cfg.CentralAlertWidth, 260, 1200, "%.0f px");
+            changed |= ImGui.Checkbox(GuideText("Warning icons", "Icônes d’avertissement", "Warnsymbole", "警告アイコン"), ref _cfg.CentralAlertIcons);
+            changed |= ImGui.SliderFloat(GuideText("Text outline", "Contour du texte", "Textkontur", "文字の縁取り"), ref _cfg.CentralOutlineThickness, 0, 4, "%.1f px");
+            changed |= ImGui.SliderFloat(GuideText("Dark background", "Fond sombre", "Dunkler Hintergrund", "暗い背景"), ref _cfg.CentralBackgroundOpacity, 0, 1, "%.2f");
             changed |= EditGuideColor(GuideText("Instruction color", "Couleur de la consigne", "Anweisungsfarbe", "指示の色"), ref _cfg.CentralAlertColor);
             changed |= EditGuideColor(GuideText("Mechanic name / timer color", "Couleur du nom / décompte", "Name / Timer-Farbe", "名前・タイマーの色"), ref _cfg.CentralDetailColor);
             changed |= EditGuideColor(GuideText("Cast bar color", "Couleur de la barre d’incantation", "Zauberleistenfarbe", "詠唱バーの色"), ref _cfg.CentralBarColor);
+            if (ImGui.Button(GuideText("High contrast style", "Style contrasté", "Kontrastreicher Stil", "高コントラスト")))
+            { ApplyCentralAlertStyle(_cfg); changed = true; }
+            ImGui.SameLine();
             if (ImGui.Button(GuideText("Reset central alerts", "Réinitialiser les alertes centrales", "Zentrale Warnungen zurücksetzen", "中央警告をリセット")))
             {
                 _cfg.TextPositionX = _cfg.TextPositionY = -1;
                 _cfg.GuideAlertScale = 1.4f;
                 _cfg.CentralAlertWidth = 620;
-                _cfg.CentralAlertColor = _cfg.CentralBarColor = 0xFF47D4FF;
-                _cfg.CentralDetailColor = 0xFFE6E6E6;
+                ApplyCentralAlertStyle(_cfg);
                 _textWasUnlocked = false;
                 changed = true;
             }

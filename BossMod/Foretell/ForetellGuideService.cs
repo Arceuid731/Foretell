@@ -154,6 +154,7 @@ internal sealed class ForetellGuideService : IDisposable
     private readonly GuideTimingHistory _timings;
     public GuideSnapshot Snapshot => _snapshot;
     internal Task Completion => _worker;
+    internal bool HasPendingRequest { get { lock (_gate) return _latest != null; } }
 
     public ForetellGuideService(string directory, Func<GuideDuty, CancellationToken, Task<string>>? fetch = null, ForetellGuideProviders? sources = null)
     {
@@ -221,7 +222,7 @@ internal sealed class ForetellGuideService : IDisposable
                     if (document?.Page == null) document = null;
                     request.FromCache = document != null;
                     if (document != null) Publish(request, GuideState.Ready, document);
-                    if (document == null || request.Refresh || _sources != null || DateTime.UtcNow - document.RetrievedAt > TimeSpan.FromDays(7))
+                    if (document == null || request.Refresh || DateTime.UtcNow - document.RetrievedAt >= TimeSpan.FromDays(7))
                     {
                         Publish(request, document == null ? GuideState.Downloading : GuideState.Ready, document);
                         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);

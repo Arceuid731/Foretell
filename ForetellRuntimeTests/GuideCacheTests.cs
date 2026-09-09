@@ -13,8 +13,9 @@ internal static class GuideCacheTests
     {
         LegacyCache().GetAwaiter().GetResult();
         AbilityPhaseCache().GetAwaiter().GetResult();
+        WeeklyCache().GetAwaiter().GetResult();
         ManualToEntry().GetAwaiter().GetResult();
-        Console.WriteLine("Guide cache: legacy migration, ability-phase cleanup, persistent combat reminders, manual-to-entry reuse, provider status, unchanged refresh and explicit retry passed.");
+        Console.WriteLine("Guide cache: legacy migration, ability-phase cleanup, weekly reuse across restarts, expiry, manual refresh and persistent combat reminders passed.");
     }
 
     public static void VerifyInstalled(string root, string preparedPath)
@@ -184,6 +185,55 @@ internal static class GuideCacheTests
         finally { summaries.Dispose(); await summaries.Completion; }
     }
 
+    private static async Task WeeklyCache()
+    {
+        foreach (var scenario in new (double Days, bool Refresh, bool Corrupt)[] { (1, false, false), (6.99, false, false), (7.01, false, false), (1, true, false), (1, false, true) })
+        {
+            using var directory = new TestDirectory();
+            var savedAt = DateTime.UtcNow.AddDays(-scenario.Days);
+            var source = GuideSourceAssembly.Combine(Duty, new([new(ForetellGuideProviders.WikiProvider, "https://ffxiv.consolegameswiki.com/fixture", Passage, Html, "html")], []), savedAt);
+            var sourceDirectory = Path.Combine(directory.Path, "sources");
+            new ForetellGuideCache(sourceDirectory).Write(source);
+            if (scenario.Corrupt) File.WriteAllText(Path.Combine(sourceDirectory, Duty.Key + ".json"), "invalid cache");
+            var requests = 0;
+            using var handler = new Handler((request, _) =>
+            {
+                Interlocked.Increment(ref requests);
+                return Task.FromResult(request.RequestUri!.Host == "ffxiv.consolegameswiki.com"
+                    ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
+                        { parse = new { title = Duty.EnglishName, revid = 1436842, text = Html } }), Encoding.UTF8, "application/json") }
+                    : new(HttpStatusCode.NotFound));
+            });
+            using var providers = new ForetellGuideProviders(Path.Combine(directory.Path, "providers"), handler);
+            using var guides = new ForetellGuideService(sourceDirectory, sources: providers);
+            try
+            {
+                guides.RequestGuide(Duty, scenario.Refresh);
+                await WaitFor(() => !guides.HasPendingRequest);
+                Check(guides.Snapshot.State == GuideState.Ready, "Weekly cache did not produce an available guide");
+                var shouldFetch = scenario.Days >= 7 || scenario.Refresh || scenario.Corrupt;
+                Check(shouldFetch ? requests > 0 : requests == 0, "Weekly cache ignored its age, explicit refresh or integrity check");
+                if (shouldFetch) continue;
+                Check(guides.Snapshot.FromCache && guides.Snapshot.Document!.RetrievedAt == savedAt
+                    && new ForetellGuideCache(sourceDirectory).Read(Duty)!.RetrievedAt == savedAt,
+                    "Reading a recent guide extended its expiry or hid its cache status");
+                var profile = GuideModelCatalog.Get(GuideModelCatalog.DefaultID);
+                var prepared = GuidePageAnalysis.Parse(source, source.Page!.Text, Response("Hammer: Heavy damage to the tank."), GuideLanguage.English, profile)
+                    with { Coverage = [new(0, source.Page.Text.Length)] };
+                new ForetellGuideCache(Path.Combine(directory.Path, "summaries", "pages", profile.ID, "English")).Write(prepared);
+                using var summaries = new ForetellGuideSummaries(Path.Combine(directory.Path, "summaries"), _ => throw new InvalidOperationException("Recent saved guide started AI analysis."));
+                try
+                {
+                    summaries.Update(guides.Snapshot.Document, GuideLanguage.English, true, false, false, "Sentinel");
+                    await WaitFor(() => summaries.Snapshot?.Stage == "Ready");
+                    Check(summaries.Snapshot!.Prepared!.MechanicCount == 1 && requests == 0, "A saved guide was not reused after restarting services");
+                }
+                finally { summaries.Dispose(); await summaries.Completion; }
+            }
+            finally { guides.Dispose(); await guides.Completion; }
+        }
+    }
+
     private static async Task ManualToEntry()
     {
         using var directory = new TestDirectory();
@@ -228,15 +278,18 @@ internal static class GuideCacheTests
             guides.RequestGuide(new(Duty.ContentID, Duty.TerritoryID, Duty.EnglishName));
             Check(guides.Snapshot is { State: GuideState.Ready, FromCache: true } && guides.Snapshot.Document?.SourceHash == manual.SourceHash,
                 "Entering the manually prepared instance hid the cached source.");
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitFor(() => !guides.HasPendingRequest);
+            Check(networkChecks == 1 && !entered.Task.IsCompleted, "Re-entering a recently prepared instance contacted providers");
             summaries.Update(guides.Snapshot.Document, GuideLanguage.English, true, true, false, "Sentinel");
             Check(ReferenceEquals(summaries.Snapshot?.Prepared, prepared) && modelStarts == 1, "Entry queued inference or hid prepared advice during source checks.");
             var now = DateTime.UtcNow;
             Check(GuideSynchronization.Match(prepared, new(Duty, 1, 2, 3, "Sentinel", 4, "Hammer", now.AddSeconds(5)), now) != null,
                 "Manually prepared advice was not immediately matchable to a live cast.");
+            guides.RequestGuide(Duty, true);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             release.TrySetResult();
             await WaitFor(() => !ReferenceEquals(guides.Snapshot.Document, manual));
-            Check(networkChecks == 2 && guides.Snapshot.FromCache, "Entry did not recheck sources or treated unchanged input as new analysis.");
+            Check(networkChecks == 2 && guides.Snapshot.FromCache, "Manual refresh did not recheck sources or treated unchanged input as new analysis.");
             summaries.Update(guides.Snapshot.Document, GuideLanguage.English, true, true, false, "Sentinel");
             Check(summaries.Snapshot?.Stage == "Ready" && modelStarts == 1, "Unchanged entry refresh re-ran inference.");
 

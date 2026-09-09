@@ -64,6 +64,8 @@ internal static class GuideEventMatching
                 if (transition.Mechanic is { PhaseMemberships.Length: 1 } next
                     && boss.PhaseDefinitions.Any(phase => phase.ID == next.PhaseMemberships[0].PhaseID))
                     return transition with { Reason = "MatchedPhaseTransition" };
+                if (transition.Mechanic != null)
+                    return transition with { Reason = "MatchedPhaseUncertain" };
             }
             return new(null, null, null, rejected, names);
         }

@@ -6,8 +6,6 @@ internal sealed record GuideCombatListEntry(GuidePhase Phase, GuideMechanic Mech
 
 internal static class GuideCombatListPresentation
 {
-    internal const int PreferredCount = 6;
-
     internal static GuideCombatListEntry[] Select(GuideCombatFrame frame, IEnumerable<GuideSignal> signals, Class playerClass, bool currentPhaseOnly)
     {
         if (frame.Boss is not { } boss) return [];
@@ -16,14 +14,8 @@ internal static class GuideCombatListPresentation
         var entries = boss.Phases.SelectMany(phase => phase.Mechanics.Select(mechanic =>
             new GuideCombatListEntry(phase, mechanic, active.GetValueOrDefault(mechanic))))
             .DistinctBy(entry => entry.Mechanic).ToArray();
-        var live = entries.Where(entry => entry.Live != null).ToArray();
-        var reminders = entries.Where(entry => entry.Live == null
-            && (!currentPhaseOnly || GuidePhaseSelection.Visible(frame, entry.Phase, entry.Mechanic)))
-            .Select(entry => (Entry: entry, Priority: GuideCombatRelevance.Rank(entry.Mechanic, playerClass)))
-            .Where(candidate => candidate.Priority > 0)
-            .OrderByDescending(candidate => candidate.Priority)
-            .Take(Math.Max(0, PreferredCount - live.Length)).Select(candidate => candidate.Entry);
-        return [.. live, .. reminders];
+        return entries.Where(entry => entry.Live != null || !currentPhaseOnly
+            || GuidePhaseSelection.Visible(frame, entry.Phase, entry.Mechanic)).ToArray();
     }
 
 }

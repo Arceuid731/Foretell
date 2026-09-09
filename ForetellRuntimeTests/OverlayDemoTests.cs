@@ -40,11 +40,18 @@ internal static class OverlayDemoTests
         Check(demo.Frame(now, 10, 123, new(float.NaN, 0), 0, false, false) == null, "Demo accepts invalid positions");
         Check(ForetellEngine.OverlayScale(float.NaN) == 1 && ForetellEngine.OverlayScale(10) == 4, "Overlay scale is not bounded");
         Check(ForetellEngine.OverlayOpacity(0x80ABCDEF, .5f) == 0x40ABCDEF && ForetellEngine.OverlayOpacity(0x80ABCDEF, float.NaN) == 0x80ABCDEF, "Opacity lost the selected color or alpha");
-        var config = new ForetellConfig { GuideAlertScale = 2.2f, CentralAlertColor = 0xFF123456, WorldLabelScale = 1.8f, WorldColor = 0xFF654321 };
+        var config = new ForetellConfig { GuideAlertScale = 2.2f, CentralAlertColor = 0xFF123456, WorldLabelScale = 1.8f, WorldColor = 0xFF654321,
+            CentralAlertIcons = false, CentralOutlineThickness = 3, CentralBackgroundOpacity = .6f, TextPositionX = .25f, TextPositionY = .3f };
         var options = new JsonSerializerOptions { IncludeFields = true, IgnoreReadOnlyProperties = true };
         var saved = JsonSerializer.Serialize(config, options);
         var restored = JsonSerializer.Deserialize<ForetellConfig>(saved, options)!;
         Check(restored.GuideAlertScale == 2.2f && restored.CentralAlertColor == 0xFF123456 && restored.WorldLabelScale == 1.8f && restored.WorldColor == 0xFF654321, "Overlay appearance did not persist");
+        Check(!restored.CentralAlertIcons && restored.CentralOutlineThickness == 3 && restored.CentralBackgroundOpacity == .6f, "Alert readability settings did not persist");
+        ForetellEngine.ApplyCentralAlertStyle(restored);
+        Check(restored.CentralAlertIcons && restored.CentralOutlineThickness > 0 && restored.CentralBackgroundOpacity > 0
+            && restored.CentralAlertColor == new ForetellConfig().CentralAlertColor, "High contrast preset disagrees with the default appearance");
+        Check(restored.GuideAlertScale == config.GuideAlertScale && restored.TextPositionX == config.TextPositionX && restored.TextPositionY == config.TextPositionY
+            && restored.WorldColor == config.WorldColor, "Alert style preset moved/resized alerts or changed world overlays");
         Check(!saved.Contains("Demo"), "Demo state is persisted");
         Console.WriteLine("Overlay demo: eight shapes/cues, repeated highlights, combat/zone/expiry guards and appearance persistence passed.");
     }
