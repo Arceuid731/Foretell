@@ -1,0 +1,1034 @@
+{
+  "Schema": 1,
+  "PipelineCommit": "a2f483cf96ba3dd449071e8cb48a98cb13a56154",
+  "TrialsPerPair": 1,
+  "Interpretation": "Technical acceptance and resource measurements only. Semantic findings are in model-comparison-2026-09-11.md; accepted guides contain incorrect advice. Historical sources exclude Raven. No live gameplay accuracy score.",
+  "Trials": [
+    {
+      "Duty": {
+        "ContentID": 177,
+        "TerritoryID": 564,
+        "EnglishName": "the Palace of the Dead (Floors 31-40)",
+        "Valid": true,
+        "Key": "C177-T564"
+      },
+      "SourceHash": "CE6A88DC0949D9040FDA3D2B112A9D50ED525AFF07A536F3AE3D0653C0BEB1FF",
+      "ModelID": "gemma-4-e2b",
+      "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 38.5048732,
+      "StartupSeconds": 5.6334083,
+      "PeakSampledPrivateBytes": 4284375040,
+      "PeakWorkingSetBytes": 2443710464,
+      "MemorySamples": 69,
+      "Requests": 17,
+      "RequestSeconds": 32.630905500000004,
+      "PromptTokens": 58165,
+      "OutputTokens": 6206,
+      "Bosses": [
+        "Nightmare Bogy",
+        "Nightmare Hecteyes",
+        "Nightmare Ogre",
+        "Nightmare Mummy",
+        "Nightmare Eye",
+        "Nightmare Dahak",
+        "Nightmare Monk",
+        "Nightmare Troubadour",
+        "Nightmare Haagenti",
+        "Mimic",
+        "Nightmare Succubus",
+        "Nightmare Catoblepas",
+        "Nightmare Gourmand",
+        "Immortal Flame",
+        "Ixtab"
+      ],
+      "Mechanics": 15,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "f8505c883840cdca8e55f5f004ee06ceb77863bc8196d6d91fe94045d6fbc3f0",
+      "PreparedFileSha256": "753d07820b981dfbfa13225c8c1f1443d7530194066c40294271f0c7c6f1cfa0"
+    },
+    {
+      "Duty": {
+        "ContentID": 177,
+        "TerritoryID": 564,
+        "EnglishName": "the Palace of the Dead (Floors 31-40)",
+        "Valid": true,
+        "Key": "C177-T564"
+      },
+      "SourceHash": "CE6A88DC0949D9040FDA3D2B112A9D50ED525AFF07A536F3AE3D0653C0BEB1FF",
+      "ModelID": "granite-4.1-3b",
+      "ModelSha256": "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 10.4920402,
+      "StartupSeconds": 4.5044844,
+      "PeakSampledPrivateBytes": 7992770560,
+      "PeakWorkingSetBytes": 1410756608,
+      "MemorySamples": 16,
+      "Requests": 3,
+      "RequestSeconds": 5.8988857,
+      "PromptTokens": 11636,
+      "OutputTokens": 916,
+      "Bosses": [
+        "Ixtab"
+      ],
+      "Mechanics": 5,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "776a56bc679476d53fc1fe757e76524b2de306f01336d8eceb0e797459b33772",
+      "PreparedFileSha256": "accb42efe76681b50e36ee9b0f40b57ef0b4b65d3e6afb67637f54e7691830e5"
+    },
+    {
+      "Duty": {
+        "ContentID": 177,
+        "TerritoryID": 564,
+        "EnglishName": "the Palace of the Dead (Floors 31-40)",
+        "Valid": true,
+        "Key": "C177-T564"
+      },
+      "SourceHash": "CE6A88DC0949D9040FDA3D2B112A9D50ED525AFF07A536F3AE3D0653C0BEB1FF",
+      "ModelID": "qwen3.5-4b",
+      "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 14.5725047,
+      "StartupSeconds": 5.3653971,
+      "PeakSampledPrivateBytes": 6239518720,
+      "PeakWorkingSetBytes": 1767440384,
+      "MemorySamples": 23,
+      "Requests": 3,
+      "RequestSeconds": 9.110870199999999,
+      "PromptTokens": 13013,
+      "OutputTokens": 1162,
+      "Bosses": [
+        "Ixtab"
+      ],
+      "Mechanics": 4,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "1be2d589474273c799fc87931caf76b0d07c88dfe0cd1e787a8e9a7bb76b0c3c",
+      "PreparedFileSha256": "de166fd2c98d63666c4bbda33873602221f3f73e99a69586f407562c8be49752"
+    },
+    {
+      "Duty": {
+        "ContentID": 285,
+        "TerritoryID": 743,
+        "EnglishName": "the Fractal Continuum (Hard)",
+        "Valid": true,
+        "Key": "C285-T743"
+      },
+      "SourceHash": "CFB1D4EDE7700F001F8487860C483A5FB8B1D1E2CAE84D93CB610783F5819C38",
+      "ModelID": "gemma-4-e2b",
+      "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": false,
+      "Seconds": 61.4106128,
+      "StartupSeconds": 5.5872555,
+      "PeakSampledPrivateBytes": 4327100416,
+      "PeakWorkingSetBytes": 2443780096,
+      "MemorySamples": 114,
+      "Requests": 4,
+      "RequestSeconds": 55.6069059,
+      "PromptTokens": 120159,
+      "OutputTokens": 7150,
+      "Bosses": [],
+      "Mechanics": 0,
+      "Error": "System.IO.InvalidDataException: Trigger name must be the exact original name in its own cited source, not another event or a paraphrase.",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "78e0c50ec55361518962dbc954733a9913e2fbc22037a86f6000a6c7ae8b28da"
+    },
+    {
+      "Duty": {
+        "ContentID": 285,
+        "TerritoryID": 743,
+        "EnglishName": "the Fractal Continuum (Hard)",
+        "Valid": true,
+        "Key": "C285-T743"
+      },
+      "SourceHash": "CFB1D4EDE7700F001F8487860C483A5FB8B1D1E2CAE84D93CB610783F5819C38",
+      "ModelID": "granite-4.1-3b",
+      "ModelSha256": "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": false,
+      "Seconds": 159.9710122,
+      "StartupSeconds": 4.7537583,
+      "PeakSampledPrivateBytes": 7988985856,
+      "PeakWorkingSetBytes": 1410863104,
+      "MemorySamples": 309,
+      "Requests": 6,
+      "RequestSeconds": 154.36760199999998,
+      "PromptTokens": 131171,
+      "OutputTokens": 17794,
+      "Bosses": [],
+      "Mechanics": 0,
+      "Error": "System.IO.InvalidDataException: For Allagan Gravity: cue/description introduced numbers or external instructions absent from its cited evidence. Remove invented phase numbers, counts and advice; preserve only documented conditions.",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "b79100e46e57b49827a2788551c7da637187155c2ba72e72003b90c1df6a003a"
+    },
+    {
+      "Duty": {
+        "ContentID": 285,
+        "TerritoryID": 743,
+        "EnglishName": "the Fractal Continuum (Hard)",
+        "Valid": true,
+        "Key": "C285-T743"
+      },
+      "SourceHash": "CFB1D4EDE7700F001F8487860C483A5FB8B1D1E2CAE84D93CB610783F5819C38",
+      "ModelID": "qwen3.5-4b",
+      "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 84.3713941,
+      "StartupSeconds": 5.5092861,
+      "PeakSampledPrivateBytes": 6248370176,
+      "PeakWorkingSetBytes": 1767321600,
+      "MemorySamples": 159,
+      "Requests": 5,
+      "RequestSeconds": 78.57351359999998,
+      "PromptTokens": 141187,
+      "OutputTokens": 6577,
+      "Bosses": [
+        "Motherbit",
+        "The Ultima Warrior",
+        "The Ultima Beast"
+      ],
+      "Mechanics": 17,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "77efe6249b86afbfc67ffc95ad048192e6112f63f85147c58abe233ed62fa87e",
+      "PreparedFileSha256": "3153fd707b223c9fa4204f35c27658139af5bf8665399b0808f3a11875587836"
+    },
+    {
+      "Duty": {
+        "ContentID": 289,
+        "TerritoryID": 751,
+        "EnglishName": "Sigmascape V4.0",
+        "Valid": true,
+        "Key": "C289-T751"
+      },
+      "SourceHash": "20F25F93AD7F242ACA236BAC38DA7B8CBEED894D80DD8364D3E8D66B4A8AA8EE",
+      "ModelID": "gemma-4-e2b",
+      "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 31.1381362,
+      "StartupSeconds": 5.9103556,
+      "PeakSampledPrivateBytes": 4485758976,
+      "PeakWorkingSetBytes": 2443763712,
+      "MemorySamples": 54,
+      "Requests": 3,
+      "RequestSeconds": 25.076011,
+      "PromptTokens": 31030,
+      "OutputTokens": 3530,
+      "Bosses": [
+        "Kefka"
+      ],
+      "Mechanics": 9,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "4272821ed21f401b9436af012cedffeb95ec6abf906bdd0904b443127171edcf",
+      "PreparedFileSha256": "4cc5f657821711cac733341f8fecb0cc3ad8d194a8fd2f8b4660c5cfa046b72f"
+    },
+    {
+      "Duty": {
+        "ContentID": 289,
+        "TerritoryID": 751,
+        "EnglishName": "Sigmascape V4.0",
+        "Valid": true,
+        "Key": "C289-T751"
+      },
+      "SourceHash": "20F25F93AD7F242ACA236BAC38DA7B8CBEED894D80DD8364D3E8D66B4A8AA8EE",
+      "ModelID": "granite-4.1-3b",
+      "ModelSha256": "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 19.355508,
+      "StartupSeconds": 4.4956575,
+      "PeakSampledPrivateBytes": 7980797952,
+      "PeakWorkingSetBytes": 1411031040,
+      "MemorySamples": 33,
+      "Requests": 3,
+      "RequestSeconds": 14.6720359,
+      "PromptTokens": 28836,
+      "OutputTokens": 1931,
+      "Bosses": [
+        "Kefka"
+      ],
+      "Mechanics": 9,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "d8c7bd079c78d8ce30faa9eb6d0ce88028e7ab5e89381fb493b2365a65826e5a",
+      "PreparedFileSha256": "ae129e918e838e8cdf00b24628a76bee3227cca5420400ee71e1f701be8d8166"
+    },
+    {
+      "Duty": {
+        "ContentID": 289,
+        "TerritoryID": 751,
+        "EnglishName": "Sigmascape V4.0",
+        "Valid": true,
+        "Key": "C289-T751"
+      },
+      "SourceHash": "20F25F93AD7F242ACA236BAC38DA7B8CBEED894D80DD8364D3E8D66B4A8AA8EE",
+      "ModelID": "qwen3.5-4b",
+      "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 32.9629456,
+      "StartupSeconds": 5.5023168,
+      "PeakSampledPrivateBytes": 6265016320,
+      "PeakWorkingSetBytes": 1767960576,
+      "MemorySamples": 58,
+      "Requests": 3,
+      "RequestSeconds": 27.308909099999997,
+      "PromptTokens": 31429,
+      "OutputTokens": 3682,
+      "Bosses": [
+        "Kefka"
+      ],
+      "Mechanics": 11,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "f35c1dfe7087ee2781c160c9ba8678561b10cb44bc5133207695e5b9ee18a85e",
+      "PreparedFileSha256": "ca2abdeb401af83869c5524e2697d43a29793d814cc732790a33c41cdcda8247"
+    },
+    {
+      "Duty": {
+        "ContentID": 6,
+        "TerritoryID": 1040,
+        "EnglishName": "Haukke Manor",
+        "Valid": true,
+        "Key": "C6-T1040"
+      },
+      "SourceHash": "B24922AE0B56E55A878831E34B0C550ECCEFB21DC54BB778364D1F6912BE69F4",
+      "ModelID": "gemma-4-e2b",
+      "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 39.2521011,
+      "StartupSeconds": 5.6275894,
+      "PeakSampledPrivateBytes": 4331724800,
+      "PeakWorkingSetBytes": 2444120064,
+      "MemorySamples": 70,
+      "Requests": 5,
+      "RequestSeconds": 33.3989226,
+      "PromptTokens": 126328,
+      "OutputTokens": 3349,
+      "Bosses": [
+        "Manor Claviger",
+        "Manor Jester and Manor Steward",
+        "Lady Amandine"
+      ],
+      "Mechanics": 8,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "bcd87de867be61e5d9da04f266ee3c0e9ca0b4917506f71c556584cc3597d4f1",
+      "PreparedFileSha256": "2002bc7b3d8ec8aa9f31b2d488669f8d56c2e5ffe180fa0949d22aac24ca4abb"
+    },
+    {
+      "Duty": {
+        "ContentID": 6,
+        "TerritoryID": 1040,
+        "EnglishName": "Haukke Manor",
+        "Valid": true,
+        "Key": "C6-T1040"
+      },
+      "SourceHash": "B24922AE0B56E55A878831E34B0C550ECCEFB21DC54BB778364D1F6912BE69F4",
+      "ModelID": "granite-4.1-3b",
+      "ModelSha256": "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 44.2024994,
+      "StartupSeconds": 4.5034459,
+      "PeakSampledPrivateBytes": 7980077056,
+      "PeakWorkingSetBytes": 1410801664,
+      "MemorySamples": 82,
+      "Requests": 6,
+      "RequestSeconds": 39.4375988,
+      "PromptTokens": 133322,
+      "OutputTokens": 2575,
+      "Bosses": [
+        "Manor Claviger",
+        "Manor Jester",
+        "Manor Steward",
+        "Lady Amandine"
+      ],
+      "Mechanics": 8,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "22b2ae3e0494ea1b275223d4a9f3568e8025fff6be3e9c9bb1d0040b1b88d4d1",
+      "PreparedFileSha256": "963bf2f23e0d6421a5a9c803f8d589072ae777e9831e4bc4d694f89265006250"
+    },
+    {
+      "Duty": {
+        "ContentID": 6,
+        "TerritoryID": 1040,
+        "EnglishName": "Haukke Manor",
+        "Valid": true,
+        "Key": "C6-T1040"
+      },
+      "SourceHash": "B24922AE0B56E55A878831E34B0C550ECCEFB21DC54BB778364D1F6912BE69F4",
+      "ModelID": "qwen3.5-4b",
+      "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 53.1368488,
+      "StartupSeconds": 5.50507,
+      "PeakSampledPrivateBytes": 6250426368,
+      "PeakWorkingSetBytes": 1768321024,
+      "MemorySamples": 98,
+      "Requests": 5,
+      "RequestSeconds": 47.36839799999999,
+      "PromptTokens": 126635,
+      "OutputTokens": 3668,
+      "Bosses": [
+        "Manor Claviger",
+        "Manor Jester and Manor Steward",
+        "Lady Amandine"
+      ],
+      "Mechanics": 11,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "73b1968b9244842e4a4712a8be8a23b4b6030504f2b19ac2b9ec03e260f727e1",
+      "PreparedFileSha256": "fc87308c64e8afae476d86e51a9deb6a79554a0ecf896adbe3fbf41dc7dc9d93"
+    },
+    {
+      "Duty": {
+        "ContentID": 92,
+        "TerritoryID": 174,
+        "EnglishName": "the Labyrinth of the Ancients",
+        "Valid": true,
+        "Key": "C92-T174"
+      },
+      "SourceHash": "5E9DD7382B97D21B7517DE2550AFC41F051504600F0EF6BDD9016B3DFC6CA8FD",
+      "ModelID": "gemma-4-e2b",
+      "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 49.0523231,
+      "StartupSeconds": 5.6487613,
+      "PeakSampledPrivateBytes": 4293750784,
+      "PeakWorkingSetBytes": 2444005376,
+      "MemorySamples": 89,
+      "Requests": 6,
+      "RequestSeconds": 43.1341984,
+      "PromptTokens": 147443,
+      "OutputTokens": 4755,
+      "Bosses": [
+        "Bone Dragon",
+        "Thanatos",
+        "King Behemoth",
+        "Phlegethon"
+      ],
+      "Mechanics": 8,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "8824cbda846ce881099d38ede0e036b7a7aea7cdce48936759e8d2fa8a12bfd2",
+      "PreparedFileSha256": "58324f0205f4095fe92c383363f01cdfbffbe30b995d3a926eb882da74799f7b"
+    },
+    {
+      "Duty": {
+        "ContentID": 92,
+        "TerritoryID": 174,
+        "EnglishName": "the Labyrinth of the Ancients",
+        "Valid": true,
+        "Key": "C92-T174"
+      },
+      "SourceHash": "5E9DD7382B97D21B7517DE2550AFC41F051504600F0EF6BDD9016B3DFC6CA8FD",
+      "ModelID": "granite-4.1-3b",
+      "ModelSha256": "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": false,
+      "Seconds": 106.8998276,
+      "StartupSeconds": 4.4587222,
+      "PeakSampledPrivateBytes": 7988416512,
+      "PeakWorkingSetBytes": 1410936832,
+      "MemorySamples": 205,
+      "Requests": 6,
+      "RequestSeconds": 102.22742699999999,
+      "PromptTokens": 115258,
+      "OutputTokens": 12034,
+      "Bosses": [],
+      "Mechanics": 0,
+      "Error": "System.IO.InvalidDataException: For Skeleton Adds: cue/description introduced numbers or external instructions absent from its cited evidence. Remove invented phase numbers, counts and advice; preserve only documented conditions.",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "f28126bc113842ed2895fee06b01358727e772f31407da9bc667162a35b82af3"
+    },
+    {
+      "Duty": {
+        "ContentID": 92,
+        "TerritoryID": 174,
+        "EnglishName": "the Labyrinth of the Ancients",
+        "Valid": true,
+        "Key": "C92-T174"
+      },
+      "SourceHash": "5E9DD7382B97D21B7517DE2550AFC41F051504600F0EF6BDD9016B3DFC6CA8FD",
+      "ModelID": "qwen3.5-4b",
+      "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+      "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+      "ContextTokens": 65536,
+      "MemoryGiB": 12,
+      "Backend": "Vulkan",
+      "Complete": true,
+      "Seconds": 143.7572093,
+      "StartupSeconds": 5.4831538,
+      "PeakSampledPrivateBytes": 6303727616,
+      "PeakWorkingSetBytes": 1768390656,
+      "MemorySamples": 275,
+      "Requests": 8,
+      "RequestSeconds": 137.94405120000002,
+      "PromptTokens": 210019,
+      "OutputTokens": 14250,
+      "Bosses": [
+        "Bone Dragon",
+        "Thanatos",
+        "King Behemoth",
+        "Phlegethon"
+      ],
+      "Mechanics": 16,
+      "Error": "",
+      "Measurement": "Fresh model process and no prepared/response cache. Asset preflight excluded; startup includes runtime verification. Private memory sampled at 500 ms; working set peak is the process OS counter. Neither is VRAM. Successful validation is not a semantic quality score.",
+      "ResultFileSha256": "e47b7016e7d1dec943e9a70900e646f7c0e7018f1fbb0f47af236170f7e4a564",
+      "PreparedFileSha256": "2fe727109709880f964cab0d4c25767fb89cae0ebcf5c65a1e1faeb71f9ecde2"
+    }
+  ],
+  "BossIdentityChecks": [
+    {
+      "Trial": "C177-T564-gemma-4-e2b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Nightmare Bogy",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Bogy",
+          "IDs": [
+            5013
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Hecteyes",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Hecteyes",
+          "IDs": [
+            5014
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Ogre",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Ogre",
+          "IDs": [
+            5015
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Mummy",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Mummy",
+          "IDs": [
+            5016
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Eye",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Eye",
+          "IDs": [
+            5017
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Dahak",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Dahak",
+          "IDs": [
+            5018
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Monk",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Monk",
+          "IDs": [
+            5019
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Troubadour",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Troubadour",
+          "IDs": [
+            5020
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Haagenti",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Haagenti",
+          "IDs": [
+            5021
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Mimic",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Mimic",
+          "IDs": [
+            2566,
+            14264,
+            14265,
+            14266
+          ],
+          "Reason": "MultipleCandidateIDs"
+        },
+        {
+          "Boss": "Nightmare Succubus",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Succubus",
+          "IDs": [
+            5022
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Catoblepas",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Catoblepas",
+          "IDs": [
+            5023
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Nightmare Gourmand",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Nightmare Gourmand",
+          "IDs": [
+            5024
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Immortal Flame",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Immortal Flame",
+          "IDs": [
+            5053
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Ixtab",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Ixtab",
+          "IDs": [
+            5025,
+            8890
+          ],
+          "Reason": "MultipleCandidateIDs"
+        }
+      ]
+    },
+    {
+      "Trial": "C177-T564-granite-4.1-3b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Ixtab",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Ixtab",
+          "IDs": [
+            5025,
+            8890
+          ],
+          "Reason": "MultipleCandidateIDs"
+        }
+      ]
+    },
+    {
+      "Trial": "C177-T564-qwen3.5-4b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Ixtab",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Ixtab",
+          "IDs": [
+            5025,
+            8890
+          ],
+          "Reason": "MultipleCandidateIDs"
+        }
+      ]
+    },
+    {
+      "Trial": "C285-T743-qwen3.5-4b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Motherbit",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Motherbit",
+          "IDs": [
+            7056
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "The Ultima Warrior",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "The Ultima Warrior",
+          "IDs": [
+            7055
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "The Ultima Beast",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "The Ultima Beast",
+          "IDs": [
+            7058
+          ],
+          "Reason": "CandidateID"
+        }
+      ]
+    },
+    {
+      "Trial": "C289-T751-gemma-4-e2b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Kefka",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Kefka",
+          "IDs": [
+            7131
+          ],
+          "Reason": "CandidateID"
+        }
+      ]
+    },
+    {
+      "Trial": "C289-T751-granite-4.1-3b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Kefka",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Kefka",
+          "IDs": [
+            7131
+          ],
+          "Reason": "CandidateID"
+        }
+      ]
+    },
+    {
+      "Trial": "C289-T751-qwen3.5-4b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Kefka",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Kefka",
+          "IDs": [
+            7131
+          ],
+          "Reason": "CandidateID"
+        }
+      ]
+    },
+    {
+      "Trial": "C6-T1040-gemma-4-e2b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Manor Claviger",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Manor Claviger",
+          "IDs": [
+            423,
+            2334
+          ],
+          "Reason": "MultipleCandidateIDs"
+        },
+        {
+          "Boss": "Manor Jester and Manor Steward",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Manor Jester and Manor Steward",
+          "IDs": [],
+          "Reason": "NameNotFound"
+        },
+        {
+          "Boss": "Lady Amandine",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Lady Amandine",
+          "IDs": [
+            422,
+            2917
+          ],
+          "Reason": "MultipleCandidateIDs"
+        }
+      ]
+    },
+    {
+      "Trial": "C6-T1040-granite-4.1-3b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Manor Claviger",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Manor Claviger",
+          "IDs": [
+            423,
+            2334
+          ],
+          "Reason": "MultipleCandidateIDs"
+        },
+        {
+          "Boss": "Manor Jester",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Manor Jester",
+          "IDs": [
+            426
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Manor Steward",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Manor Steward",
+          "IDs": [
+            427
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Lady Amandine",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Lady Amandine",
+          "IDs": [
+            422,
+            2917
+          ],
+          "Reason": "MultipleCandidateIDs"
+        }
+      ]
+    },
+    {
+      "Trial": "C6-T1040-qwen3.5-4b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Manor Claviger",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Manor Claviger",
+          "IDs": [
+            423,
+            2334
+          ],
+          "Reason": "MultipleCandidateIDs"
+        },
+        {
+          "Boss": "Manor Jester and Manor Steward",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Manor Jester and Manor Steward",
+          "IDs": [],
+          "Reason": "NameNotFound"
+        },
+        {
+          "Boss": "Lady Amandine",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Lady Amandine",
+          "IDs": [
+            422,
+            2917
+          ],
+          "Reason": "MultipleCandidateIDs"
+        }
+      ]
+    },
+    {
+      "Trial": "C92-T174-gemma-4-e2b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Bone Dragon",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Bone Dragon",
+          "IDs": [
+            706
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Thanatos",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Thanatos",
+          "IDs": [
+            55,
+            710
+          ],
+          "Reason": "MultipleCandidateIDs"
+        },
+        {
+          "Boss": "King Behemoth",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "King Behemoth",
+          "IDs": [
+            727,
+            5628
+          ],
+          "Reason": "MultipleCandidateIDs"
+        },
+        {
+          "Boss": "Phlegethon",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Phlegethon",
+          "IDs": [
+            732
+          ],
+          "Reason": "CandidateID"
+        }
+      ]
+    },
+    {
+      "Trial": "C92-T174-qwen3.5-4b",
+      "CatalogHash": "E5D32A9101684EC336E2E100CDE1F23EC0E54B3A48A81AB3EC68C5B6E2F146A6",
+      "Bosses": [
+        {
+          "Boss": "Bone Dragon",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Bone Dragon",
+          "IDs": [
+            706
+          ],
+          "Reason": "CandidateID"
+        },
+        {
+          "Boss": "Thanatos",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Thanatos",
+          "IDs": [
+            55,
+            710
+          ],
+          "Reason": "MultipleCandidateIDs"
+        },
+        {
+          "Boss": "King Behemoth",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "King Behemoth",
+          "IDs": [
+            727,
+            5628
+          ],
+          "Reason": "MultipleCandidateIDs"
+        },
+        {
+          "Boss": "Phlegethon",
+          "Mechanic": "",
+          "Kind": "boss",
+          "Name": "Phlegethon",
+          "IDs": [
+            732
+          ],
+          "Reason": "CandidateID"
+        }
+      ]
+    }
+  ]
+}

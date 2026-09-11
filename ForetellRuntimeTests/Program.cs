@@ -34,6 +34,10 @@ internal static class Program
         else if (args is ["--guide-pipeline-smoke", var pipelineDirectory]) GuideCombatTests.PipelineSmoke(pipelineDirectory);
         else if (args is ["--guide-ui-smoke"]) GuideOverlayTests.Run();
         else if (args is ["--guide-cached-analysis", var cachedSource, var cachedRuntime, var cachedOutput]) GuideJournalTests.Reproduce(cachedSource, cachedRuntime, cachedOutput);
+        else if (args is ["--guide-compare-one", var comparisonJournal, var comparisonRuntime, var comparisonOutput, var comparisonModel])
+            GuideModelComparison.Run(comparisonJournal, comparisonRuntime, comparisonOutput, comparisonModel).GetAwaiter().GetResult();
+        else if (args is ["--guide-compare-bindings", var comparisonResults, var comparisonGame])
+            GuideModelComparison.InspectBindings(comparisonResults, comparisonGame);
         else if (args is ["--guide-phase-analysis", var phaseDocument, var phaseRuntime, var phaseOutput]) GuideJournalTests.ReproducePhases(phaseDocument, phaseRuntime, phaseOutput);
         else if (args is ["--guide-journal-replay", var journalFile, var journalOutput]) GuideJournalTests.Replay(journalFile, journalOutput);
         else if (args is ["--guide-cache-check", var cacheRoot, var preparedPath]) GuideCacheTests.VerifyInstalled(cacheRoot, preparedPath);

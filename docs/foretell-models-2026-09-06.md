@@ -1,5 +1,9 @@
 # Local models and guide preparation — 6 September 2026
 
+## Update — 11 September 2026
+
+A [real comparison on five recent recorded source sets](model-comparison-2026-09-11.md) now covers all three installed profiles with identical 64K / 12 GiB / Vulkan settings. Qwen produced five technically accepted guides, Gemma four and Granite three. Qwen remains the default for availability and coverage; accepted outputs still contain incorrect instructions, lost alternatives and unresolved boss identities. These acceptance counts are not semantic accuracy scores. The sections below describe the earlier evaluation.
+
 ## 0.13.0
 
 Foretell now has three pinned local model profiles and whole-document analysis of aggregated guide sources. Player guide content is English in this iteration; application controls may follow the client language. These are implemented preparation paths, not a claim that all three models have passed real-encounter evaluation.
