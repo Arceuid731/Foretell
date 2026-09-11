@@ -15,6 +15,19 @@ internal static class RadarTests
         }
         var small = ForetellRadarCore.Fit([new(-14.5f), new(14.5f)], 0, 8, 65, 2);
         Check.That(small.Radius == 16.5f, "Small arena inherited the 30-yalm open-world minimum");
+        Vector2[] room = [new(-30, -25), new(30, -25), new(30, 25), new(-30, 25)];
+        for (var i = 0; i < 16; ++i)
+        {
+            var angle = i * MathF.Tau / 16;
+            foreach (var square in new[] { true, false })
+            {
+                var arena = ForetellRadarCore.FitArena(room, new(1, 1), Vector2.Zero, angle, 65, square);
+                Check.That(arena is { Radius: > 24 } && room.All(p => ForetellRadarCore.InView(p, arena.Value.Center, angle, arena.Value.Radius, square)), "Grouped or solo boss fight rejected full room framing or clipped corners.");
+            }
+        }
+        Check.That(ForetellRadarCore.FitArena(room, Vector2.Zero, new(100, 0), 0, 65, true) == null, "Framed a room that does not contain the boss.");
+        Check.That(ForetellRadarCore.FitArena(room, Vector2.Zero, Vector2.Zero, 0, 20, true) == null, "Room framing exceeded user maximum.");
+        Check.That(ForetellRadarCore.FitArena([new(-50, -5), new(50, -5), new(50, 5), new(-50, 5)], Vector2.Zero, Vector2.Zero, 0, 65, true) == null, "A long corridor became a boss arena.");
         Check.That(ForetellRadarCore.Fit(rectangle, 0, 16, 10, 2).Radius == 10, "User maximum below combat minimum crashed or was ignored");
         Check.That(!ForetellRadarCore.InView(new(19, 19), Vector2.Zero, 0, 20, false)
             && ForetellRadarCore.InView(new(19, 19), Vector2.Zero, 0, 20, true), "Circle and square clipping do not differ at corners");

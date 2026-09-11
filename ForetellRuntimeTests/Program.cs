@@ -23,6 +23,7 @@ internal static class Program
     private static void RunCommand(string[] args)
     {
         if (args.Length == 0) Run();
+        else if (args is ["--guide-source-smoke", var sourceOutput, .. var sourceTitles]) GuideProviderTests.Smoke(sourceOutput, sourceTitles).GetAwaiter().GetResult();
         else if (args[0] == "--wiki-smoke") GuideTests.Smoke(args);
         else if (args is ["--guide-analysis-smoke", var runtimeDirectory, var outputDirectory, var profile, .. var titles])
             GuidePageAnalysisTests.Smoke(runtimeDirectory, outputDirectory, profile, titles);

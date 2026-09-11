@@ -16,6 +16,7 @@ internal sealed class ForetellGuideProviders : IDisposable
     internal const string RavenProvider = "Raven's Reminders";
     internal const string WorkbookProvider = "Community Workbook";
     internal const string RavenIndex = "https://ravensreminders.com/tldr-guides/";
+    internal const string RavenApi = "https://ravensreminders.com/wp-json/wp/v2/tldr_guide?per_page=100";
     internal const string WorkbookUrl = "https://docs.google.com/spreadsheets/d/1MX0RjPS4gtT6YI5Szxlsin9hcaohnEQQC7zNdrDHBrQ/export?format=xlsx";
     internal const int MaximumPageBytes = ForetellGuideParser.MaxResponseBytes;
     internal const int MaximumWorkbookBytes = ForetellWorkbookGuide.MaximumArchiveBytes;
@@ -33,6 +34,7 @@ internal sealed class ForetellGuideProviders : IDisposable
     private static readonly Regex Links = new("<a\\b(?<attributes>" + AttributesPattern + ")>(?<body>[\\s\\S]*?)</a\\s*>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, RegexBudget);
     private static readonly Regex IgnoredHtml = new(@"<!--[\s\S]*?-->|<(script|style|iframe|sup)\b[^>]*>[\s\S]*?</\1\s*>", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, RegexBudget);
     private static readonly Regex Article = new(@"^(?<name>.+?),\s*(?<article>the|an|a)(?<suffix>\s*[:(].*)?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, RegexBudget);
+    private static readonly Regex RaidLabel = new(@"\s+\(a(?:[1-9]|1[0-2])\)$", RegexOptions.CultureInvariant, RegexBudget);
     private static readonly Regex GuidePath = new(@"^/tldrguide/[a-z0-9-]+/$", RegexOptions.CultureInvariant, RegexBudget);
     private static readonly Regex CacheName = new(@"^[A-F0-9]{64}\.json$", RegexOptions.CultureInvariant, RegexBudget);
     private readonly string _directory;
@@ -57,10 +59,11 @@ internal sealed class ForetellGuideProviders : IDisposable
         cancellation.ThrowIfCancellationRequested();
         if (!duty.Valid || string.IsNullOrWhiteSpace(duty.EnglishName)) throw new InvalidDataException("Instance identity is missing.");
         var title = char.ToUpperInvariant(duty.EnglishName[0]) + duty.EnglishName[1..];
-        var wikiUrl = WikiUrl("https://ffxiv.consolegameswiki.com/mediawiki/api.php", title);
+        var wikiTitle = ConsoleWikiTitle(title);
+        var wikiUrl = WikiUrl("https://ffxiv.consolegameswiki.com/mediawiki/api.php", wikiTitle);
         var gamerUrl = WikiUrl("https://ffxiv.gamerescape.com/w/api.php", title);
         var results = await Task.WhenAll(
-            Isolated(WikiProvider, wikiUrl, () => Wiki(WikiProvider, wikiUrl, duty, cancellation), cancellation),
+            Isolated(WikiProvider, wikiUrl, () => Wiki(WikiProvider, wikiUrl, duty with { EnglishName = wikiTitle }, cancellation), cancellation),
             Isolated(GamerProvider, gamerUrl, () => Wiki(GamerProvider, gamerUrl, duty, cancellation), cancellation),
             Isolated(RavenProvider, RavenIndex, () => Raven(duty, cancellation, refresh), cancellation),
             Isolated(WorkbookProvider, WorkbookUrl, () => Workbook(duty, cancellation, refresh), cancellation)).ConfigureAwait(false);
@@ -70,6 +73,10 @@ internal sealed class ForetellGuideProviders : IDisposable
 
     private static string WikiUrl(string endpoint, string title)
         => endpoint + "?action=parse&prop=text%7Crevid&format=json&formatversion=2&redirects=1&page=" + Uri.EscapeDataString(title);
+
+    internal static string ConsoleWikiTitle(string title)
+        => title.StartsWith("The Palace of the Dead (Floors ", StringComparison.OrdinalIgnoreCase)
+            ? title[4..] : title;
 
     private static async Task<ProviderResult> Isolated(string provider, string url, Func<Task<ProviderResult>> fetch, CancellationToken cancellation)
     {
@@ -103,6 +110,70 @@ internal sealed class ForetellGuideProviders : IDisposable
     }
 
     private async Task<ProviderResult> Raven(GuideDuty duty, CancellationToken cancellation, bool refresh)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(TimeSpan.FromSeconds(20));
+        cancellation = timeout.Token;
+        var api = await Isolated(RavenProvider, RavenApi, () => RavenJson(duty, cancellation, refresh), cancellation).ConfigureAwait(false);
+        if (api.Page != null) return api;
+        var html = await Isolated(RavenProvider, RavenIndex, () => RavenHtml(duty, cancellation, refresh), cancellation).ConfigureAwait(false);
+        if (html.Page != null) return html;
+        var state = api.State.Status == "Missing" ? api.State : html.State;
+        return new(null, state with { Error = "API: " + api.State.Error + "; HTML: " + html.State.Error });
+    }
+
+    private async Task<ProviderResult> RavenJson(GuideDuty duty, CancellationToken cancellation, bool refresh)
+    {
+        var matches = new List<GuideSourcePage>();
+        var errors = new List<string>();
+        for (var page = 1; page <= 8; ++page)
+        {
+            var url = RavenApi + (page == 1 ? "" : "&page=" + page);
+            var download = await Read(url, MaximumPageBytes, SharedLifetime, "json", bytes => ReadRavenJson(bytes, duty), cancellation, refresh).ConfigureAwait(false);
+            matches.AddRange(download.Value.Matches.Select(source => source with
+            {
+                RetrievedAt = download.Entry.RetrievedAt, FromCache = download.FromCache
+            }));
+            if (download.Error.Length > 0) errors.Add(download.Error);
+            if (download.Value.Count == 100) continue;
+            var unique = matches.DistinctBy(source => source.Url).ToArray();
+            if (unique.Length != 1) throw new MissingSourceException("No unique API entry matches this duty and variant.");
+            var result = unique[0] with { FromCache = unique[0].FromCache || errors.Count > 0 };
+            return new(result, new(RavenProvider, result.FromCache ? "Cached" : "Ready", result.Url, string.Join("; ", errors)));
+        }
+        throw new InvalidDataException("Raven API catalog exceeds pagination limits.");
+    }
+
+    internal static (int Count, GuideSourcePage[] Matches) ReadRavenJson(byte[] bytes, GuideDuty duty)
+    {
+        using var json = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
+        var root = json.RootElement;
+        if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() > 100)
+            throw new InvalidDataException("Raven API returned an invalid catalog page.");
+        var matches = new List<GuideSourcePage>();
+        foreach (var entry in root.EnumerateArray())
+        {
+            var title = ForetellGuideParser.PlainText(entry.GetProperty("title").GetProperty("rendered").GetString() ?? "");
+            if (CatalogName(title) != CatalogName(duty.EnglishName)) continue;
+            var link = entry.GetProperty("link").GetString();
+            if (!Uri.TryCreate(link, UriKind.Absolute, out var uri) || uri.Host != "ravensreminders.com" || !Allowed(uri)
+                || uri.Query.Length != 0 || uri.Fragment.Length != 0 || !GuidePath.IsMatch(uri.AbsolutePath)
+                || entry.GetProperty("type").GetString() != "tldr_guide" || entry.GetProperty("status").GetString() != "publish")
+                throw new InvalidDataException("Raven API guide identity is invalid.");
+            var content = entry.GetProperty("content");
+            if (content.TryGetProperty("protected", out var locked) && locked.GetBoolean())
+                throw new MissingSourceException("Raven API guide is protected.");
+            var html = content.GetProperty("rendered").GetString() ?? "";
+            var text = HtmlText(html);
+            if (text.Length < 20) throw new MissingSourceException("Raven API guide contains no usable text.");
+            DateTime? modified = DateTime.TryParse(entry.GetProperty("modified_gmt").GetString(), System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var date) ? date : null;
+            matches.Add(new(RavenProvider, uri.AbsoluteUri, title + "\n" + text, entry.GetRawText(), "wordpress-json") { ModifiedAt = modified });
+        }
+        return (root.GetArrayLength(), matches.ToArray());
+    }
+
+    private async Task<ProviderResult> RavenHtml(GuideDuty duty, CancellationToken cancellation, bool refresh)
     {
         var index = await Read(RavenIndex, MaximumPageBytes, SharedLifetime, "html", bytes =>
         {
@@ -162,10 +233,12 @@ internal sealed class ForetellGuideProviders : IDisposable
 
     private static string CatalogName(string title)
     {
-        var name = GuideNames.Normalize(title);
+        var name = GuideNames.Normalize(title).Replace('–', '-').Replace('—', '-');
+        if (name.StartsWith("alexander - ", StringComparison.Ordinal)) name = RaidLabel.Replace(name, "");
         var article = Article.Match(name);
         if (article.Success) name = article.Groups["article"].Value + " " + article.Groups["name"].Value + article.Groups["suffix"].Value;
-        return GuideNames.Normalize(name).Replace(" :", ":", StringComparison.Ordinal);
+        name = GuideNames.Normalize(name).Replace(" :", ":", StringComparison.Ordinal);
+        return name.StartsWith("the ", StringComparison.Ordinal) ? name[4..] : name;
     }
 
     internal static string HtmlText(string html)
@@ -199,7 +272,7 @@ internal sealed class ForetellGuideProviders : IDisposable
     private async Task<Download<T>> Read<T>(string url, int limit, TimeSpan lifetime, string format, Func<byte[], T> parse, CancellationToken cancellation, bool refresh = false)
     {
         var key = GuideNames.Hash(url);
-        var gate = lifetime > TimeSpan.Zero ? url == RavenIndex ? IndexGate : WorkbookGate : null;
+        var gate = lifetime > TimeSpan.Zero ? new Uri(url).Host == "ravensreminders.com" ? IndexGate : WorkbookGate : null;
         if (gate != null) await gate.WaitAsync(cancellation).ConfigureAwait(false);
         try
         {
@@ -220,7 +293,9 @@ internal sealed class ForetellGuideProviders : IDisposable
                 for (var redirects = 0; ; ++redirects)
                 {
                     if (!Allowed(uri) || !SameProvider(new Uri(url), uri)) throw new InvalidDataException("Guide redirect is outside the HTTPS provider allowlist.");
-                    using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+                    // Raven's edge returned 403 for HTTP/1.1 from the .NET runtime while the same
+                    // public API request succeeds over HTTP/2. Negotiate down for older providers.
+                    using var request = new HttpRequestMessage(HttpMethod.Get, uri) { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionOrLower };
                     if (cached != null)
                     {
                         if (EntityTagHeaderValue.TryParse(cached.ETag, out var etag)) request.Headers.IfNoneMatch.Add(etag);

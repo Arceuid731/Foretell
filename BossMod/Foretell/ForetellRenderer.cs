@@ -818,20 +818,14 @@ public sealed partial class ForetellEngine
                 foreach (var hazard in PresentationFrame.Hazards)
                     if (hazard.SpatiallyKnown && Vector2.Distance(hazard.Prediction.Origin, V(boss.Position)) < 55)
                         points.Add(hazard.Prediction.Origin);
-                target = ForetellRadarCore.Fit(points, cameraAzimuth, 16, maximum, 7);
+                target = ForetellRadarCore.Fit(points, cameraAzimuth, 16, maximum, 7, RadarSquareViewport);
             }
-            // Closed, compact observed terrain takes precedence. Large connected staging areas and radial
-            // courtyard walls must not zoom a small fight out to the whole surrounding map.
-            if (_radarClosedBounds is { } floor)
-            {
-                var fitted = ForetellRadarCore.Fit(floor, cameraAzimuth, 8, 120, 2);
-                if (fitted.Radius <= maximum && (!bossContext || fitted.Radius <= target.Radius * 1.5f)) target = fitted;
-            }
-            else if (CurrentArenaBoundary is { ArenaLike: true } boundary)
-            {
-                var fitted = ForetellRadarCore.Fit(boundary.Points, cameraAzimuth, 8, 120, 2);
-                if (fitted.Radius <= maximum && (!bossContext || fitted.Radius <= target.Radius * 1.25f)) target = fitted;
-            }
+            Vector2? bossPosition = bossContext ? V(boss!.Position) : null;
+            var arenaView = _radarClosedBounds is { } floor
+                ? ForetellRadarCore.FitArena(floor, player, bossPosition, cameraAzimuth, maximum, RadarSquareViewport) : null;
+            if (arenaView == null && CurrentArenaBoundary is { ArenaLike: true } boundary)
+                arenaView = ForetellRadarCore.FitArena(boundary.Points, player, bossPosition, cameraAzimuth, maximum, RadarSquareViewport);
+            if (arenaView is { } observed) target = observed;
         }
         var now = DateTime.UtcNow;
         _radarView = ForetellRadarCore.Smooth(_radarView, target, _radarZoomUpdatedAt == default ? .1f : (float)(now - _radarZoomUpdatedAt).TotalSeconds);

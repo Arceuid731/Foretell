@@ -8,7 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-internal static class GuideProviderTests
+internal static partial class GuideProviderTests
 {
     private static readonly GuideDuty Duty = new(824, 826, "The Orbonne Monastery");
     private static readonly DateTime Modified = new(2026, 8, 1, 12, 0, 0, DateTimeKind.Utc);
@@ -19,6 +19,8 @@ internal static class GuideProviderTests
     {
         CatalogMatching();
         HtmlLabels();
+        RavenApiAcquisition().GetAwaiter().GetResult();
+        PalaceWikiIdentity().GetAwaiter().GetResult();
         IndependentProviders().GetAwaiter().GetResult();
         EmptyAndWrongWiki().GetAwaiter().GetResult();
         ConditionalAndFallback().GetAwaiter().GetResult();
@@ -76,6 +78,10 @@ internal static class GuideProviderTests
             Check(ForetellGuideProviders.MatchRavenGuide($"<a href='{href}'>The Orbonne Monastery</a>", Duty) == null, "Unsafe or non-guide catalog link was accepted.");
         Check(ForetellGuideProviders.MatchRavenGuide("<a href='/tldrguide/eye-hard/'>Howling Eye, The (Hard)</a>", Duty with { EnglishName = "The Howling Eye (Hard)" }) != null,
             "Trailing article before variant was not normalized.");
+        const string raid = "<a href='/tldrguide/arm/'>Alexander – The Arm of the Father (A3)</a>";
+        Check(ForetellGuideProviders.MatchRavenGuide(raid, Duty with { EnglishName = "Alexander - The Arm of the Father" }) != null, "Raven raid shorthand or typography prevented matching.");
+        Check(ForetellGuideProviders.MatchRavenGuide(raid, Duty with { EnglishName = "Alexander - The Arm of the Father (Savage)" }) == null, "Raid shorthand normalization erased difficulty.");
+        Check(ForetellGuideProviders.MatchRavenGuide("<a href='/tldrguide/labyrinth/'>Labyrinth of the Ancients</a>", Duty with { EnglishName = "the Labyrinth of the Ancients" }) != null, "Optional leading article prevented matching.");
     }
 
     private static void HtmlLabels()
@@ -102,7 +108,7 @@ internal static class GuideProviderTests
         using var providers = new ForetellGuideProviders(directory.Path, handler);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var bundle = await providers.Fetch(Duty, timeout.Token);
-        Check(started == 4 && bundle.States.Length == 4 && bundle.Sources.Length == 2, "A failed provider blocked independent concurrent sources.");
+        Check(started == 5 && bundle.States.Length == 4 && bundle.Sources.Length == 2, "A failed provider blocked independent concurrent sources or skipped Raven fallback.");
         Check(State(bundle, ForetellGuideProviders.GamerProvider).Status == "Unavailable" && State(bundle, ForetellGuideProviders.RavenProvider).Status == "Unavailable", "403 provider state was incorrect.");
         Check(State(bundle, ForetellGuideProviders.WikiProvider).Status == "Ready" && State(bundle, ForetellGuideProviders.WorkbookProvider).Status == "Ready", "Successful providers were not ready.");
         Check(Page(bundle, ForetellGuideProviders.WikiProvider).Original == GuideHtml, "Original HTML was modified or clipped.");

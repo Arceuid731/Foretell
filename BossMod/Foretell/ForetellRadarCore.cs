@@ -6,7 +6,7 @@ internal readonly record struct RadarView(Vector2 Center, float Radius, bool Foc
 
 internal static class ForetellRadarCore
 {
-    internal static RadarView Fit(IReadOnlyList<Vector2> points, float cameraAzimuth, float minimum, float maximum, float padding)
+    internal static RadarView Fit(IReadOnlyList<Vector2> points, float cameraAzimuth, float minimum, float maximum, float padding, bool square = true)
     {
         minimum = Math.Min(minimum, maximum);
         var min = points[0]; var max = min;
@@ -16,9 +16,23 @@ internal static class ForetellRadarCore
         foreach (var point in points)
         {
             var offset = ForetellInferenceCore.CameraRelativeRadarOffset(point - center, cameraAzimuth);
-            radius = Math.Max(radius, Math.Max(Math.Abs(offset.X), Math.Abs(offset.Y)) + padding);
+            radius = Math.Max(radius, (square ? Math.Max(Math.Abs(offset.X), Math.Abs(offset.Y)) : offset.Length()) + padding);
         }
         return new(center, Math.Clamp(radius, minimum, maximum), true);
+    }
+
+    internal static RadarView? FitArena(IReadOnlyList<Vector2> points, Vector2 player, Vector2? boss, float cameraAzimuth, float maximum, bool square)
+    {
+        if (points.Count < 3 || !ForetellArenaBoundaryCore.Contains(points, player)
+            || boss is { } enemy && !ForetellArenaBoundaryCore.Contains(points, enemy)) return null;
+        var min = points[0]; var max = min;
+        foreach (var point in points) { min = Vector2.Min(min, point); max = Vector2.Max(max, point); }
+        var size = max - min;
+        // Judge enclosure size independently of party spread: a solo player beside the boss still needs
+        // the full room. Reject corridors and oversized staging areas using the observed room itself.
+        if (boss != null && (Math.Min(size.X, size.Y) < 8 || Math.Max(size.X, size.Y) > 2.6f * Math.Min(size.X, size.Y))) return null;
+        var fitted = Fit(points, cameraAzimuth, 8, 240, 2, square);
+        return fitted.Radius <= maximum ? fitted : null;
     }
 
     internal static RadarView Smooth(RadarView previous, RadarView target, float elapsed)

@@ -1,5 +1,7 @@
 # Foretell
 
+Version 0.13.15 restores Raven acquisition through its public API and HTTP/2, fixes Palace of the Dead floor-set wiki titles, and fits recognized boss rooms independently of party spread. Gamer Escape also works for some tested pages but still rejects others. Existing recent caches can be refreshed from **Sources & guides → Refresh selected guide**. See the [source and radar investigation](docs/review-sources-palace-radar-2026-09-11.md).
+
 Foretell is an experimental combat assistant for FFXIV. It combines documented encounter advice, live combat signals and locally learned encounter evidence, using the BossMod Reborn world-state and rendering stack.
 
 Version 0.13.0 aggregates available sources from Console Games Wiki, Gamer Escape, Raven's Reminders and the public community workbook. Local AI reads the preserved documents to prepare English boss mechanics, conditional responses and role cues. Source availability and preparation progress appear separately. Automated runtime and interface tests pass, but model output can still contain incorrect instructions; a successful download or schema check does not establish strategy correctness.
