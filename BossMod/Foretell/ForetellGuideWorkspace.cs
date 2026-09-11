@@ -125,6 +125,13 @@ public sealed partial class ForetellEngine
             ImGui.EndCombo();
         }
         selected = GuideModelCatalog.Get(_cfg.GuideModelID);
+        if (_cfg.GuideMemoryGiB < selected.RecommendedMemoryGiB)
+        {
+            ImGui.TextWrapped(GuideText($"Recommended RAM limit: {selected.RecommendedMemoryGiB} GiB", $"Limite de RAM conseillée : {selected.RecommendedMemoryGiB} Gio", $"Empfohlenes RAM-Limit: {selected.RecommendedMemoryGiB} GiB", $"推奨RAM上限：{selected.RecommendedMemoryGiB} GiB"));
+            ImGui.BeginDisabled(GuideAnalysisPaused);
+            if (ImGui.Button(GuideText("Apply RAM limit", "Appliquer cette limite", "RAM-Limit übernehmen", "RAM上限を適用"))) { _cfg.GuideMemoryGiB = selected.RecommendedMemoryGiB; changed = true; }
+            ImGui.EndDisabled();
+        }
         if (_guideSummaries?.Storage(selected.ID, _cfg.GuideSummaryGpu) is { } storage)
         {
             ImGui.TextDisabled(GuideText("Model", "Modèle", "Modell", "モデル") + ": " + GuideModelFileLabel(storage.Model, GuideClientLanguage));

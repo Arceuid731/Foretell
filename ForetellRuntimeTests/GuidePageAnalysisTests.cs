@@ -14,10 +14,11 @@ internal static class GuidePageAnalysisTests
     {
         var source = Source();
         Check(source.Bosses.Length == 0 && source.Page!.Text.Contains("END OF GUIDE") && source.Page.Html == Html, "Downloader performed semantic cutting or lost the complete page");
-        Check(GuideModelCatalog.Profiles.Select(profile => profile.ID).Distinct().Count() == 3 && GuideModelCatalog.Profiles.All(profile => profile.Asset.Hash.Length == 64 && profile.MaximumContext >= 32768), "Model catalog lacks three pinned profiles");
+        Check(GuideModelCatalog.Profiles.Select(profile => profile.ID).Distinct().Count() == 5 && GuideModelCatalog.Profiles.All(profile => profile.Asset.Hash.Length == 64 && profile.MaximumContext >= 32768), "Model catalog lacks five distinct pinned profiles");
         var profile = GuideModelCatalog.Get(GuideModelCatalog.DefaultID);
         await GuideAnalysisReviewTests.Run();
         await GuideBatchAnalysisTests.Run();
+        await GuideFactsTests.Run();
         await GuideTriggerAnalysisTests.Run();
         VerifyEvidenceAndConditions(source, profile);
         await VerifyDuskVigilSources(profile);

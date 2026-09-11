@@ -155,13 +155,15 @@ internal static class GuideReasoningExperiment
     }
 
     // Same pinned server and transport as production, with test-only reasoning switches. No reflection or profile mutation.
-    private sealed class ExperimentModel(string directory, GuideModelProfile profile, bool thinking, Action<string> runtimeTrace) : IGuideSummaryModel
+    internal sealed class ExperimentModel(string directory, GuideModelProfile profile, bool thinking, Action<string> runtimeTrace,
+        int contextTokens = 65536, int memoryGiB = 12) : IGuideSummaryModel
     {
         private Process? process;
         private GuideProcessBudget? budget;
         private ForetellGuideLocalModel? transport;
         public Action<GuideModelExchange>? ExchangeTrace { get; set; }
-        public GuideModelRuntime Runtime => new(ModelID: profile.ID, Backend: "Vulkan", ContextTokens: 65536);
+        public GuideModelRuntime Runtime => new(ModelID: profile.ID, Backend: "Vulkan", ContextTokens: contextTokens);
+        internal int? ProcessID => process?.Id;
 
         public async Task Start(Action<GuideModelProgress> progress, CancellationToken cancellation)
         {
@@ -177,12 +179,12 @@ internal static class GuideReasoningExperiment
                 WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true, RedirectStandardError = true
             };
             foreach (var argument in new[] { "--model", Path.Combine(directory, profile.Asset.Name), "--host", "127.0.0.1", "--port", port.ToString(), "--api-key", key,
-                "--ctx-size", "65536", "--no-context-shift", "--cache-ram", "0", "--parallel", "1", "--threads", "2", "--threads-batch", "2", "--threads-http", "1",
+                "--ctx-size", contextTokens.ToString(), "--no-context-shift", "--cache-ram", "0", "--parallel", "1", "--threads", "2", "--threads-batch", "2", "--threads-http", "1",
                 "--batch-size", "128", "--ubatch-size", "128", "--n-gpu-layers", "999", "--no-mmap", "--no-warmup", "--no-webui", "--no-slots",
                 "--reasoning", thinking ? "on" : "off", "--reasoning-budget", "2048", "--chat-template-kwargs", thinking ? "{\"enable_thinking\":true}" : profile.ChatOptions }) start.ArgumentList.Add(argument);
             foreach (var variable in start.Environment.Keys.Where(name => name.StartsWith("LLAMA_", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(variable);
             process = Process.Start(start) ?? throw new InvalidOperationException("Experiment server did not start.");
-            budget = new(process, 12);
+            budget = new(process, memoryGiB);
             process.PriorityClass = ProcessPriorityClass.BelowNormal;
             void Trace(string? line) { if (line != null) runtimeTrace(line.Replace(key, "[redacted]", StringComparison.Ordinal)); }
             process.OutputDataReceived += (_, data) => Trace(data.Data);
@@ -191,7 +193,7 @@ internal static class GuideReasoningExperiment
             var client = new HttpClient(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false })
             { BaseAddress = new($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromMinutes(4) };
             client.DefaultRequestHeaders.Authorization = new("Bearer", key);
-            transport = new(client, 65536) { ExchangeTrace = exchange => ExchangeTrace?.Invoke(exchange) };
+            transport = new(client, contextTokens) { ExchangeTrace = exchange => ExchangeTrace?.Invoke(exchange) };
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             deadline.CancelAfter(TimeSpan.FromSeconds(60));
             while (true)

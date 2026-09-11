@@ -2,6 +2,8 @@
 
 ## Scope and current state
 
+Update, 11 September: the [capacity/source campaign](capacity-stages-2026-09-11.md) verifies the recovered Raven acquisition on recent instances and distinguishes provider availability from encounter coverage and version correctness. Haukke has all four sources in this collection, Fractal and Labyrinth three, Kefka two, and Palace 31–40 one. The following sections document the original 0.13.0 implementation.
+
 Version 0.13.0 keeps guide instructions in English. Application controls can remain localized. It contains aggregated source acquisition, whole-document model analysis, three pinned model profiles, a resizable entry summary, repeatable active mechanic highlighting, and shared list/central instructions. Automated build/runtime/interface checks pass; real-model results still contain semantic errors. Passing schema and source-citation checks does not establish instruction correctness.
 
 Console Games Wiki, Gamer Escape, Raven's Reminders and the public community workbook are integrated acquisition paths. Each provider has an independent result; an unavailable provider does not discard another provider's usable source. This does not establish live availability, complete coverage or correct current strategies for every duty. Foretell is the main combat presentation; BMR compatibility modes remain optional.

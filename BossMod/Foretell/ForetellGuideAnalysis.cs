@@ -143,7 +143,6 @@ internal static partial class GuidePageAnalysis
         Identifie toi-même chaque mécanique, y compris celles décrites en prose, les adds et les variantes de phase. Ignore butin, navigation et histoire. Garde les attaques nommées distinctes. Une même attaque répétée ou ayant plusieurs variantes reste UNE mécanique qui conserve TOUTES les variantes.
         name est le nom original exact du boss ou de l'attaque dans le guide. displayName peut être traduit, sans inventer un nom officiel. summary est un conseil utile en une phrase. cue est ce que le JOUEUR doit faire pour répondre à l'attaque ennemie : impératif bref de 3 à 9 mots, pas une définition ou un nom de catégorie. description explique brièvement en français l'attaque et la réponse, en préservant conditions, phases, cibles, directions, timing et alternatives. Ne propose jamais au joueur de lancer une attaque du boss, ni de déclencher une attaque ultime ennemie.
         responses est vide quand la réponse du joueur est toujours la même. Si des réponses DIFFÉRENTES dépendent de l'apparence d'une arme, de la phase ou de la cible, fournis TOUTES les alternatives : when = condition courte, instruction = action du joueur. Ce tableau reste dans les détails au survol ; cue est la consigne affichée. Ne choisis jamais une seule variante ; ne transforme pas une condition de déclenchement en variante si la réponse reste identique.
-        Vocabulaire FFXIV : tankbuster = le tank prépare sa mitigation ; raidwide/groupwide/ultimate = prévoir soins et mitigation du groupe, pas esquiver ; stack/shared damage = se regrouper sur la cible avant l'impact ; spread = s'écarter des autres ; tether = lien. Une attaque frontale se contourne. Conserve toute exception donnée par le guide. Ne confonds pas garder les attaques loin d'un objet avec demander au joueur de fuir cet objet. Pour les adds, indique leur priorité/placement lorsqu'ils sont expliqués.
         triggerKind = cast uniquement pour une attaque ennemie explicitement nommée, triggerName = son nom original exact, identique à name. Pour un effet négatif nommé sur le joueur, utilise status. Sinon utilise manual et triggerName vide. N'invente ni déclencheur, ni identifiant, ni coordonnée, ni zone sûre. Si aucun contre n'est indiqué, dis précisément quoi surveiller, sans inventer une solution.
         evidence contient les identifiants des paragraphes numérotés, sous forme de chaînes, qui justifient la mécanique ET toutes ses variantes ; inclure le paragraphe qui nomme l'attaque. Ne copie pas le texte dans evidence. Conserve l'ordre des boss et toutes les mécaniques documentées. Si la source n'en contient aucune, bosses est vide.
         """ : $"""
@@ -154,7 +153,7 @@ internal static partial class GuidePageAnalysis
         triggerKind is cast only for an explicitly named enemy ability; triggerName is its exact original source ability name, not a translation. status is for an explicitly named debuff on the player, triggerName is the original debuff name. Otherwise use manual and an empty triggerName. For an unnamed mechanic, name can be a brief label but triggerKind must be manual. Never invent an automatic trigger for a general strategy note.
         evidence is 1–8 paragraph IDs (strings) from the numbered source, supporting this mechanic and ALL its conditions. Include the paragraph naming the ability/debuff. Never quote or paraphrase source text in evidence: reference its IDs. Boss summary is a useful one-sentence preparation tip, not 'Abilities'. Document summary is a very short overview. If there are no boss mechanics in this passage, return an empty bosses array.
         Merge complementary sources only for the SAME boss and SAME ability. Preserve phase, target, role and strategy conditions; clockwise positioning may depend on an alliance assignment. Never combine two different named attacks merely because both are cones or tankbusters. roles lists only explicitly relevant tank/healer/melee/ranged roles; use [] for everyone. conflict is empty unless sources genuinely contradict each other under the SAME conditions with no supported resolution. For unresolved contradictions, explain the disagreement briefly in conflict, use manual with an empty triggerName, and do not issue a directional instruction. More text does not mean a source is newer; distinguish outdated encounter versions from current encounters using the supplied evidence.
-        """) + PhasePrompt + ActionPrompt + TriggerPrompt + ShortCuePrompt;
+        """) + VocabularyPrompt + PhasePrompt + ActionPrompt + TriggerPrompt + ShortCuePrompt;
 
     private const string ShortCuePrompt = """
 
@@ -164,7 +163,8 @@ internal static partial class GuidePageAnalysis
         """;
 
     public static async Task<GuideDocument> Compile(GuideDocument source, GuideLanguage language, GuideModelProfile profile, int contextTokens,
-        IGuideSummaryModel model, Action<int, int> progress, CancellationToken cancellation, Action<GuideDocument>? bossReady = null, Action<GuideAnalysisStep>? trace = null)
+        IGuideSummaryModel model, Action<int, int> progress, CancellationToken cancellation, Action<GuideDocument>? bossReady = null, Action<GuideAnalysisStep>? trace = null,
+        GuideAnalysisStrategy strategy = GuideAnalysisStrategy.Combined)
     {
         if (source.Page is not { Text.Length: > 0 } page) throw new InvalidDataException("Full source page is unavailable.");
         var pending = new LinkedList<GuideSourceRange>();
@@ -225,17 +225,16 @@ internal static partial class GuidePageAnalysis
             .Select(group => new BossSection(group.First().Name, group.SelectMany(section => section.Passages).Distinct().ToArray())).ToArray();
         var local = new List<GuideDocument>();
         progress(0, groupedSections.Length);
-        var drafts = await DraftBosses(source, groupedSections.Select(section => section.Name).ToArray(), language, contextTokens, model, cancellation, trace).ConfigureAwait(false);
+        var drafts = strategy == GuideAnalysisStrategy.Combined
+            ? await DraftBosses(source, groupedSections.Select(section => section.Name).ToArray(), language, contextTokens, model, cancellation, trace).ConfigureAwait(false)
+            : new Dictionary<string, string>();
         foreach (var section in groupedSections)
         {
             cancellation.ThrowIfCancellationRequested();
             var name = section.Name;
-            var selected = page.Text;
+            var selected = strategy == GuideAnalysisStrategy.EvidenceFirst ? string.Join('\n', section.Passages) : page.Text;
             var paragraphs = Paragraphs(selected);
-            var system = Prompt(language) + """
-
-                FFXIV terminology: unavoidable raidwide/groupwide damage means prepare party healing/mitigation, NOT dodge or spread. A tankbuster means the targeted tank mitigates. Shared damage/stack marker means gather WITH the marked player BEFORE the hit; spread means separate from other players; a tether is a link, not weaving. A frontal cone is avoided, not a named cast unless its actual ability name is supplied. Ground AoEs are avoided. Do not invent a range or suggest outrunning unavoidable damage. Collect gold before the enemy gets it; the enemy collecting it is harmful.
-                """ + (language == GuideLanguage.French ? " Français naturel : soigne le groupe ; tank, prépare ta mitigation ; regroupe-toi sur la cible ; si marqué, écarte-toi ; si lié, éloigne-toi. Ces termes expliquent le vocabulaire du jeu, ne les applique que lorsque la source le justifie." : "");
+            var system = Prompt(language);
             string FocusedSource(string[] entries)
             {
                 var numbered = string.Join('\n', entries.Select((paragraph, index) => $"[{index + 1}] {paragraph}"));
@@ -245,6 +244,12 @@ internal static partial class GuidePageAnalysis
                 return focused;
             }
             var focused = FocusedSource(paragraphs);
+            string? facts = null;
+            if (strategy == GuideAnalysisStrategy.EvidenceFirst)
+            {
+                facts = await ExtractFacts(name, focused, paragraphs, contextTokens, model, cancellation, trace).ConfigureAwait(false);
+                focused += "\n<extracted-facts>\n" + facts + "\n</extracted-facts>\nWrite the complete reference from these extracted facts and their original passages. Preserve every named mechanic and conditional branch. The facts are intermediate data, not authority: resolve any mismatch against the original source. Keep every supported player response, including timing and ownership, when shortening it into an alert.";
+            }
             GuideDocument? parsed = null;
             var correction = "";
             string? draft = drafts.GetValueOrDefault(GuideNames.Boss(name));
@@ -271,7 +276,7 @@ internal static partial class GuidePageAnalysis
                         Verify EVERY cue is an action for the PLAYER, not an enemy action or an outcome ('survive the enrage' is not a solution; killing adds before it is). Verify directions, conditions, negation and what pronouns refer to: leaving a damaging field at the arena edge does NOT mean leaving the arena. Do not turn moving ground attacks into instructions to spread unless the source says players must separate. Do not advise avoiding unavoidable damage.
                         Keep the ORIGINAL exact ability name for every named attack, never rename it to its effect such as 'Unavoidable raidwide damage'. Named enemy attacks use cast and the identical original triggerName, including casts summoning adds or clones. Named player debuffs use status. General/unnamed notes use manual. Do not assign another boss's abilities to this boss. Merge duplicates of the SAME ability, never different named abilities. Preserve all alternatives for a repeated ability.
                         Prefer a direct imperative from the source when available. Every evidence ID must support the corresponding instruction and every condition. Resolve conflicting sources only when their encounter version or different conditions explain the difference; otherwise keep conflict and manual. Keep useful role tags.
-                        """ + $"\nAll player instructions must remain in {language}. Return only compact JSON." + PhasePrompt + ActionPrompt + TriggerPrompt,
+                        """ + $"\nAll player instructions must remain in {language}. Return only compact JSON." + VocabularyPrompt + PhasePrompt + ActionPrompt + TriggerPrompt + ShortCuePrompt,
                             focused + "\n<Draft>\n" + draft + "\n</Draft>" + correction, schema, Math.Clamp(contextTokens / 3, 2048, 8192), cancellation).ConfigureAwait(false);
                     }
                     draft = reviewed;
@@ -285,6 +290,7 @@ internal static partial class GuidePageAnalysis
                     var output = ResolveEvidence(phaseChecked, paragraphs);
                     if (language == GuideLanguage.French) output = await RepairFrench(output, selected, model, cancellation).ConfigureAwait(false);
                     var candidate = Parse(source, selected, output, language, profile);
+                    if (facts != null) ValidateFactCoverage(facts, paragraphs, candidate);
                     if (candidate.Bosses.Length != 1 || GuideNames.Boss(candidate.Bosses[0].Name) != GuideNames.Boss(name))
                         throw new InvalidDataException("Return exactly the requested boss: " + name);
                     parsed = phaseIssue ? await RepairPhasePlan(candidate, selected, model, cancellation, trace).ConfigureAwait(false) : candidate;

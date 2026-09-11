@@ -6,6 +6,10 @@ A [real comparison on five recent recorded source sets](model-comparison-2026-09
 
 A subsequent [reasoning and cross-model review experiment](reasoning-review-2026-09-11.md) ran 17 isolated treatments on those sources. Bounded Qwen reasoning and Gemma/Qwen review proposals still introduce or preserve unsafe instructions. Production settings remain unchanged; neither automatic review application nor thinking is enabled by these experiments.
 
+## Larger models — 11 September 2026
+
+The [capacity and staged-analysis report](capacity-stages-2026-09-11.md) adds Qwen3.5 9B Q4_K_M and Gemma 4 12B QAT Q4_K_XL, tested on the same five recent instances with FFXIV open. Both are selectable; Qwen3.5 4B remains the default. Larger weights still produce incorrect actions and can lose conditions while shortening advice. The manager offers a recommended 12 GiB **RAM limit** for the new profiles; applying it is an explicit player action and does not reserve or cap VRAM. Follow the report for measured context/memory tradeoffs and the status of the experimental extraction stages.
+
 ## 0.13.0
 
 Foretell now has three pinned local model profiles and whole-document analysis of aggregated guide sources. Player guide content is English in this iteration; application controls may follow the client language. These are implemented preparation paths, not a claim that all three models have passed real-encounter evaluation.

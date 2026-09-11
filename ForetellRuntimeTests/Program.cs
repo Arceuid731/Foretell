@@ -38,6 +38,12 @@ internal static class Program
             GuideModelComparison.Run(comparisonJournal, comparisonRuntime, comparisonOutput, comparisonModel).GetAwaiter().GetResult();
         else if (args is ["--guide-compare-bindings", var comparisonResults, var comparisonGame])
             GuideModelComparison.InspectBindings(comparisonResults, comparisonGame);
+        else if (args is ["--guide-capacity-experiment", var capacityInput, var capacityRuntime, var capacityOutput, var capacityModel, var capacityMode, var capacityContext])
+            GuideCapacityExperiment.Run(capacityInput, capacityRuntime, capacityOutput, capacityModel, capacityMode, int.Parse(capacityContext)).GetAwaiter().GetResult();
+        else if (args is ["--guide-capacity-sources", var capacityInputs, var capacitySources])
+            GuideCapacityExperiment.Fetch(capacityInputs, capacitySources).GetAwaiter().GetResult();
+        else if (args is ["--guide-capacity-augment", var augmentationInputs, var augmentationCurrent, var augmentationOutput])
+            GuideCapacityExperiment.Augment(augmentationInputs, augmentationCurrent, augmentationOutput);
         else if (args is ["--guide-reasoning-experiment", var experimentInput, var experimentRuntime, var experimentOutput, var experimentMode])
             GuideReasoningExperiment.Run(experimentInput, experimentRuntime, experimentOutput, experimentMode).GetAwaiter().GetResult();
         else if (args is ["--guide-phase-analysis", var phaseDocument, var phaseRuntime, var phaseOutput]) GuideJournalTests.ReproducePhases(phaseDocument, phaseRuntime, phaseOutput);
