@@ -38,6 +38,8 @@ internal static class Program
             GuideModelComparison.Run(comparisonJournal, comparisonRuntime, comparisonOutput, comparisonModel).GetAwaiter().GetResult();
         else if (args is ["--guide-compare-bindings", var comparisonResults, var comparisonGame])
             GuideModelComparison.InspectBindings(comparisonResults, comparisonGame);
+        else if (args is ["--guide-reasoning-experiment", var experimentInput, var experimentRuntime, var experimentOutput, var experimentMode])
+            GuideReasoningExperiment.Run(experimentInput, experimentRuntime, experimentOutput, experimentMode).GetAwaiter().GetResult();
         else if (args is ["--guide-phase-analysis", var phaseDocument, var phaseRuntime, var phaseOutput]) GuideJournalTests.ReproducePhases(phaseDocument, phaseRuntime, phaseOutput);
         else if (args is ["--guide-journal-replay", var journalFile, var journalOutput]) GuideJournalTests.Replay(journalFile, journalOutput);
         else if (args is ["--guide-cache-check", var cacheRoot, var preparedPath]) GuideCacheTests.VerifyInstalled(cacheRoot, preparedPath);

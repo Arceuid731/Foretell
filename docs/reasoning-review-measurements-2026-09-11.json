@@ -1,0 +1,2622 @@
+[
+  {
+    "Mode": "gemma-review",
+    "Duty": {
+      "ContentID": 177,
+      "TerritoryID": 564,
+      "EnglishName": "the Palace of the Dead (Floors 31-40)",
+      "Valid": true,
+      "Key": "C177-T564"
+    },
+    "SourceHash": "CE6A88DC0949D9040FDA3D2B112A9D50ED525AFF07A536F3AE3D0653C0BEB1FF",
+    "SourceTextSha256": "D8F5D951AAFC77F65B1D2D64EE317E994CB0E31A1C744003CF35C87DE1DE5BAB",
+    "ModelID": "gemma-4-e2b",
+    "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 5.8794699,
+    "StartupSeconds": 2.4079575,
+    "Requests": 1,
+    "RequestSeconds": 3.4418246,
+    "PromptTokens": 4584,
+    "OutputTokens": 709,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 5,
+      "ReviewedItems": 5,
+      "CompleteIDs": true,
+      "Findings": [
+        {
+          "ID": "B0-M0",
+          "Paragraph": 111,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M1",
+          "Paragraph": 111,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M2",
+          "Paragraph": 111,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B0-M3",
+          "Paragraph": 111,
+          "KnownItem": true,
+          "ExactQuote": true
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C177-T564-gemma-review",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "d09754603afdb675029d536bc058467a5ec3f14cd5c7cd4432e621fd14ed9c2d",
+      "analysis-20260911-143238-190fa5be.json": "e2d1daefbad10f74f1efd0e55a44b2a693b4000856c96220572d46fd375df08a",
+      "source.json": "13fca5c334398114f6c80a4e0b7dd88eb2acb74bac1f58e5e20361c46fe26132",
+      "candidate.json": "571291fb4affcee9e11818883c380151ba1024b6d09b7fb1ff717e63b2c4de9c",
+      "review.json": "581d5843386158ec72fd739ee75dd400201bc8ca11824ca739aba120af548863",
+      "review-checks.json": "692107507dbaa70eca94380839822fbec81e5430decd74aa48295733e62504f3"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Queued",
+        "State": "Completed",
+        "Seconds": 3.4418246,
+        "PromptTokens": 4584,
+        "OutputTokens": 709,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B0-M3"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-review",
+    "Duty": {
+      "ContentID": 177,
+      "TerritoryID": 564,
+      "EnglishName": "the Palace of the Dead (Floors 31-40)",
+      "Valid": true,
+      "Key": "C177-T564"
+    },
+    "SourceHash": "CE6A88DC0949D9040FDA3D2B112A9D50ED525AFF07A536F3AE3D0653C0BEB1FF",
+    "SourceTextSha256": "D8F5D951AAFC77F65B1D2D64EE317E994CB0E31A1C744003CF35C87DE1DE5BAB",
+    "ReviewGranularity": "All candidate items in one request",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 6.1111847,
+    "StartupSeconds": 2.6893754,
+    "Requests": 1,
+    "RequestSeconds": 3.3743789,
+    "PromptTokens": 4472,
+    "OutputTokens": 469,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 5,
+      "ReviewedItems": 5,
+      "CompleteIDs": true,
+      "Findings": [
+        {
+          "ID": "B0-M2",
+          "Paragraph": 111,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M3",
+          "Paragraph": 111,
+          "KnownItem": true,
+          "ExactQuote": true
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C177-T564-qwen-review",
+    "ProbeAssemblySha256": "9905A85C6F940B2E7AA7FA5A7947F05F963528D9E2C729519E01284B4F6AA19C",
+    "Hashes": {
+      "result.json": "2a7434d709674a870f910cf49e2a49555e724937e89026ad2626e15ba694af5d",
+      "analysis-20260911-143920-7dd96181.json": "3f4f0fdcfb227e9a23c816282c20d29a21900f5ecc428955410dfd754ed0d18b",
+      "source.json": "13fca5c334398114f6c80a4e0b7dd88eb2acb74bac1f58e5e20361c46fe26132",
+      "candidate.json": "571291fb4affcee9e11818883c380151ba1024b6d09b7fb1ff717e63b2c4de9c",
+      "review.json": "4c77b77bc0f4e8219f040ca872082e0773f7d428716817c82477440489cd8747",
+      "review-checks.json": "2ab5d1216697e5b05e3ed6f151353930aba70759568dc793f5288dbd09d1b9eb"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 3.3743789,
+        "PromptTokens": 4472,
+        "OutputTokens": 469,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B0-M3"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-thinking",
+    "Duty": {
+      "ContentID": 177,
+      "TerritoryID": 564,
+      "EnglishName": "the Palace of the Dead (Floors 31-40)",
+      "Valid": true,
+      "Key": "C177-T564"
+    },
+    "SourceHash": "CE6A88DC0949D9040FDA3D2B112A9D50ED525AFF07A536F3AE3D0653C0BEB1FF",
+    "SourceTextSha256": "D8F5D951AAFC77F65B1D2D64EE317E994CB0E31A1C744003CF35C87DE1DE5BAB",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": true,
+    "ReasoningBudget": 2048,
+    "AdditionalOutputAllowance": 2560,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 44.0297008,
+    "StartupSeconds": 2.6823716,
+    "Requests": 3,
+    "RequestSeconds": 41.25676,
+    "PromptTokens": 13000,
+    "OutputTokens": 7120,
+    "ReasoningCharacters": 20623,
+    "Bosses": [
+      "Ixtab"
+    ],
+    "Mechanics": 3,
+    "ReviewChecks": null,
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C177-T564-qwen-thinking",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "744ae8dbff69b02ccb08f27671d061b4630d42016d9be6290bc39c84af962b35",
+      "analysis-20260911-143151-49ba23bb.json": "8639152b53a84f8e845b569321d5ee8a442b7799e07cdf9ae1b018b8e7046e1e",
+      "source.json": "13fca5c334398114f6c80a4e0b7dd88eb2acb74bac1f58e5e20361c46fe26132",
+      "prepared.json": "0cd6a16af1537bd511e1d23857db7ff4aff793b1223e8bb22fd06a3c77827923"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Outline",
+        "State": "Completed",
+        "Seconds": 11.9730323,
+        "PromptTokens": 3267,
+        "OutputTokens": 2137,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7049
+      },
+      {
+        "Index": 2,
+        "Stage": "Draft",
+        "State": "Completed",
+        "Seconds": 17.6961938,
+        "PromptTokens": 6473,
+        "OutputTokens": 2928,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 6034
+      },
+      {
+        "Index": 3,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 11.5875339,
+        "PromptTokens": 3260,
+        "OutputTokens": 2055,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7540
+      }
+    ]
+  },
+  {
+    "Mode": "gemma-focused-review",
+    "Duty": {
+      "ContentID": 285,
+      "TerritoryID": 743,
+      "EnglishName": "the Fractal Continuum (Hard)",
+      "Valid": true,
+      "Key": "C285-T743"
+    },
+    "SourceHash": "CFB1D4EDE7700F001F8487860C483A5FB8B1D1E2CAE84D93CB610783F5819C38",
+    "SourceTextSha256": "21698E3CC26B5886D45944DDA0A5E489CDF6F896A4C0F4EBEE56A8B1B0E3C4D1",
+    "ReviewGranularity": "One candidate item per request; complete sources retained",
+    "ModelID": "gemma-4-e2b",
+    "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 33.0940992,
+    "StartupSeconds": 2.4212715,
+    "Requests": 20,
+    "RequestSeconds": 30.352612600000004,
+    "PromptTokens": 560391,
+    "OutputTokens": 5184,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 20,
+      "ReviewedItems": 30,
+      "CompleteIDs": false,
+      "Findings": [
+        {
+          "ID": "B0-summary",
+          "Paragraph": 104,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B0-M0",
+          "Paragraph": 100,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M0",
+          "Paragraph": 101,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M0",
+          "Paragraph": 102,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M1",
+          "Paragraph": 103,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M2",
+          "Paragraph": 104,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-summary",
+          "Paragraph": 1,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B1-M0",
+          "Paragraph": 107,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M1",
+          "Paragraph": 108,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M2",
+          "Paragraph": 1052,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B1-M3",
+          "Paragraph": 1060,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M4",
+          "Paragraph": 100,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B1-M5",
+          "Paragraph": 104,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B1-M6",
+          "Paragraph": 101,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B1-M7",
+          "Paragraph": 919,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B2-summary",
+          "Paragraph": 1,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B2-M0",
+          "Paragraph": 118,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M1",
+          "Paragraph": 119,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M2",
+          "Paragraph": 1211,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B2-M3",
+          "Paragraph": 1039,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B2-M4",
+          "Paragraph": 1227,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B2-M5",
+          "Paragraph": 1272,
+          "KnownItem": true,
+          "ExactQuote": false
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C285-T743-gemma-focused-review",
+    "ProbeAssemblySha256": "9905A85C6F940B2E7AA7FA5A7947F05F963528D9E2C729519E01284B4F6AA19C",
+    "Hashes": {
+      "result.json": "7c7dcf2da9d24beba063af27615888757b4c4a5f5fb6adeba40be73354261185",
+      "analysis-20260911-144027-e56d2c66.json": "e82a12edaa5c859f4d196925991a38fca9fecaae50191e0bfeee5e38e5c4d431",
+      "source.json": "8d71dcf2586649619f9e5db5854ed7511c218b9502951f357f6f305196c533ce",
+      "candidate.json": "66080cdab65e5e9a5d37e1af8445036936b1f84dd5709b3f0f3d668d475586fb",
+      "review.json": "31b13e1f6040db8d34cd972cdaa1736762f6665d5d5bc34d74eebc826b29a85d",
+      "review-checks.json": "4a136da204254f1f924dccbcb4684f8fab9ecf69ca3f53a418256b2184d8f054"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 5.8552185,
+        "PromptTokens": 27723,
+        "OutputTokens": 481,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 2,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.8665009,
+        "PromptTokens": 28112,
+        "OutputTokens": 372,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 3,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.1199342,
+        "PromptTokens": 28082,
+        "OutputTokens": 207,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 4,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 2.3963546,
+        "PromptTokens": 28323,
+        "OutputTokens": 481,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 5,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 0.762478,
+        "PromptTokens": 27721,
+        "OutputTokens": 146,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 6,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 0.8855973,
+        "PromptTokens": 27951,
+        "OutputTokens": 161,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 7,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.2386568,
+        "PromptTokens": 28028,
+        "OutputTokens": 237,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 8,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 0.8912911,
+        "PromptTokens": 27949,
+        "OutputTokens": 163,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 9,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.2908558,
+        "PromptTokens": 28057,
+        "OutputTokens": 247,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 10,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 0.9203303,
+        "PromptTokens": 28122,
+        "OutputTokens": 162,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 11,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.8587695,
+        "PromptTokens": 28254,
+        "OutputTokens": 365,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 12,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.4788194,
+        "PromptTokens": 28293,
+        "OutputTokens": 279,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 13,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 0.8264563,
+        "PromptTokens": 27955,
+        "OutputTokens": 148,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 14,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.0673493,
+        "PromptTokens": 27723,
+        "OutputTokens": 210,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 15,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.0876844,
+        "PromptTokens": 27994,
+        "OutputTokens": 200,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 16,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.0277816,
+        "PromptTokens": 28014,
+        "OutputTokens": 189,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 17,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.1983413,
+        "PromptTokens": 28030,
+        "OutputTokens": 231,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 18,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.4811688,
+        "PromptTokens": 27965,
+        "OutputTokens": 292,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 19,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.2484299,
+        "PromptTokens": 28044,
+        "OutputTokens": 239,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 20,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.8505946,
+        "PromptTokens": 28051,
+        "OutputTokens": 374,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 2,
+        "RequestedIDs": [
+          "B0-M0"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 3,
+        "RequestedIDs": [
+          "B0-M1"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 4,
+        "RequestedIDs": [
+          "B0-M2"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 5,
+        "RequestedIDs": [
+          "B1-summary"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 6,
+        "RequestedIDs": [
+          "B1-M0"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 7,
+        "RequestedIDs": [
+          "B1-M1"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 8,
+        "RequestedIDs": [
+          "B1-M2"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 9,
+        "RequestedIDs": [
+          "B1-M3"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 10,
+        "RequestedIDs": [
+          "B1-M4"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 11,
+        "RequestedIDs": [
+          "B1-M5"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 12,
+        "RequestedIDs": [
+          "B1-M6"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 13,
+        "RequestedIDs": [
+          "B1-M7"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 14,
+        "RequestedIDs": [
+          "B2-summary"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 15,
+        "RequestedIDs": [
+          "B2-M0"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 16,
+        "RequestedIDs": [
+          "B2-M1"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 17,
+        "RequestedIDs": [
+          "B2-M2"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 18,
+        "RequestedIDs": [
+          "B2-M3"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 19,
+        "RequestedIDs": [
+          "B2-M4"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 20,
+        "RequestedIDs": [
+          "B2-M5"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "gemma-review",
+    "Duty": {
+      "ContentID": 285,
+      "TerritoryID": 743,
+      "EnglishName": "the Fractal Continuum (Hard)",
+      "Valid": true,
+      "Key": "C285-T743"
+    },
+    "SourceHash": "CFB1D4EDE7700F001F8487860C483A5FB8B1D1E2CAE84D93CB610783F5819C38",
+    "SourceTextSha256": "21698E3CC26B5886D45944DDA0A5E489CDF6F896A4C0F4EBEE56A8B1B0E3C4D1",
+    "ModelID": "gemma-4-e2b",
+    "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 12.3290611,
+    "StartupSeconds": 2.4146345,
+    "Requests": 1,
+    "RequestSeconds": 9.8537319,
+    "PromptTokens": 34813,
+    "OutputTokens": 1071,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 20,
+      "ReviewedItems": 19,
+      "CompleteIDs": false,
+      "Findings": [
+        {
+          "ID": "B0-M0",
+          "Paragraph": 100,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M2",
+          "Paragraph": 104,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M1",
+          "Paragraph": 108,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M5",
+          "Paragraph": 112,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M3",
+          "Paragraph": 122,
+          "KnownItem": true,
+          "ExactQuote": true
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C285-T743-gemma-review",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "9b7cf4bb82aee073d207d2a2738fff7c65a170da2506b1a95be7095f23f1ec13",
+      "analysis-20260911-143011-36ffdf22.json": "3f7fab2639c8d585ff320706188d17a5164bed629e7092874f0e00ea6c7a9572",
+      "source.json": "8d71dcf2586649619f9e5db5854ed7511c218b9502951f357f6f305196c533ce",
+      "candidate.json": "66080cdab65e5e9a5d37e1af8445036936b1f84dd5709b3f0f3d668d475586fb",
+      "review.json": "b16d23013d2eadc396f7b8e560843c0f1bf4d6b81e776a73c472f549d97ce722",
+      "review-checks.json": "84d2cafe118379e6b32d6f805d3c3d1e9bcd500da32ad493468d87feab4d83af"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Queued",
+        "State": "Completed",
+        "Seconds": 9.8537319,
+        "PromptTokens": 34813,
+        "OutputTokens": 1071,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B1-summary",
+          "B1-M0",
+          "B1-M1",
+          "B1-M2",
+          "B1-M3",
+          "B1-M4",
+          "B1-M5",
+          "B1-M6",
+          "B1-M7",
+          "B2-summary",
+          "B2-M0",
+          "B2-M1",
+          "B2-M2",
+          "B2-M3",
+          "B2-M4",
+          "B2-M5"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-review",
+    "Duty": {
+      "ContentID": 285,
+      "TerritoryID": 743,
+      "EnglishName": "the Fractal Continuum (Hard)",
+      "Valid": true,
+      "Key": "C285-T743"
+    },
+    "SourceHash": "CFB1D4EDE7700F001F8487860C483A5FB8B1D1E2CAE84D93CB610783F5819C38",
+    "SourceTextSha256": "21698E3CC26B5886D45944DDA0A5E489CDF6F896A4C0F4EBEE56A8B1B0E3C4D1",
+    "ReviewGranularity": "All candidate items in one request",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 20.0908993,
+    "StartupSeconds": 2.6841525,
+    "Requests": 1,
+    "RequestSeconds": 17.343403,
+    "PromptTokens": 34369,
+    "OutputTokens": 1621,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 20,
+      "ReviewedItems": 9,
+      "CompleteIDs": false,
+      "Findings": [
+        {
+          "ID": "B0-M2",
+          "Paragraph": 104,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M1",
+          "Paragraph": 108,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M2",
+          "Paragraph": 109,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M3",
+          "Paragraph": 110,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M4",
+          "Paragraph": 111,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M5",
+          "Paragraph": 112,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M6",
+          "Paragraph": 113,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M7",
+          "Paragraph": 114,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M5",
+          "Paragraph": 127,
+          "KnownItem": true,
+          "ExactQuote": false
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C285-T743-qwen-review",
+    "ProbeAssemblySha256": "9905A85C6F940B2E7AA7FA5A7947F05F963528D9E2C729519E01284B4F6AA19C",
+    "Hashes": {
+      "result.json": "6f04249386b11ffd00caab1091d18c8ee8233f2ececea65a55cab49a3271b136",
+      "analysis-20260911-143845-733c52ee.json": "8db295053f1e938bf3a91fa0049a85da1246cc1017f44eb2b0a5a4591a4e6e8f",
+      "source.json": "8d71dcf2586649619f9e5db5854ed7511c218b9502951f357f6f305196c533ce",
+      "candidate.json": "66080cdab65e5e9a5d37e1af8445036936b1f84dd5709b3f0f3d668d475586fb",
+      "review.json": "10dde424cb3e4cec555f2ee62fede8d7416eadbb4ec1e1916ccb37327e835f13",
+      "review-checks.json": "2eaae700d5e1711aef3d6a85d25e0211841bd559d7d74a2fb7a12ad2a7dcc58b"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 17.343403,
+        "PromptTokens": 34369,
+        "OutputTokens": 1621,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B1-summary",
+          "B1-M0",
+          "B1-M1",
+          "B1-M2",
+          "B1-M3",
+          "B1-M4",
+          "B1-M5",
+          "B1-M6",
+          "B1-M7",
+          "B2-summary",
+          "B2-M0",
+          "B2-M1",
+          "B2-M2",
+          "B2-M3",
+          "B2-M4",
+          "B2-M5"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-thinking",
+    "Duty": {
+      "ContentID": 285,
+      "TerritoryID": 743,
+      "EnglishName": "the Fractal Continuum (Hard)",
+      "Valid": true,
+      "Key": "C285-T743"
+    },
+    "SourceHash": "CFB1D4EDE7700F001F8487860C483A5FB8B1D1E2CAE84D93CB610783F5819C38",
+    "SourceTextSha256": "21698E3CC26B5886D45944DDA0A5E489CDF6F896A4C0F4EBEE56A8B1B0E3C4D1",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": true,
+    "ReasoningBudget": 2048,
+    "AdditionalOutputAllowance": 2560,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 75.6262665,
+    "StartupSeconds": 2.9518336,
+    "Requests": 2,
+    "RequestSeconds": 72.4634125,
+    "PromptTokens": 58330,
+    "OutputTokens": 9419,
+    "ReasoningCharacters": 14760,
+    "Bosses": [
+      "Motherbit",
+      "The Ultima Warrior",
+      "The Ultima Beast"
+    ],
+    "Mechanics": 20,
+    "ReviewChecks": null,
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C285-T743-qwen-thinking",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "ebec15c0c76cc099ef7dd771a372b502a48d5f6daf09dc91e1258b1806938663",
+      "analysis-20260911-142852-c569a0d5.json": "03c4fcaaca1eb0cca0ecb8ad46be8578dda6effbb8aea5ce4d70c4eeb0e6903b",
+      "source.json": "8d71dcf2586649619f9e5db5854ed7511c218b9502951f357f6f305196c533ce",
+      "prepared.json": "22d13212a3eacc9c472b71c65d0da2e8af9daad94d31add288b7594532975b21"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Outline",
+        "State": "Completed",
+        "Seconds": 20.0982883,
+        "PromptTokens": 27598,
+        "OutputTokens": 2348,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7347
+      },
+      {
+        "Index": 2,
+        "Stage": "Draft",
+        "State": "Completed",
+        "Seconds": 52.3651242,
+        "PromptTokens": 30732,
+        "OutputTokens": 7071,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7413
+      }
+    ]
+  },
+  {
+    "Mode": "gemma-focused-review",
+    "Duty": {
+      "ContentID": 289,
+      "TerritoryID": 751,
+      "EnglishName": "Sigmascape V4.0",
+      "Valid": true,
+      "Key": "C289-T751"
+    },
+    "SourceHash": "20F25F93AD7F242ACA236BAC38DA7B8CBEED894D80DD8364D3E8D66B4A8AA8EE",
+    "SourceTextSha256": "4F3B0F5A68F86187FD3B3F8FA0AC2759C43B84B610C1651470B763E4BF86A800",
+    "ReviewGranularity": "One candidate item per request; complete sources retained",
+    "ModelID": "gemma-4-e2b",
+    "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 18.9936421,
+    "StartupSeconds": 2.687023,
+    "Requests": 12,
+    "RequestSeconds": 16.2165775,
+    "PromptTokens": 118380,
+    "OutputTokens": 3253,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 12,
+      "ReviewedItems": 12,
+      "CompleteIDs": true,
+      "Findings": [
+        {
+          "ID": "B0-summary",
+          "Paragraph": 82,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M0",
+          "Paragraph": 68,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M1",
+          "Paragraph": 69,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M1",
+          "Paragraph": 69,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B0-M2",
+          "Paragraph": 70,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M3",
+          "Paragraph": 71,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M3",
+          "Paragraph": 71,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B0-M4",
+          "Paragraph": 66,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B0-M5",
+          "Paragraph": 73,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M6",
+          "Paragraph": 84,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M7",
+          "Paragraph": 84,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M8",
+          "Paragraph": 84,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B0-M9",
+          "Paragraph": 86,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M10",
+          "Paragraph": 84,
+          "KnownItem": true,
+          "ExactQuote": true
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C289-T751-gemma-focused-review",
+    "ProbeAssemblySha256": "9905A85C6F940B2E7AA7FA5A7947F05F963528D9E2C729519E01284B4F6AA19C",
+    "Hashes": {
+      "result.json": "c9584decb39d823ad0d01611dbc4a9650106bcd1740cc6d4215e2bc1fbcf688b",
+      "analysis-20260911-144103-6774abca.json": "4cc3ba83f5baa65eb1a94c78a62bced7bc035cddf37c4e3062a3d0114852844e",
+      "source.json": "5cd7f92444106addb39746822f3074ec1bffd5bb858a8444aa417c690b0b74f7",
+      "candidate.json": "1e69e021413eff49012567662ae43a49be02cdbdfb7837d8056dc240f3c79123",
+      "review.json": "69daaf51803ec51cb03b8f79ae7351c961a173ffee15540a067bad5719eba4c6",
+      "review-checks.json": "b083b4142d00bd6a5715e6c007a1e793e02fcf429479a1afe7de26affccb6f5b"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 2.1773506,
+        "PromptTokens": 9426,
+        "OutputTokens": 253,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 2,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 0.9376252,
+        "PromptTokens": 9782,
+        "OutputTokens": 196,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 3,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.6404156,
+        "PromptTokens": 9954,
+        "OutputTokens": 361,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 4,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.1776063,
+        "PromptTokens": 9883,
+        "OutputTokens": 252,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 5,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.499088,
+        "PromptTokens": 10001,
+        "OutputTokens": 327,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 6,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 0.7164347,
+        "PromptTokens": 9717,
+        "OutputTokens": 147,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 7,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.2879418,
+        "PromptTokens": 10137,
+        "OutputTokens": 271,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 8,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.3817268,
+        "PromptTokens": 9799,
+        "OutputTokens": 289,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 9,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.4505006,
+        "PromptTokens": 10062,
+        "OutputTokens": 310,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 10,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.1177096,
+        "PromptTokens": 9855,
+        "OutputTokens": 238,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 11,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.4021806,
+        "PromptTokens": 9884,
+        "OutputTokens": 302,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      },
+      {
+        "Index": 12,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 1.4279977,
+        "PromptTokens": 9880,
+        "OutputTokens": 307,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 2,
+        "RequestedIDs": [
+          "B0-M0"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 3,
+        "RequestedIDs": [
+          "B0-M1"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 4,
+        "RequestedIDs": [
+          "B0-M2"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 5,
+        "RequestedIDs": [
+          "B0-M3"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 6,
+        "RequestedIDs": [
+          "B0-M4"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 7,
+        "RequestedIDs": [
+          "B0-M5"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 8,
+        "RequestedIDs": [
+          "B0-M6"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 9,
+        "RequestedIDs": [
+          "B0-M7"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 10,
+        "RequestedIDs": [
+          "B0-M8"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 11,
+        "RequestedIDs": [
+          "B0-M9"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      },
+      {
+        "Request": 12,
+        "RequestedIDs": [
+          "B0-M10"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "gemma-review",
+    "Duty": {
+      "ContentID": 289,
+      "TerritoryID": 751,
+      "EnglishName": "Sigmascape V4.0",
+      "Valid": true,
+      "Key": "C289-T751"
+    },
+    "SourceHash": "20F25F93AD7F242ACA236BAC38DA7B8CBEED894D80DD8364D3E8D66B4A8AA8EE",
+    "SourceTextSha256": "4F3B0F5A68F86187FD3B3F8FA0AC2759C43B84B610C1651470B763E4BF86A800",
+    "ModelID": "gemma-4-e2b",
+    "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 9.2429481,
+    "StartupSeconds": 2.4168296,
+    "Requests": 1,
+    "RequestSeconds": 6.7816488,
+    "PromptTokens": 15321,
+    "OutputTokens": 1155,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 12,
+      "ReviewedItems": 12,
+      "CompleteIDs": true,
+      "Findings": [
+        {
+          "ID": "B0-M0",
+          "Paragraph": 40,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B0-M1",
+          "Paragraph": 78,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M3",
+          "Paragraph": 77,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M6",
+          "Paragraph": 83,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M7",
+          "Paragraph": 84,
+          "KnownItem": true,
+          "ExactQuote": true
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C289-T751-gemma-review",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "a291c8cec95de1b218593f94717d3e19777596a4a2917c8cfd3a53f634e2ecf7",
+      "analysis-20260911-143138-6c328ec1.json": "a6cbc604b27b71bc62e53cc041a2659a8f557b0938cec9bb778ad7bd04e0c569",
+      "source.json": "5cd7f92444106addb39746822f3074ec1bffd5bb858a8444aa417c690b0b74f7",
+      "candidate.json": "1e69e021413eff49012567662ae43a49be02cdbdfb7837d8056dc240f3c79123",
+      "review.json": "0d151a04d63c1a8cd50ad3dcd7eb222d585b798724789de55e2863ff4a89c22d",
+      "review-checks.json": "c2c914a80a57de18875121615becd7ff6e03a39b7be1f758887711c6c25383ba"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Queued",
+        "State": "Completed",
+        "Seconds": 6.7816488,
+        "PromptTokens": 15321,
+        "OutputTokens": 1155,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B0-M3",
+          "B0-M4",
+          "B0-M5",
+          "B0-M6",
+          "B0-M7",
+          "B0-M8",
+          "B0-M9",
+          "B0-M10"
+        ],
+        "CompleteIDs": true,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-review",
+    "Duty": {
+      "ContentID": 289,
+      "TerritoryID": 751,
+      "EnglishName": "Sigmascape V4.0",
+      "Valid": true,
+      "Key": "C289-T751"
+    },
+    "SourceHash": "20F25F93AD7F242ACA236BAC38DA7B8CBEED894D80DD8364D3E8D66B4A8AA8EE",
+    "SourceTextSha256": "4F3B0F5A68F86187FD3B3F8FA0AC2759C43B84B610C1651470B763E4BF86A800",
+    "ReviewGranularity": "All candidate items in one request",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 9.4873279,
+    "StartupSeconds": 2.6812337,
+    "Requests": 1,
+    "RequestSeconds": 6.7559246,
+    "PromptTokens": 15027,
+    "OutputTokens": 695,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 12,
+      "ReviewedItems": 3,
+      "CompleteIDs": false,
+      "Findings": [
+        {
+          "ID": "B0-M3",
+          "Paragraph": 77,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M9",
+          "Paragraph": 86,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M10",
+          "Paragraph": 86,
+          "KnownItem": true,
+          "ExactQuote": true
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C289-T751-qwen-review",
+    "ProbeAssemblySha256": "9905A85C6F940B2E7AA7FA5A7947F05F963528D9E2C729519E01284B4F6AA19C",
+    "Hashes": {
+      "result.json": "c80f782f0fe42cb486d62f2791f1c11477324c0c2f3c57adce8159fca31bd581",
+      "analysis-20260911-143908-8c3a91b7.json": "ccdb972aedc94afed331a5ad5c77d19b620f3fa84e738b958e052358b6326644",
+      "source.json": "5cd7f92444106addb39746822f3074ec1bffd5bb858a8444aa417c690b0b74f7",
+      "candidate.json": "1e69e021413eff49012567662ae43a49be02cdbdfb7837d8056dc240f3c79123",
+      "review.json": "ced9f0a645e184394ce2389ea2746f687dbfd3353e78b55eccfabce951152247",
+      "review-checks.json": "afae74d6a023b784c7004f921fcefe4339a33aba6d19a8d5cc87f9d2cb08eb9d"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 6.7559246,
+        "PromptTokens": 15027,
+        "OutputTokens": 695,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B0-M3",
+          "B0-M4",
+          "B0-M5",
+          "B0-M6",
+          "B0-M7",
+          "B0-M8",
+          "B0-M9",
+          "B0-M10"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-thinking",
+    "Duty": {
+      "ContentID": 289,
+      "TerritoryID": 751,
+      "EnglishName": "Sigmascape V4.0",
+      "Valid": true,
+      "Key": "C289-T751"
+    },
+    "SourceHash": "20F25F93AD7F242ACA236BAC38DA7B8CBEED894D80DD8364D3E8D66B4A8AA8EE",
+    "SourceTextSha256": "4F3B0F5A68F86187FD3B3F8FA0AC2759C43B84B610C1651470B763E4BF86A800",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": true,
+    "ReasoningBudget": 2048,
+    "AdditionalOutputAllowance": 2560,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 68.3389853,
+    "StartupSeconds": 2.6867745,
+    "Requests": 3,
+    "RequestSeconds": 65.4996693,
+    "PromptTokens": 31443,
+    "OutputTokens": 10483,
+    "ReasoningCharacters": 22494,
+    "Bosses": [
+      "Kefka"
+    ],
+    "Mechanics": 13,
+    "ReviewChecks": null,
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C289-T751-qwen-thinking",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "df92003ca261359212f4d08a76d1d9cabd6331df410b92e06219e51824f6aa5b",
+      "analysis-20260911-143027-4060b255.json": "2f033b64ddcda77042a76e10d933120601b64e67174653f715dc7289790f74ce",
+      "source.json": "5cd7f92444106addb39746822f3074ec1bffd5bb858a8444aa417c690b0b74f7",
+      "prepared.json": "4c089d837cf953a71f55e86ce3b3e2be67006fa255034a89466cf3dc44986bbf"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Outline",
+        "State": "Completed",
+        "Seconds": 14.0010743,
+        "PromptTokens": 9382,
+        "OutputTokens": 2215,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7119
+      },
+      {
+        "Index": 2,
+        "Stage": "Draft",
+        "State": "Completed",
+        "Seconds": 37.5111258,
+        "PromptTokens": 12596,
+        "OutputTokens": 6080,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7629
+      },
+      {
+        "Index": 3,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 13.9874692,
+        "PromptTokens": 9465,
+        "OutputTokens": 2188,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7746
+      }
+    ]
+  },
+  {
+    "Mode": "gemma-review",
+    "Duty": {
+      "ContentID": 6,
+      "TerritoryID": 1040,
+      "EnglishName": "Haukke Manor",
+      "Valid": true,
+      "Key": "C6-T1040"
+    },
+    "SourceHash": "B24922AE0B56E55A878831E34B0C550ECCEFB21DC54BB778364D1F6912BE69F4",
+    "SourceTextSha256": "A2C93416892650C50716092044C8238CD9069F4FD22E6FD3159D1CAC09D79E51",
+    "ModelID": "gemma-4-e2b",
+    "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 13.0357501,
+    "StartupSeconds": 2.4082132,
+    "Requests": 1,
+    "RequestSeconds": 10.5723643,
+    "PromptTokens": 28612,
+    "OutputTokens": 1487,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 14,
+      "ReviewedItems": 13,
+      "CompleteIDs": false,
+      "Findings": [
+        {
+          "ID": "B0-M0",
+          "Paragraph": 129,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M1",
+          "Paragraph": 131,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M0",
+          "Paragraph": 141,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M1",
+          "Paragraph": 141,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M2",
+          "Paragraph": 142,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M3",
+          "Paragraph": 143,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M4",
+          "Paragraph": 145,
+          "KnownItem": true,
+          "ExactQuote": true
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C6-T1040-gemma-review",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "bdd743ba7da6a888c431eeae0459cb650ca4dbeeeb252052d67bd806ddce1c2d",
+      "analysis-20260911-143445-9d1014ce.json": "b347889622291ff48af8fcd946e79565f7132a4c3629baa3a2b4a2b9d4628c74",
+      "source.json": "31ec95aaec4dd63d2827e343b20ec61cf8dcb2ad9e35ca2c7365f3ecf28c3959",
+      "candidate.json": "5c59595f05d57902039267ea3de9dbb19bd980d641a503d4eb7a1c0a97aa55b1",
+      "review.json": "58700909d519576955ee6a00be0514979dc5f3edc76debc5c815093ea8eecf0c",
+      "review-checks.json": "3a2e0c624e02c5dc4789c32c14d239e50dd13fbe53b08c03819a9b1466e9ccf0"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Queued",
+        "State": "Completed",
+        "Seconds": 10.5723643,
+        "PromptTokens": 28612,
+        "OutputTokens": 1487,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B1-summary",
+          "B1-M0",
+          "B1-M1",
+          "B2-summary",
+          "B2-M0",
+          "B2-M1",
+          "B2-M2",
+          "B2-M3",
+          "B2-M4",
+          "B2-M5"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-review",
+    "Duty": {
+      "ContentID": 6,
+      "TerritoryID": 1040,
+      "EnglishName": "Haukke Manor",
+      "Valid": true,
+      "Key": "C6-T1040"
+    },
+    "SourceHash": "B24922AE0B56E55A878831E34B0C550ECCEFB21DC54BB778364D1F6912BE69F4",
+    "SourceTextSha256": "A2C93416892650C50716092044C8238CD9069F4FD22E6FD3159D1CAC09D79E51",
+    "ReviewGranularity": "All candidate items in one request",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 13.1181365,
+    "StartupSeconds": 2.6787121,
+    "Requests": 1,
+    "RequestSeconds": 10.3725142,
+    "PromptTokens": 28322,
+    "OutputTokens": 790,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 14,
+      "ReviewedItems": 11,
+      "CompleteIDs": false,
+      "Findings": [
+        {
+          "ID": "B0-M0",
+          "Paragraph": 130,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M0",
+          "Paragraph": 129,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M0",
+          "Paragraph": 141,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M2",
+          "Paragraph": 142,
+          "KnownItem": true,
+          "ExactQuote": true
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C6-T1040-qwen-review",
+    "ProbeAssemblySha256": "9905A85C6F940B2E7AA7FA5A7947F05F963528D9E2C729519E01284B4F6AA19C",
+    "Hashes": {
+      "result.json": "e05a1b03cb88874ccbde41a6dbdac1a92c9c7764c47640078f7096d740fad739",
+      "analysis-20260911-143929-9de83b3d.json": "6efbd2237d79168ba1cf2fabc0806b072a8f9a4f434d5dc1eb6b7ca488838cb8",
+      "source.json": "31ec95aaec4dd63d2827e343b20ec61cf8dcb2ad9e35ca2c7365f3ecf28c3959",
+      "candidate.json": "5c59595f05d57902039267ea3de9dbb19bd980d641a503d4eb7a1c0a97aa55b1",
+      "review.json": "3d7095a0331ff2012fb28b080650e639de5184709d7c7169b13a20a860ee34f4",
+      "review-checks.json": "97567abeda3b024cd673c88d427065aaa8199bddc9ec09192621be0d8d6a34ab"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 10.3725142,
+        "PromptTokens": 28322,
+        "OutputTokens": 790,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B1-summary",
+          "B1-M0",
+          "B1-M1",
+          "B2-summary",
+          "B2-M0",
+          "B2-M1",
+          "B2-M2",
+          "B2-M3",
+          "B2-M4",
+          "B2-M5"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-thinking",
+    "Duty": {
+      "ContentID": 6,
+      "TerritoryID": 1040,
+      "EnglishName": "Haukke Manor",
+      "Valid": true,
+      "Key": "C6-T1040"
+    },
+    "SourceHash": "B24922AE0B56E55A878831E34B0C550ECCEFB21DC54BB778364D1F6912BE69F4",
+    "SourceTextSha256": "A2C93416892650C50716092044C8238CD9069F4FD22E6FD3159D1CAC09D79E51",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": true,
+    "ReasoningBudget": 2048,
+    "AdditionalOutputAllowance": 2560,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 114.5147566,
+    "StartupSeconds": 2.6756316,
+    "Requests": 5,
+    "RequestSeconds": 111.60448879999998,
+    "PromptTokens": 126632,
+    "OutputTokens": 13911,
+    "ReasoningCharacters": 36588,
+    "Bosses": [
+      "Manor Claviger",
+      "Manor Jester and Manor Steward",
+      "Lady Amandine"
+    ],
+    "Mechanics": 12,
+    "ReviewChecks": null,
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C6-T1040-qwen-thinking",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "c0e82a27be09c8986bf784d23c693f47752119198e401b8b9d3236c8c9f69fa0",
+      "analysis-20260911-143247-add3e08d.json": "93ccad4cbd474e0b6045fc3bc07a2a98aba387999596f711930e29f6af5129f4",
+      "source.json": "31ec95aaec4dd63d2827e343b20ec61cf8dcb2ad9e35ca2c7365f3ecf28c3959",
+      "prepared.json": "67718f9f72ecc431de58af4b6f389a4edcd19dfef0aae84f6723b8f4aec792d6"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Outline",
+        "State": "Completed",
+        "Seconds": 18.8530362,
+        "PromptTokens": 24691,
+        "OutputTokens": 2289,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 6977
+      },
+      {
+        "Index": 2,
+        "Stage": "Draft",
+        "State": "Completed",
+        "Seconds": 39.1563623,
+        "PromptTokens": 27832,
+        "OutputTokens": 5271,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7872
+      },
+      {
+        "Index": 3,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 17.8123582,
+        "PromptTokens": 24702,
+        "OutputTokens": 2109,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 6232
+      },
+      {
+        "Index": 4,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 17.4598216,
+        "PromptTokens": 24692,
+        "OutputTokens": 2060,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7795
+      },
+      {
+        "Index": 5,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 18.3229105,
+        "PromptTokens": 24715,
+        "OutputTokens": 2182,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7712
+      }
+    ]
+  },
+  {
+    "Mode": "gemma-review",
+    "Duty": {
+      "ContentID": 92,
+      "TerritoryID": 174,
+      "EnglishName": "the Labyrinth of the Ancients",
+      "Valid": true,
+      "Key": "C92-T174"
+    },
+    "SourceHash": "5E9DD7382B97D21B7517DE2550AFC41F051504600F0EF6BDD9016B3DFC6CA8FD",
+    "SourceTextSha256": "08FCA549C3CC1B33E23CF7714CB1FE174E6C70BBA93CA2D0B70C4ABB801504C2",
+    "ModelID": "gemma-4-e2b",
+    "ModelSha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 17.6236077,
+    "StartupSeconds": 2.4872103,
+    "Requests": 1,
+    "RequestSeconds": 15.0659817,
+    "PromptTokens": 32769,
+    "OutputTokens": 2274,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 20,
+      "ReviewedItems": 16,
+      "CompleteIDs": false,
+      "Findings": [
+        {
+          "ID": "B0-M0",
+          "Paragraph": 95,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M1",
+          "Paragraph": 119,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B1-M1",
+          "Paragraph": 117,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M2",
+          "Paragraph": 117,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M0",
+          "Paragraph": 93,
+          "KnownItem": true,
+          "ExactQuote": false
+        },
+        {
+          "ID": "B2-M2",
+          "Paragraph": 137,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B3-M0",
+          "Paragraph": 147,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B3-M1",
+          "Paragraph": 833,
+          "KnownItem": true,
+          "ExactQuote": false
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C92-T174-gemma-review",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "dfa14289c2f8ff29f59e6f0b70a61711f551ee18364c3a5600183042e31a832c",
+      "analysis-20260911-143754-00905242.json": "7447ff9f10de59e3f5a7ab844de3e77e0962c3dbb3d3b6e482378353cf3163f7",
+      "source.json": "61c2e022992e405903295b614e6c3c18889954fb3e82d1b98026a8d65037d6ed",
+      "candidate.json": "f57e7329351f3782d33571a10b69d4272a9a56e74584f40ed0a179dc17b9eeb8",
+      "review.json": "688a8fc0be47ddc7043fcefd57aba6c96a68668905a851032efe6a570eebb7e1",
+      "review-checks.json": "8da40ab56646937018038bc49e4af5ebdb0804b7e7c78ed105d5dbe2fec7f4b2"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Queued",
+        "State": "Completed",
+        "Seconds": 15.0659817,
+        "PromptTokens": 32769,
+        "OutputTokens": 2274,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B0-M3",
+          "B0-M4",
+          "B0-M5",
+          "B1-summary",
+          "B1-M0",
+          "B1-M1",
+          "B1-M2",
+          "B2-summary",
+          "B2-M0",
+          "B2-M1",
+          "B2-M2",
+          "B3-summary",
+          "B3-M0",
+          "B3-M1",
+          "B3-M2",
+          "B3-M3"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-review",
+    "Duty": {
+      "ContentID": 92,
+      "TerritoryID": 174,
+      "EnglishName": "the Labyrinth of the Ancients",
+      "Valid": true,
+      "Key": "C92-T174"
+    },
+    "SourceHash": "5E9DD7382B97D21B7517DE2550AFC41F051504600F0EF6BDD9016B3DFC6CA8FD",
+    "SourceTextSha256": "08FCA549C3CC1B33E23CF7714CB1FE174E6C70BBA93CA2D0B70C4ABB801504C2",
+    "ReviewGranularity": "All candidate items in one request",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": false,
+    "ReasoningBudget": 0,
+    "AdditionalOutputAllowance": 0,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 38.2212901,
+    "StartupSeconds": 2.6898651,
+    "Requests": 1,
+    "RequestSeconds": 35.4733887,
+    "PromptTokens": 32069,
+    "OutputTokens": 4454,
+    "ReasoningCharacters": 0,
+    "Bosses": [],
+    "Mechanics": 0,
+    "ReviewChecks": {
+      "ExpectedItems": 20,
+      "ReviewedItems": 16,
+      "CompleteIDs": false,
+      "Findings": [
+        {
+          "ID": "B0-M0",
+          "Paragraph": 95,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M1",
+          "Paragraph": 102,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M2",
+          "Paragraph": 96,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M3",
+          "Paragraph": 95,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M4",
+          "Paragraph": 102,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B0-M5",
+          "Paragraph": 96,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M0",
+          "Paragraph": 116,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M1",
+          "Paragraph": 116,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B1-M2",
+          "Paragraph": 117,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M0",
+          "Paragraph": 134,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M1",
+          "Paragraph": 135,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B2-M2",
+          "Paragraph": 136,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B3-M0",
+          "Paragraph": 147,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B3-M1",
+          "Paragraph": 147,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B3-M2",
+          "Paragraph": 147,
+          "KnownItem": true,
+          "ExactQuote": true
+        },
+        {
+          "ID": "B3-M3",
+          "Paragraph": 146,
+          "KnownItem": true,
+          "ExactQuote": true
+        }
+      ],
+      "Limitation": "ID and exact quotation checks only; every claimed error and replacement still requires semantic assessment. No suggested edit is applied."
+    },
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C92-T174-qwen-review",
+    "ProbeAssemblySha256": "9905A85C6F940B2E7AA7FA5A7947F05F963528D9E2C729519E01284B4F6AA19C",
+    "Hashes": {
+      "result.json": "c33e043e059eea6e3bb79948c12d57354e66b9700a321946157d9edb4afa6c96",
+      "analysis-20260911-143945-5487bbc7.json": "15421daa765c7d988bf7720f5cac9c5bf71751559c88fee9c149ba91672ae90f",
+      "source.json": "61c2e022992e405903295b614e6c3c18889954fb3e82d1b98026a8d65037d6ed",
+      "candidate.json": "f57e7329351f3782d33571a10b69d4272a9a56e74584f40ed0a179dc17b9eeb8",
+      "review.json": "e15dd795cbdd083b857ceb3a859f8723d6983009b5f5a619fbceac1f787d4d88",
+      "review-checks.json": "e3b3e8ae05e899d06d75416ca95d39ae94db4a4e5312903d4f66e46e2e8ca50d"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "AdversarialReview",
+        "State": "Completed",
+        "Seconds": 35.4733887,
+        "PromptTokens": 32069,
+        "OutputTokens": 4454,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 0
+      }
+    ],
+    "PerRequestReviewScope": [
+      {
+        "Request": 1,
+        "RequestedIDs": [
+          "B0-summary",
+          "B0-M0",
+          "B0-M1",
+          "B0-M2",
+          "B0-M3",
+          "B0-M4",
+          "B0-M5",
+          "B1-summary",
+          "B1-M0",
+          "B1-M1",
+          "B1-M2",
+          "B2-summary",
+          "B2-M0",
+          "B2-M1",
+          "B2-M2",
+          "B3-summary",
+          "B3-M0",
+          "B3-M1",
+          "B3-M2",
+          "B3-M3"
+        ],
+        "CompleteIDs": false,
+        "FindingsWithinRequest": true
+      }
+    ]
+  },
+  {
+    "Mode": "qwen-thinking",
+    "Duty": {
+      "ContentID": 92,
+      "TerritoryID": 174,
+      "EnglishName": "the Labyrinth of the Ancients",
+      "Valid": true,
+      "Key": "C92-T174"
+    },
+    "SourceHash": "5E9DD7382B97D21B7517DE2550AFC41F051504600F0EF6BDD9016B3DFC6CA8FD",
+    "SourceTextSha256": "08FCA549C3CC1B33E23CF7714CB1FE174E6C70BBA93CA2D0B70C4ABB801504C2",
+    "ModelID": "qwen3.5-4b",
+    "ModelSha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+    "RuntimeSha256": "97e50b3ef0cdd2cb4d5afd446a9006b3496bee6c0d0ba7083d32f36075771870",
+    "Thinking": true,
+    "ReasoningBudget": 2048,
+    "AdditionalOutputAllowance": 2560,
+    "Temperature": 0,
+    "Seed": 42,
+    "ContextTokens": 65536,
+    "MemoryGiB": 12,
+    "Backend": "Vulkan",
+    "Complete": true,
+    "Seconds": 169.7570651,
+    "StartupSeconds": 2.6779148,
+    "Requests": 7,
+    "RequestSeconds": 166.73836119999999,
+    "PromptTokens": 173520,
+    "OutputTokens": 21217,
+    "ReasoningCharacters": 51117,
+    "Bosses": [
+      "Bone Dragon",
+      "Thanatos",
+      "King Behemoth",
+      "Phlegethon"
+    ],
+    "Mechanics": 13,
+    "ReviewChecks": null,
+    "Error": "",
+    "Limitation": "One pass, isolated fresh process, frozen historical sources. Temperature remains 0 for the controlled comparison; not an optimized reasoning configuration. Review suggestions are not applied. Experiment output must never enter the product cache: production profile/revision is deliberately unchanged.",
+    "Trial": "C92-T174-qwen-thinking",
+    "ProbeAssemblySha256": "879372D03D2D144EF4AE70CD98D9C45A99B1183BC162FB1433620C7A2744D524",
+    "Hashes": {
+      "result.json": "6a77314e6caf1ea85b155a3e68e3d1fecc175d12b08147c3cfec4e0991836456",
+      "analysis-20260911-143501-010c768b.json": "c7f040fc4c1de7ae91adca53445b0da146366fdea791bc560e0666a672437e25",
+      "source.json": "61c2e022992e405903295b614e6c3c18889954fb3e82d1b98026a8d65037d6ed",
+      "prepared.json": "1a4e2a7a5fdf16adbb1022e2b4e2c68576deb0110b91899d2ad62327b411b38b"
+    },
+    "Calls": [
+      {
+        "Index": 1,
+        "Stage": "Outline",
+        "State": "Completed",
+        "Seconds": 18.7474047,
+        "PromptTokens": 23867,
+        "OutputTokens": 2303,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 6165
+      },
+      {
+        "Index": 2,
+        "Stage": "Draft",
+        "State": "Completed",
+        "Seconds": 53.3771181,
+        "PromptTokens": 27005,
+        "OutputTokens": 7510,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 6793
+      },
+      {
+        "Index": 3,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 17.2435288,
+        "PromptTokens": 23868,
+        "OutputTokens": 2060,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 8210
+      },
+      {
+        "Index": 4,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 17.7180495,
+        "PromptTokens": 23886,
+        "OutputTokens": 2127,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 7539
+      },
+      {
+        "Index": 5,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 17.6059265,
+        "PromptTokens": 23873,
+        "OutputTokens": 2120,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 6835
+      },
+      {
+        "Index": 6,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 24.6351238,
+        "PromptTokens": 27166,
+        "OutputTokens": 3041,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 8603
+      },
+      {
+        "Index": 7,
+        "Stage": "Review",
+        "State": "Completed",
+        "Seconds": 17.4112098,
+        "PromptTokens": 23855,
+        "OutputTokens": 2056,
+        "FinishReason": "stop",
+        "ReasoningCharacters": 6972
+      }
+    ]
+  }
+]
