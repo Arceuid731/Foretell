@@ -193,7 +193,7 @@ internal static partial class GuidePageAnalysis
                 if (outline?.Bosses != null)
                     for (var index = 0; index < outline.Bosses.Length; ++index)
                         if (outline.Bosses[index] is { Passages: not null } section)
-                            outline.Bosses[index] = section with { Passages = ResolveOutlinePassages(text, section.Passages) };
+                            outline.Bosses[index] = section with { Name = VisibleBossName(section.Name, text), Passages = ResolveOutlinePassages(text, section.Passages) };
                 if (outline?.Bosses == null || outline.Bosses.Length > 32 || outline.Bosses.Any(section => section == null || !ValidText(section.Name, 200, true)
                     || !GuideRules.Mentions(source.Page!.Text, section.Name) || section.Passages is not { Length: > 0 and <= 4096 }
                     || section.Passages.Any(passage => !ValidText(passage, 24000, true) || !GuideSourceAssembly.NormalizeEvidence(text).Contains(GuideSourceAssembly.NormalizeEvidence(passage), StringComparison.Ordinal))))
@@ -274,6 +274,7 @@ internal static partial class GuidePageAnalysis
                         """ + $"\nAll player instructions must remain in {language}. Return only compact JSON." + PhasePrompt + ActionPrompt + TriggerPrompt,
                             focused + "\n<Draft>\n" + draft + "\n</Draft>" + correction, schema, Math.Clamp(contextTokens / 3, 2048, 8192), cancellation).ConfigureAwait(false);
                     }
+                    draft = reviewed;
                     trace?.Invoke(new("Validation", name, attempt + 1));
                     var phaseIssue = false;
                     var phaseChecked = PreparePhaseMetadata(reviewed, paragraphs, issue =>
@@ -304,7 +305,8 @@ internal static partial class GuidePageAnalysis
                 catch (InvalidDataException error) when (attempt < 2)
                 {
                     trace?.Invoke(new("Validation", name, attempt + 1, error.Message));
-                    correction = "\nCorrect this validation issue using ONLY the original source: " + error.Message;
+                    correction = "\nCorrect this validation issue using ONLY the original source: " + error.Message
+                        + CitationFeedback(draft, paragraphs);
                     completeReview = draft != null;
                 }
             }

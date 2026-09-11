@@ -53,6 +53,7 @@ internal static class Program
         GuideListFlowTests.Run();
         GuidePresentationCaptureTests.Run();
         GuideEventMatchingTests.Run();
+        GuideCitationFeedbackTests.Run().GetAwaiter().GetResult();
         GuideBindingMemoryTests.Run();
         GuideIdCatalogTests.Run();
         GuideIdPlanTests.Run();

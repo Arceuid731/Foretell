@@ -1,5 +1,7 @@
 # Foretell
 
+Version 0.13.16 improves failed guide-analysis retries with explicit citation diagnostics and preserves the last corrected draft. Source-backed visible boss labels prevent wiki disambiguation suffixes from becoming live boss names. See the [Palace 31–40 analysis investigation](docs/review-palace-citations-2026-09-11.md).
+
 Version 0.13.15 restores Raven acquisition through its public API and HTTP/2, fixes Palace of the Dead floor-set wiki titles, and fits recognized boss rooms independently of party spread. Gamer Escape also works for some tested pages but still rejects others. Existing recent caches can be refreshed from **Sources & guides → Refresh selected guide**. See the [source and radar investigation](docs/review-sources-palace-radar-2026-09-11.md).
 
 Foretell is an experimental combat assistant for FFXIV. It combines documented encounter advice, live combat signals and locally learned encounter evidence, using the BossMod Reborn world-state and rendering stack.
