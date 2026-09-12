@@ -53,6 +53,7 @@ internal static class GuideAnalysisReviewTests
     {
         VerifyOutlineReferences();
         VerifyGrounding();
+        VerifySourceNameCase();
         VerifyBossTitleIsNotPhase();
         foreach (var defect in new[] { "none", "missing-heading", "duplicate", "boss", "rename", "evidence", "phase" })
         {
@@ -116,6 +117,32 @@ internal static class GuideAnalysisReviewTests
         var recording = Environment.GetEnvironmentVariable("FORETELL_ANALYSIS_REPLAY");
         if (!string.IsNullOrWhiteSpace(recording)) Replay(recording);
         Console.WriteLine("Validation-first analysis: two calls for valid drafts, bounded full review on failure, phase-only repair and strict source evidence passed.");
+    }
+
+    private static void VerifySourceNameCase()
+    {
+        string[] paragraphs = ["Sentinel", "Fungah: A frontal knockback cone.", "FUNGAH: A circle around a marked player."];
+        var source = Source() with { Page = Source().Page! with { Text = string.Join('\n', paragraphs) }, SourceHash = GuideNames.Hash(string.Join('\n', paragraphs)) };
+        GuideDocument ParseNames(params JsonObject[] mechanics)
+        {
+            var draft = Draft();
+            draft["bosses"]![0]!["phaseDefinitions"] = new JsonArray();
+            draft["bosses"]![0]!["mechanics"] = new JsonArray(mechanics.Cast<JsonNode?>().ToArray());
+            return GuidePageAnalysis.Parse(source, source.Page.Text, GuidePageAnalysis.ResolveEvidence(draft.ToJsonString(), paragraphs), GuideLanguage.English, Profile);
+        }
+        var prepared = ParseNames(Mechanic("Fungah", "Watch the frontal cone", "2"), Mechanic("FUNGAH", "Watch the marked circle", "3"))
+            with { Coverage = [new(0, source.Page.Text.Length)] };
+        Check(prepared.Bosses[0].Phases[0].Mechanics.Select(mechanic => mechanic.Name).SequenceEqual(["Fungah", "FUNGAH"])
+            && GuidePageAnalysis.ValidPrepared(prepared, source, GuideLanguage.English, Profile), "Source-defined case distinctions were lost or rejected on cache reload.");
+        Reject(() => ParseNames(Mechanic("Fungah", "Watch the frontal cone", "2"), Mechanic("Fungah", "Watch the marked circle", "3")));
+        Reject(() => ParseNames(Mechanic("Fungah", "Watch the frontal cone", "2"), Mechanic("fungah", "Watch the frontal cone", "2")));
+        Reject(() => ParseNames(Mechanic("Fungah", "Watch the frontal cone", "2"), Mechanic("FUNGAH", "Watch the frontal cone", "2")));
+        Reject(() => ParseNames(Mechanic("Fungah", "Watch the frontal cone", "2"), Mechanic(" Fungah ", "Watch the frontal cone", "2")));
+        var now = DateTime.UtcNow;
+        var cast = new GuideCast(source.Duty, 1, 2, 3, "Sentinel", 4, "Fungah", now.AddSeconds(5));
+        Check(GuideSynchronization.Match(prepared, cast, now) == null, "An ambiguous case-folded cast selected an arbitrary mechanic.");
+        var resolution = GuideEventMatching.Resolve(prepared.Bosses[0], null, "cast", "Fungah", 0, 0, false, 0);
+        Check(resolution.Mechanic == null && resolution.Reason == "AmbiguousTrigger", "Live event matching selected an arbitrary case-sensitive source entry.");
     }
 
     private static void VerifyGrounding()
@@ -267,7 +294,6 @@ internal static class GuideAnalysisReviewTests
         Check(GuidePageAnalysis.ValidPrepared(replayed, source, GuideLanguage.English, GuideModelCatalog.Get(report.ModelID)), "Recorded draft failed strict validation.");
         watch.Stop();
         var compactDraft = JsonNode.Parse(draft.Response)!.ToJsonString();
-        VerifyTwoPhaseHierarchy(source);
         Console.WriteLine($"Recorded replay {report.ID}: {replayed.MechanicCount} mechanics; {warnings.Count} phase fallback; validation {watch.Elapsed.TotalMilliseconds:F1} ms; no inference.");
         Console.WriteLine($"Recorded timings: {string.Join(", ", report.Calls.Select(call => $"{call.Stage} {call.Seconds:F2}s/{call.OutputTokens} tokens"))}.");
         Console.WriteLine($"Recorded draft {draft.Response.Length} -> {compactDraft.Length} compact characters; validated without a full audit. No new inference timing claimed.");

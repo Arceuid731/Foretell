@@ -655,8 +655,19 @@ internal static partial class GuidePageAnalysis
             { DisplayName = boss.DisplayName, Summary = boss.Summary, PhaseDefinitions = boss.PhaseDefinitions });
         }
         if (bosses.Select(boss => GuideNames.Boss(boss.Name)).Distinct().Count() != bosses.Count) throw new InvalidDataException("Duplicate boss entries.");
-        if (bosses.Any(boss => boss.Phases.SelectMany(phase => phase.Mechanics).GroupBy(mechanic => GuideNames.Normalize(mechanic.Name)).Any(group => group.Count() > 1)))
-            throw new InvalidDataException("Merge repeated occurrences of the same ability into one conditional mechanic, not distinct abilities.");
+        foreach (var boss in bosses)
+        {
+            foreach (var group in boss.Phases.SelectMany(phase => phase.Mechanics).GroupBy(mechanic => GuideNames.Normalize(mechanic.Name)).Where(group => group.Count() > 1))
+            {
+                // Case-folding is useful for lookup, but source-defined ability names can differ only by case.
+                // Require a separate exact-case label in each entry's own evidence; a generated casing change is not enough.
+                if (group.Select(mechanic => GuideNames.SourceName(mechanic.Name)).Distinct(StringComparer.Ordinal).Count() == group.Count()
+                    && group.All(mechanic => mechanic.Advice!.Evidence.Any(quote => System.Text.RegularExpressions.Regex.IsMatch(
+                        GuideNames.SourceName(quote), @"(?<![\p{L}\p{N}])" + System.Text.RegularExpressions.Regex.Escape(GuideNames.SourceName(mechanic.Name)) + @"\s*:",
+                        System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50))))) continue;
+                throw new InvalidDataException($"For {boss.Name}: merge repeated occurrences of '{group.First().Name}' into one conditional mechanic, preserving all variants. Keep differently capitalized names separate only when each is explicitly labeled that way in its own source evidence.");
+            }
+        }
         return source with { Bosses = bosses.ToArray(), Summary = response.Summary, ModelRevision = profile.Revision, AnalysisLanguage = language };
     }
 
